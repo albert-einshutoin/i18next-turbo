@@ -184,10 +184,26 @@
 - [ ] 可能な値を列挙して複数のキーを生成
 - [ ] 解決不可能な場合は警告を出力
 
+#### 2.3.6: ネストされた翻訳（Nested Translations）のサポート
+- [ ] `$t(key)` パターンの検出（文字列内のネストされた翻訳）
+- [ ] `nestingPrefix` と `nestingSuffix` の設定サポート（デフォルト: `$t(` と `)`）
+- [ ] `nestingOptionsSeparator` の設定サポート（デフォルト: `,`）
+- [ ] 文字列内の `$t(key, { options })` パターンの解析
+- [ ] ネストされたキーから複数形やコンテキストを抽出
+- [ ] デフォルト値内のネストされた翻訳の抽出
+
+#### 2.3.7: returnObjects のサポート
+- [ ] `t('key', { returnObjects: true })` の検出
+- [ ] 構造化コンテンツ（オブジェクト）の保持
+- [ ] `objectKeys` セットの管理
+- [ ] オブジェクトキーの子要素を自動的に保持するパターン生成（`key.*`）
+
 #### 達成基準
 - [ ] `const { t } = useTranslation('common', { keyPrefix: 'user' }); t('name')` が `common:user.name` として抽出される
 - [ ] `const t = getFixedT('en', 'ns', 'prefix'); t('key')` が `ns:prefix.key` として抽出される
 - [ ] `t($ => $.user.profile)` が `user.profile` として抽出される
+- [ ] `t('You have $t(item_count, {"count": {{count}} })')` から `item_count_one`, `item_count_other` が抽出される
+- [ ] `t('countries', { returnObjects: true })` で既存の `countries` オブジェクトが保持される
 
 ---
 
@@ -213,10 +229,17 @@
 - [ ] プロパティ名のマッピング（`$LOCALE` → `{{language}}` など）
 - [ ] デフォルト値の設定
 
+#### 2.4.4: ヒューリスティック設定検出
+- [ ] プロジェクト構造の自動検出機能
+- [ ] 一般的な翻訳ファイルの場所を検索（`locales/en/*.json`, `public/locales/en/*.json` など）
+- [ ] 検出された構造から設定を自動生成
+- [ ] `status` や `lint` コマンドで設定ファイルなしでも動作
+
 #### 達成基準
 - [ ] ユーザーが既存の JS 設定ファイルをそのまま使える
 - [ ] TypeScript 設定ファイルも読み込める
 - [ ] 設定の検証とエラーメッセージ
+- [ ] 設定ファイルなしで `status` コマンドが動作する
 
 ---
 
@@ -277,12 +300,50 @@
 - [ ] `--dry-run`: ファイル変更なしのプレビュー
 - [ ] `--ci`: CI モード（ファイル更新時に非ゼロ終了）
 
-#### 3.2.2: 設定ファイルの拡張
-- [ ] `preservePatterns`: 動的キーのパターン保持
+#### 3.2.2: 設定ファイルの拡張（基本オプション）
+- [ ] `preservePatterns`: 動的キーのパターン保持（glob パターン配列）
 - [ ] `preserveContextVariants`: コンテキスト変種の保持
 - [ ] `generateBasePluralForms`: ベース複数形の生成制御
 - [ ] `disablePlurals`: 複数形の完全無効化
 - [ ] `extractFromComments`: コメントからの抽出
+- [ ] `removeUnusedKeys`: 未使用キーの削除（デフォルト: `true`）
+- [ ] `ignore`: 抽出対象から除外するファイルパターン（glob 配列）
+
+#### 3.2.3: セパレータと補間の設定
+- [ ] `keySeparator`: キーのセパレータ（デフォルト: `'.'`、`false` でフラットキー）
+- [ ] `nsSeparator`: 名前空間セパレータ（デフォルト: `':'`、`false` で無効化）
+- [ ] `contextSeparator`: コンテキストセパレータ（デフォルト: `'_'`）
+- [ ] `pluralSeparator`: 複数形セパレータ（デフォルト: `'_'`）
+- [ ] `interpolationPrefix`: 補間プレフィックス（デフォルト: `'{{'`）
+- [ ] `interpolationSuffix`: 補間サフィックス（デフォルト: `'}}'`）
+- [ ] `nestingPrefix`: ネスト翻訳プレフィックス（デフォルト: `'$t('`）
+- [ ] `nestingSuffix`: ネスト翻訳サフィックス（デフォルト: `')'`）
+- [ ] `nestingOptionsSeparator`: ネスト翻訳オプションセパレータ（デフォルト: `','`）
+
+#### 3.2.4: 言語とデフォルト値の設定
+- [ ] `primaryLanguage`: プライマリ言語の指定（デフォルト: `locales[0]`）
+- [ ] `secondaryLanguages`: セカンダリ言語の配列（自動計算も可能）
+- [ ] `defaultValue`: デフォルト値の設定
+  - 文字列形式: `''` または `'TODO'`
+  - 関数形式: `(key, namespace, language, value) => string`
+- [ ] `defaultNS`: デフォルト名前空間（デフォルト: `'translation'`、`false` で名前空間なし）
+
+#### 3.2.5: ソートとフォーマット設定
+- [ ] `sort`: キーのソート設定
+  - ブール値: `true`（アルファベット順）または `false`（ソートなし）
+  - 関数形式: `(a: ExtractedKey, b: ExtractedKey) => number`
+- [ ] `indentation`: JSON のインデント
+  - 数値形式: `2`（スペース数）
+  - 文字列形式: `'\t'`（タブ）または `'  '`（スペース）
+
+#### 3.2.6: Trans コンポーネント設定
+- [ ] `transKeepBasicHtmlNodesFor`: Trans コンポーネントで保持する HTML タグ（デフォルト: `['br', 'strong', 'i']`）
+- [ ] `transComponents`: 抽出対象の Trans コンポーネント名（デフォルト: `['Trans']`）
+
+#### 3.2.7: 出力パスの関数形式サポート
+- [ ] `output`: 関数形式のサポート
+  - 文字列形式: `'locales/{{language}}/{{namespace}}.json'`
+  - 関数形式: `(language: string, namespace?: string) => string`
 
 ---
 
@@ -299,10 +360,16 @@
 - [ ] `export default { ... } as const` 形式の生成
 - [ ] 型安全性の確保
 
-#### 3.3.3: 名前空間のマージ
+#### 3.3.3: JavaScript ファイル出力
+- [ ] `outputFormat: 'js'` または `'js-esm'`: ES Module 形式（`export default`）
+- [ ] `outputFormat: 'js-cjs'`: CommonJS 形式（`module.exports`）
+- [ ] プロジェクトのモジュールシステムに応じた自動選択
+
+#### 3.3.4: 名前空間のマージ
 - [ ] `mergeNamespaces: true` オプション
 - [ ] 全名前空間を1ファイルに統合
 - [ ] 出力パスの調整（`{{namespace}}` プレースホルダーなし）
+- [ ] 既存ファイルの構造検出（名前空間付き vs フラット）
 
 ---
 
@@ -312,10 +379,14 @@
 - [ ] `// t('key', 'default')` パターンの検出
 - [ ] `/* t('key') */` パターンの検出
 - [ ] オブジェクト構文の解析: `// t('key', { defaultValue: '...', ns: '...' })`
+- [ ] 複数行コメントのサポート
+- [ ] コメント内の複数形パターンの検出
+- [ ] コメント内のコンテキストパターンの検出
 
 #### 3.4.2: スコープ解決
 - [ ] コメント内の `useTranslation` 参照の解決
 - [ ] `keyPrefix` の適用
+- [ ] 名前空間の解決
 
 #### 3.4.3: 設定オプション
 - [ ] `extractFromComments: true/false` オプション
@@ -335,6 +406,75 @@
 - [ ] インタラクティブな認証情報設定
 - [ ] 環境変数からの読み込み
 - [ ] 設定ファイルへの保存
+
+#### 3.5.3: Locize 設定オプション
+- [ ] `locize.projectId`: プロジェクト ID
+- [ ] `locize.apiKey`: API キー（環境変数推奨）
+- [ ] `locize.version`: バージョン（デフォルト: `'latest'`）
+- [ ] `locize.updateValues`: 既存翻訳値の更新
+- [ ] `locize.sourceLanguageOnly`: ソース言語のみ同期
+- [ ] `locize.compareModificationTime`: 変更時刻の比較
+- [ ] `locize.cdnType`: CDN タイプ（`'standard'` または `'pro'`）
+- [ ] `locize.dryRun`: プレビューモード
+
+---
+
+### Task 3.6: TypeScript 型生成の拡張
+
+#### 3.6.1: 型生成設定の詳細
+- [ ] `types.input`: 型生成元の翻訳ファイルパターン
+- [ ] `types.output`: メインの型定義ファイルパス
+- [ ] `types.resourcesFile`: リソースインターフェースファイルのパス
+- [ ] `types.enableSelector`: セレクター API の有効化（`true`, `false`, `'optimize'`）
+- [ ] `types.indentation`: 型定義ファイルのインデント
+
+#### 3.6.2: セレクター API の型生成
+- [ ] `enableSelector: true` の場合の型生成
+- [ ] `enableSelector: 'optimize'` の場合の最適化された型生成
+- [ ] 型安全なキー選択のサポート
+
+#### 3.6.3: マージされた名前空間の型生成
+- [ ] `mergeNamespaces: true` の場合の型生成
+- [ ] 複数名前空間を含むファイルの型生成
+
+---
+
+### Task 3.7: Lint 設定の詳細
+
+#### 3.7.1: Lint 設定オプション
+- [ ] `lint.ignoredAttributes`: 無視する JSX 属性名のリスト
+- [ ] `lint.ignoredTags`: 無視する JSX タグ名のリスト
+- [ ] `lint.acceptedAttributes`: リント対象の JSX 属性名のリスト（ホワイトリスト）
+- [ ] `lint.acceptedTags`: リント対象の JSX タグ名のリスト（ホワイトリスト）
+- [ ] `lint.ignore`: リント対象から除外するファイルパターン
+
+#### 3.7.2: リントロジックの実装
+- [ ] デフォルトの推奨属性リスト（`alt`, `title`, `placeholder`, `aria-label` など）
+- [ ] デフォルトの推奨タグリスト（`p`, `span`, `div`, `button`, `label` など）
+- [ ] ホワイトリストとブラックリストの優先順位
+- [ ] Trans コンポーネント内のコンテンツの無視
+
+---
+
+### Task 3.8: プラグインシステム
+
+#### 3.8.1: プラグイン API の設計
+- [ ] `Plugin` インターフェースの定義
+- [ ] プラグインのライフサイクルフック
+  - `setup`: 初期化
+  - `onLoad`: ファイル読み込み前の変換
+  - `onVisitNode`: AST ノード訪問時の処理
+  - `onEnd`: 抽出完了後の処理
+  - `afterSync`: 同期完了後の処理
+
+#### 3.8.2: プラグインの実装例
+- [ ] HTML ファイル用プラグインの例
+- [ ] Handlebars テンプレート用プラグインの例
+- [ ] カスタム抽出パターン用プラグインの例
+
+#### 3.8.3: プラグインの読み込み
+- [ ] 設定ファイルからのプラグイン読み込み
+- [ ] プラグインのエラーハンドリング
 
 ---
 
@@ -368,6 +508,26 @@
 - ✅ Watch モード
 - ✅ TypeScript 型定義生成
 - ✅ 未使用キーの検知と削除
+
+### 未実装の重要な機能（i18next-cli との比較）
+- ❌ ネストされた翻訳（`$t(...)` パターン）
+- ❌ `returnObjects` のサポート
+- ❌ フラットキー（`keySeparator: false`）
+- ❌ セパレータの設定（`nsSeparator`, `contextSeparator`, `pluralSeparator`）
+- ❌ 補間構文の設定（`interpolationPrefix`, `interpolationSuffix`）
+- ❌ ネスト翻訳の設定（`nestingPrefix`, `nestingSuffix`, `nestingOptionsSeparator`）
+- ❌ プライマリ/セカンダリ言語の設定
+- ❌ `defaultValue` の関数形式
+- ❌ `sort` の関数形式
+- ❌ `indentation` の文字列形式
+- ❌ `output` の関数形式
+- ❌ `defaultNS: false` のサポート
+- ❌ `transKeepBasicHtmlNodesFor` の設定
+- ❌ プラグインシステム
+- ❌ ヒューリスティック設定検出
+- ❌ JavaScript ファイル出力（`js`, `js-esm`, `js-cjs`）
+- ❌ 型生成の詳細設定（`enableSelector`, `resourcesFile`）
+- ❌ Lint 設定の詳細（`acceptedAttributes`, `acceptedTags`）
 
 ### 技術的負債
 - [ ] エラーハンドリングの改善
@@ -403,6 +563,13 @@
 15. Task 3.3: 出力フォーマットの多様化
 16. Task 3.4: コメントからの抽出
 17. Task 3.5: Locize 統合
+18. Task 2.3.6: ネストされた翻訳のサポート
+19. Task 2.3.7: returnObjects のサポート
+20. Task 3.2.3-3.2.7: 詳細な設定オプション
+21. Task 3.6: TypeScript 型生成の拡張
+22. Task 3.7: Lint 設定の詳細
+23. Task 3.8: プラグインシステム
+24. Task 2.4.4: ヒューリスティック設定検出
 
 ---
 
@@ -422,6 +589,55 @@
 - [ ] 差別化機能の実装
 - [ ] 開発者体験の向上
 - [ ] エコシステム統合
+
+---
+
+## 🔍 セルフレビュー結果（i18next-cli との比較）
+
+### 追加された重要なタスク
+
+以下のタスクが追加されました：
+
+1. **Task 2.3.6: ネストされた翻訳のサポート**
+   - `$t(...)` パターンの検出と抽出
+   - 文字列内のネストされた翻訳の処理
+
+2. **Task 2.3.7: returnObjects のサポート**
+   - 構造化コンテンツの保持
+   - オブジェクトキーの自動保持
+
+3. **Task 2.4.4: ヒューリスティック設定検出**
+   - 設定ファイルなしでの動作
+   - プロジェクト構造の自動検出
+
+4. **Task 3.2.3-3.2.7: 詳細な設定オプション**
+   - セパレータと補間の設定
+   - 言語とデフォルト値の設定
+   - ソートとフォーマット設定
+   - Trans コンポーネント設定
+   - 出力パスの関数形式
+
+5. **Task 3.3.3: JavaScript ファイル出力**
+   - ES Module と CommonJS のサポート
+
+6. **Task 3.6: TypeScript 型生成の拡張**
+   - セレクター API の型生成
+   - マージされた名前空間の型生成
+
+7. **Task 3.7: Lint 設定の詳細**
+   - ホワイトリスト/ブラックリストのサポート
+   - デフォルト推奨リスト
+
+8. **Task 3.8: プラグインシステム**
+   - 拡張可能なアーキテクチャ
+
+### 確認事項
+
+- ✅ 全ての主要な i18next-cli 機能が TODO に含まれている
+- ✅ 設定オプションの詳細が網羅されている
+- ✅ 出力フォーマットの多様性が考慮されている
+- ✅ プラグインシステムが計画に含まれている
+- ✅ ヒューリスティック設定検出が考慮されている
 
 ---
 
