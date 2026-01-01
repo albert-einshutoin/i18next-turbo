@@ -1,0 +1,26 @@
+[package]
+name = "i18next-turbo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# CLI & Config
+clap = { version = "4.4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Filesystem & Glob
+glob = "0.3"
+walkdir = "2.4"
+notify-debouncer-mini = "0.4"  # For watch mode with debouncing
+
+# Parallelism
+rayon = "1.8"
+
+# AST Parsing (SWC)
+swc_common = { version = "18", features = ["tty-emitter"] }
+swc_ecma_parser = "32"
+swc_ecma_ast = "19"
+swc_ecma_visit = "19"
