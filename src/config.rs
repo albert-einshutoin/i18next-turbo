@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::path::Path;
 
 /// Configuration for i18next-turbo
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     /// Glob patterns for input files (e.g., ["src/**/*.tsx", "src/**/*.ts"])
@@ -25,6 +25,22 @@ pub struct Config {
     /// Function names to extract (e.g., ["t", "i18n.t"])
     #[serde(default = "default_functions")]
     pub functions: Vec<String>,
+
+    /// Key separator (e.g., "." for "button.submit")
+    #[serde(default = "default_key_separator")]
+    pub key_separator: String,
+
+    /// Namespace separator (e.g., ":" for "common:greeting")
+    #[serde(default = "default_ns_separator")]
+    pub ns_separator: String,
+
+    /// Context separator (e.g., "_" for "friend_male")
+    #[serde(default = "default_context_separator")]
+    pub context_separator: String,
+
+    /// Plural separator (e.g., "_" for "item_one")
+    #[serde(default = "default_plural_separator")]
+    pub plural_separator: String,
 }
 
 fn default_input() -> Vec<String> {
@@ -47,6 +63,22 @@ fn default_functions() -> Vec<String> {
     vec!["t".to_string()]
 }
 
+fn default_key_separator() -> String {
+    ".".to_string()
+}
+
+fn default_ns_separator() -> String {
+    ":".to_string()
+}
+
+fn default_context_separator() -> String {
+    "_".to_string()
+}
+
+fn default_plural_separator() -> String {
+    "_".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -55,6 +87,10 @@ impl Default for Config {
             locales: default_locales(),
             default_namespace: default_namespace(),
             functions: default_functions(),
+            key_separator: default_key_separator(),
+            ns_separator: default_ns_separator(),
+            context_separator: default_context_separator(),
+            plural_separator: default_plural_separator(),
         }
     }
 }

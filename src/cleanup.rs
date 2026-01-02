@@ -115,7 +115,7 @@ fn find_dead_keys_in_object(
 
 /// Remove dead keys from locale files (purge mode)
 pub fn purge_dead_keys(
-    locales_dir: &Path,
+    _locales_dir: &Path,
     dead_keys: &[DeadKey],
 ) -> Result<usize> {
     use std::collections::HashMap;

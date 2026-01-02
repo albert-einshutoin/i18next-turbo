@@ -85,7 +85,7 @@ pub fn sort_keys_alphabetically(map: &Map<String, Value>) -> Map<String, Value> 
 }
 
 /// Merge extracted keys into an existing translation map.
-/// - New keys are added with empty string values
+/// - New keys are added with default_value if available, otherwise empty string
 /// - Existing keys are preserved (translations are kept)
 pub fn merge_keys(
     existing: &mut Map<String, Value>,
@@ -111,7 +111,10 @@ pub fn merge_keys(
         // Handle nested keys: "button.submit" -> {"button": {"submit": ""}}
         let parts: Vec<&str> = key.key.split('.').collect();
 
-        if insert_nested_key(existing, &parts, "") {
+        // Use default_value if available, otherwise empty string
+        let value = key.default_value.as_deref().unwrap_or("");
+
+        if insert_nested_key(existing, &parts, value) {
             result.added_keys.push(key.key.clone());
         } else {
             result.existing_keys += 1;
@@ -289,6 +292,38 @@ mod tests {
         assert_eq!(
             existing.get("existing"),
             Some(&Value::String("translated".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_merge_keys_with_default_value() {
+        let mut existing = Map::new();
+
+        let keys = vec![
+            ExtractedKey {
+                key: "greeting".to_string(),
+                namespace: None,
+                default_value: Some("Hello World!".to_string()),
+            },
+            ExtractedKey {
+                key: "no_default".to_string(),
+                namespace: None,
+                default_value: None,
+            },
+        ];
+
+        let result = merge_keys(&mut existing, &keys, "translation", "translation");
+
+        assert_eq!(result.added_keys.len(), 2);
+        // Key with default_value should use that value
+        assert_eq!(
+            existing.get("greeting"),
+            Some(&Value::String("Hello World!".to_string()))
+        );
+        // Key without default_value should use empty string
+        assert_eq!(
+            existing.get("no_default"),
+            Some(&Value::String("".to_string()))
         );
     }
 }

@@ -6,6 +6,7 @@
 
 - ✅ **完了**: Phase 2の一部、Phase 3のほぼ全て
 - ⚠️ **部分的実装**: Phase 2の高度な機能
+- ✅ **接続完了**: TypeScript型生成、デッドキー検知（CLIから呼び出し可能）
 - ❌ **未実装**: Phase 1全体、Phase 2の一部、Phase 3以降の追加機能
 
 ---
@@ -89,27 +90,53 @@
 - [ ] npm レジストリにパッケージが公開される
 - [ ] `npm install i18next-turbo` でインストールできる
 
+### Task 1.3: 実装済み機能のCLI接続（Wiring）【完了】✅
+
+#### 1.3.1: TypeScript型生成コマンドの追加
+- [x] `src/main.rs` の `Commands` Enum に `Typegen` バリアントを追加
+- [x] `typegen` サブコマンドを実装
+  - `--output` オプション（型定義ファイルの出力先）
+  - `--default-locale` オプション（デフォルトロケール）
+- [x] `src/typegen.rs` の `generate_types()` 関数を呼び出す処理を追加
+- [ ] 設定ファイルから `types` セクションを読み込む
+- [x] `extract` コマンド実行時に自動的に型生成するオプション（`--generate-types`）を追加
+
+#### 1.3.2: デッドキー検知コマンドの追加
+- [x] `src/main.rs` の `Commands` Enum に `Check` または `Cleanup` バリアントを追加
+- [x] `check` または `cleanup` サブコマンドを実装
+  - `--remove` オプション（未使用キーを削除するかどうか）
+  - `--dry-run` オプション（削除前にプレビュー）
+- [x] `src/cleanup.rs` の `find_dead_keys()` と `remove_dead_keys()` 関数を呼び出す処理を追加
+- [x] 検出されたデッドキーのレポート表示
+- [ ] 削除実行時の確認プロンプト（`--remove` が指定されている場合）
+
+#### 達成基準
+- [x] `i18next-turbo typegen` コマンドが動作する
+- [x] `i18next-turbo check` コマンドが動作する
+- [x] `i18next-turbo extract --generate-types` で抽出と型生成が同時に実行される
+- [ ] READMEに記載されている機能が実際に使える状態になる
+
 ---
 
 ## ⚛️ Phase 2: i18next 完全互換 (v1.0.0 目標)
 
-### Task 2.1: `<Trans>` コンポーネントの完全対応
+### Task 2.1: `<Trans>` コンポーネントの完全対応 ✅（主要機能完了）
 
-#### 2.1.1: 子要素（Children）からのキー抽出
-- [ ] `JSXElement` の子ノードを訪問する Visitor を実装
-- [ ] `JSXText` ノードからテキストを抽出
-- [ ] `i18nKey` がない場合、子要素のテキストをキーとして使用
-- [ ] HTML タグ（`<strong>`, `<br>` など）を保持する処理
-- [ ] 補間構文（`{{name}}`）の処理
+#### 2.1.1: 子要素（Children）からのキー抽出 ✅
+- [x] `JSXElement` の子ノードを訪問する Visitor を実装
+- [x] `JSXText` ノードからテキストを抽出
+- [x] `i18nKey` がない場合、子要素のテキストをキーとして使用
+- [x] HTML タグ（`<strong>`, `<br>` など）を保持する処理
+- [x] 補間構文（`{{name}}`）の処理
 
-#### 2.1.2: `ns` 属性の抽出
-- [ ] `JSXOpeningElement` から `ns` 属性を抽出
-- [ ] 名前空間を `ExtractedKey` に設定
-- [ ] テストケースの追加
+#### 2.1.2: `ns` 属性の抽出 ✅
+- [x] `JSXOpeningElement` から `ns` 属性を抽出
+- [x] 名前空間を `ExtractedKey` に設定
+- [x] テストケースの追加
 
-#### 2.1.3: `count` 属性の抽出
-- [ ] `JSXOpeningElement` から `count` 属性を抽出
-- [ ] 複数形キー（`_one`, `_other`）を生成
+#### 2.1.3: `count` 属性の抽出 ✅
+- [x] `JSXOpeningElement` から `count` 属性を抽出
+- [x] 複数形キー（`_one`, `_other`）を生成
 - [ ] `count` と `context` の組み合わせに対応
 
 #### 2.1.4: `context` 属性の抽出
@@ -118,9 +145,9 @@
 - [ ] 動的なコンテキスト値（三項演算子など）の解析
 
 #### 達成基準
-- [ ] `<Trans>Hello</Trans>` から `Hello` がキーとして抽出される
-- [ ] `<Trans ns="common">content</Trans>` が `common` 名前空間に保存される
-- [ ] `<Trans count={5}>item</Trans>` から `item_one`, `item_other` が生成される
+- [x] `<Trans>Hello</Trans>` から `Hello` がキーとして抽出される
+- [x] `<Trans ns="common">content</Trans>` が `common` 名前空間に保存される
+- [x] `<Trans count={5}>item</Trans>` から `item_one`, `item_other` が生成される
 
 ---
 
@@ -198,6 +225,16 @@
 - [ ] `objectKeys` セットの管理
 - [ ] オブジェクトキーの子要素を自動的に保持するパターン生成（`key.*`）
 
+#### 2.3.8: テンプレートリテラル（Template Literals）のサポート ✅
+- [x] `t(\`key\`)` パターンの検出（バッククォートで囲まれた文字列）
+- [x] `Expr::Tpl` (Template Literal) ノードの処理を追加
+- [x] 変数が埋め込まれていないテンプレートリテラル（静的文字列）の抽出
+  - `t(\`hello\`)` → `hello` として抽出
+- [x] 変数が埋め込まれているテンプレートリテラルの警告またはスキップ
+  - `t(\`hello_${name}\`)` → スキップ（動的キーは抽出不可）
+- [x] `Lit::Str` と `TemplateLiteral` の両方をサポートする統一的な処理
+- [x] テストケースの追加
+
 #### 達成基準
 - [ ] `const { t } = useTranslation('common', { keyPrefix: 'user' }); t('name')` が `common:user.name` として抽出される
 - [ ] `const t = getFixedT('en', 'ns', 'prefix'); t('key')` が `ns:prefix.key` として抽出される
@@ -247,27 +284,29 @@
 
 ### Task 3.1: 追加コマンドの実装
 
-#### 3.1.1: `status` コマンド
-- [ ] 翻訳完了率の計算
-- [ ] ロケール別のサマリー表示
-- [ ] 詳細なキー別レポート（`status [locale]`）
+#### 3.1.1: `status` コマンド ✅（基本実装完了）
+- [x] 翻訳完了率の計算（キー数ベース）
+- [x] ロケール別のサマリー表示
+- [x] 詳細なキー別レポート（`status [locale]`）
 - [ ] 名前空間フィルタ（`--namespace` オプション）
 - [ ] プログレスバーの表示
 - [ ] 非ゼロ終了コード（翻訳が不完全な場合）
 
-#### 3.1.2: `sync` コマンド
-- [ ] プライマリ言語ファイルの読み込み
-- [ ] セカンダリ言語ファイルとの比較
-- [ ] 不足キーの追加（デフォルト値で）
-- [ ] 未使用キーの削除（オプション）
-- [ ] 変更されたファイルの報告
+#### 3.1.2: `sync` コマンド ✅
+- [x] プライマリ言語ファイルの読み込み
+- [x] セカンダリ言語ファイルとの比較
+- [x] 不足キーの追加（デフォルト値で）
+- [x] 未使用キーの削除（`--remove-unused` オプション）
+- [x] 変更されたファイルの報告
+- [x] `--dry-run` オプション
 
-#### 3.1.3: `lint` コマンド
-- [ ] ハードコードされた文字列の検出
-- [ ] JSX テキストノードの解析
-- [ ] JSX 属性の解析（`title`, `alt` など）
-- [ ] 無視ルールの設定（`ignoredTags`, `ignoredAttributes`）
-- [ ] エラーレポートの表示
+#### 3.1.3: `lint` コマンド ✅
+- [x] ハードコードされた文字列の検出
+- [x] JSX テキストノードの解析
+- [x] JSX 属性の解析（`title`, `alt`, `placeholder`, `aria-label` など）
+- [x] 無視ルールの設定（`ignoredTags`: script, style, code, pre）
+- [x] エラーレポートの表示
+- [x] `--fail-on-error` オプション（CI用）
 - [ ] Watch モードのサポート
 
 #### 3.1.4: `rename-key` コマンド
@@ -309,11 +348,13 @@
 - [ ] `removeUnusedKeys`: 未使用キーの削除（デフォルト: `true`）
 - [ ] `ignore`: 抽出対象から除外するファイルパターン（glob 配列）
 
-#### 3.2.3: セパレータと補間の設定
-- [ ] `keySeparator`: キーのセパレータ（デフォルト: `'.'`、`false` でフラットキー）
-- [ ] `nsSeparator`: 名前空間セパレータ（デフォルト: `':'`、`false` で無効化）
-- [ ] `contextSeparator`: コンテキストセパレータ（デフォルト: `'_'`）
-- [ ] `pluralSeparator`: 複数形セパレータ（デフォルト: `'_'`）
+#### 3.2.3: セパレータと補間の設定 ✅（部分実装）
+- [x] `keySeparator`: キーのセパレータ（デフォルト: `'.'`）
+- [x] `nsSeparator`: 名前空間セパレータ（デフォルト: `':'`）
+- [x] `contextSeparator`: コンテキストセパレータ（デフォルト: `'_'`）
+- [x] `pluralSeparator`: 複数形セパレータ（デフォルト: `'_'`）
+- [ ] `keySeparator: false` でフラットキーサポート
+- [ ] `nsSeparator: false` で無効化
 - [ ] `interpolationPrefix`: 補間プレフィックス（デフォルト: `'{{'`）
 - [ ] `interpolationSuffix`: 補間サフィックス（デフォルト: `'}}'`）
 - [ ] `nestingPrefix`: ネスト翻訳プレフィックス（デフォルト: `'$t('`）
@@ -510,6 +551,8 @@
 - ✅ 未使用キーの検知と削除
 
 ### 未実装の重要な機能（i18next-cli との比較）
+- ✅ **実装済み機能のCLI接続**（typegen、check、status コマンド追加完了）
+- ✅ テンプレートリテラル（`t(\`key\`)`）のサポート
 - ❌ ネストされた翻訳（`$t(...)` パターン）
 - ❌ `returnObjects` のサポート
 - ❌ フラットキー（`keySeparator: false`）
@@ -540,20 +583,22 @@
 ## 🎯 優先度マトリックス
 
 ### P0 (最優先 - 即座に実装)
-1. Task 1.1: napi-rs の導入
-2. Task 1.2: CI/CD の構築
-3. Task 2.4: JS/TS 設定ファイルの読み込み
+1. ~~**Task 1.3: 実装済み機能のCLI接続（Wiring）**~~ ✅ **完了**
+2. Task 1.1: napi-rs の導入
+3. Task 1.2: CI/CD の構築
+4. Task 2.4: JS/TS 設定ファイルの読み込み
 
 ### P1 (高優先度 - Phase 2 完了のため)
-4. Task 2.1: `<Trans>` コンポーネントの完全対応
-5. Task 2.2: 言語別複数形カテゴリの生成
-6. Task 2.3.1: `useTranslation` hook のスコープ解決
-7. Task 2.3.2: `getFixedT` のサポート
+5. Task 2.1: `<Trans>` コンポーネントの完全対応
+6. Task 2.2: 言語別複数形カテゴリの生成
+7. Task 2.3.1: `useTranslation` hook のスコープ解決
+8. Task 2.3.2: `getFixedT` のサポート
+9. ~~Task 2.3.8: テンプレートリテラルのサポート~~ ✅ **完了**
 
 ### P2 (中優先度 - 差別化機能)
-8. Task 3.1.1: `status` コマンド
-9. Task 3.1.2: `sync` コマンド
-10. Task 3.1.3: `lint` コマンド
+8. ~~Task 3.1.1: `status` コマンド~~ ✅ **完了**
+9. ~~Task 3.1.2: `sync` コマンド~~ ✅ **完了**
+10. ~~Task 3.1.3: `lint` コマンド~~ ✅ **完了**
 11. Task 3.2: 高度な設定オプション
 
 ### P3 (低優先度 - 拡張機能)
@@ -594,9 +639,23 @@
 
 ## 🔍 セルフレビュー結果（i18next-cli との比較）
 
-### 追加された重要なタスク
+### 評価レポートに基づく追加タスク（2025-01-XX）
 
-以下のタスクが追加されました：
+以下のタスクが評価レポートの指摘に基づいて追加されました：
+
+1. ~~**Task 1.3: 実装済み機能のCLI接続（Wiring）**~~ ✅ **完了**
+   - `typegen.rs` と `cleanup.rs` がCLIから呼び出し可能に
+   - `Commands` Enum に `Typegen`、`Check`、`Status` バリアントを追加
+   - `extract --generate-types` オプションも追加
+
+2. ~~**Task 2.3.8: テンプレートリテラルのサポート**~~ ✅ **完了**
+   - `t(\`key\`)` パターンの検出を実装
+   - `Expr::Tpl` ノードの処理を追加
+   - 静的テンプレートリテラルの抽出とテスト追加
+
+### 以前に追加された重要なタスク
+
+以下のタスクが以前のセルフレビューで追加されました：
 
 1. **Task 2.3.6: ネストされた翻訳のサポート**
    - `$t(...)` パターンの検出と抽出

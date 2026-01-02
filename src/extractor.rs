@@ -5,8 +5,9 @@ use swc_common::comments::SingleThreadedComments;
 use swc_common::sync::Lrc;
 use swc_common::{FileName, SourceMap, Span};
 use swc_ecma_ast::{
-    CallExpr, Callee, Expr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElementName,
-    JSXOpeningElement, Lit, MemberProp, ObjectLit, Prop, PropName, PropOrSpread,
+    CallExpr, Callee, Expr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
+    JSXElementChild, JSXElementName, JSXOpeningElement, Lit, MemberProp, ObjectLit, Prop,
+    PropName, PropOrSpread, Tpl,
 };
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{Visit, VisitWith};
@@ -34,11 +35,13 @@ pub struct TranslationVisitor {
     trans_components: HashSet<String>,
     /// Extracted keys
     pub keys: Vec<ExtractedKey>,
-    /// Source map for line number lookup
+    /// Source map for line number lookup (reserved for future use)
+    #[allow(dead_code)]
     source_map: Lrc<SourceMap>,
     /// Comments for magic comment detection
     comments: Option<SingleThreadedComments>,
-    /// Lines disabled via magic comments
+    /// Lines disabled via magic comments (reserved for future use)
+    #[allow(dead_code)]
     disabled_lines: HashSet<u32>,
 }
 
@@ -120,18 +123,38 @@ impl TranslationVisitor {
         }
     }
 
-    /// Extract string literal from the first argument
+    /// Extract string literal or template literal from the first argument
     fn extract_key_from_args(&self, call: &CallExpr) -> Option<String> {
         call.args.first().and_then(|arg| {
-            if let Expr::Lit(Lit::Str(s)) = arg.expr.as_ref() {
-                s.value.as_str().map(|s| s.to_string())
-            } else {
-                None
+            match arg.expr.as_ref() {
+                // String literal: t('key')
+                Expr::Lit(Lit::Str(s)) => s.value.as_str().map(|s| s.to_string()),
+                // Template literal: t(`key`)
+                Expr::Tpl(tpl) => self.extract_simple_template_literal(tpl),
+                _ => None,
             }
         })
     }
 
+    /// Extract key from a template literal (only if it's a simple string without expressions)
+    fn extract_simple_template_literal(&self, tpl: &Tpl) -> Option<String> {
+        // Only handle simple template literals without expressions
+        // e.g., t(`hello`) is OK, but t(`hello ${name}`) is not
+        if !tpl.exprs.is_empty() {
+            return None; // Has interpolations, skip
+        }
+
+        // Template literal with no expressions should have exactly one quasi
+        if tpl.quasis.len() == 1 {
+            let quasi = &tpl.quasis[0];
+            return quasi.cooked.as_ref().and_then(|s| s.as_str().map(|s| s.to_string()));
+        }
+
+        None
+    }
+
     /// Check if call has count option (for plurals)
+    #[allow(dead_code)]
     fn has_count_option(&self, call: &CallExpr) -> bool {
         self.get_option_value(call, "count").is_some()
     }
@@ -248,6 +271,82 @@ impl TranslationVisitor {
         None
     }
 
+    /// Extract ns (namespace) from Trans component attributes
+    fn extract_trans_ns(&self, elem: &JSXOpeningElement) -> Option<String> {
+        for attr in &elem.attrs {
+            if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
+                if let JSXAttrName::Ident(name) = &jsx_attr.name {
+                    if name.sym.to_string() == "ns" {
+                        if let Some(value) = &jsx_attr.value {
+                            return self.extract_jsx_attr_string(value);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if Trans component has count attribute (for plurals)
+    fn trans_has_count(&self, elem: &JSXOpeningElement) -> bool {
+        for attr in &elem.attrs {
+            if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
+                if let JSXAttrName::Ident(name) = &jsx_attr.name {
+                    if name.sym.to_string() == "count" {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Extract text content from JSX children
+    fn extract_jsx_children_text(&self, children: &[JSXElementChild]) -> Option<String> {
+        let mut text_parts: Vec<String> = Vec::new();
+
+        for child in children {
+            match child {
+                JSXElementChild::JSXText(text) => {
+                    let s = text.value.to_string();
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        text_parts.push(trimmed.to_string());
+                    }
+                }
+                JSXElementChild::JSXExprContainer(container) => {
+                    // Handle {variable} - keep as placeholder
+                    if let swc_ecma_ast::JSXExpr::Expr(expr) = &container.expr {
+                        if let Expr::Ident(ident) = expr.as_ref() {
+                            text_parts.push(format!("{{{{{}}}}}", ident.sym));
+                        }
+                    }
+                }
+                JSXElementChild::JSXElement(element) => {
+                    // Recursively extract text from nested elements
+                    // Keep tag names like <strong>, <br>, etc.
+                    if let JSXElementName::Ident(ident) = &element.opening.name {
+                        let tag = ident.sym.to_string();
+                        // For simple inline tags, wrap content
+                        if let Some(inner) = self.extract_jsx_children_text(&element.children) {
+                            text_parts.push(format!("<{}>{}</{}>", tag, inner, tag));
+                        } else if element.closing.is_none() {
+                            // Self-closing tag
+                            text_parts.push(format!("<{}/>", tag));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if text_parts.is_empty() {
+            None
+        } else {
+            Some(text_parts.join(" "))
+        }
+    }
+
     /// Extract defaults attribute from Trans component
     fn extract_trans_defaults(&self, elem: &JSXOpeningElement) -> Option<String> {
         for attr in &elem.attrs {
@@ -334,7 +433,7 @@ impl Visit for TranslationVisitor {
         call.visit_children_with(self);
     }
 
-    fn visit_jsx_opening_element(&mut self, elem: &JSXOpeningElement) {
+    fn visit_jsx_element(&mut self, elem: &JSXElement) {
         // Check magic comments
         if self.is_disabled(elem.span) {
             elem.visit_children_with(self);
@@ -342,13 +441,58 @@ impl Visit for TranslationVisitor {
         }
 
         // Check if this is a Trans component
-        if let JSXElementName::Ident(ident) = &elem.name {
+        if let JSXElementName::Ident(ident) = &elem.opening.name {
             if self.trans_components.contains(&ident.sym.to_string()) {
-                // Extract i18nKey attribute
-                if let Some(key) = self.extract_trans_key(elem) {
-                    let (namespace, base_key) = self.parse_key_with_namespace(&key);
-                    let default_value = self.extract_trans_defaults(elem);
+                // Extract i18nKey attribute (primary key source)
+                let i18n_key = self.extract_trans_key(&elem.opening);
 
+                // Extract ns attribute
+                let ns_from_attr = self.extract_trans_ns(&elem.opening);
+
+                // Extract defaults attribute
+                let defaults = self.extract_trans_defaults(&elem.opening);
+
+                // Extract children text (used as key if i18nKey not present, or as default value)
+                let children_text = self.extract_jsx_children_text(&elem.children);
+
+                // Check for count attribute (plurals)
+                let has_count = self.trans_has_count(&elem.opening);
+
+                // Determine the key and default value
+                let (key, default_value) = if let Some(key) = i18n_key {
+                    // i18nKey is present - use it as key
+                    // Use defaults attribute or children as default value
+                    let dv = defaults.or(children_text);
+                    (key, dv)
+                } else if let Some(children) = children_text {
+                    // No i18nKey - use children text as key
+                    (children.clone(), Some(children))
+                } else {
+                    // No key available, skip
+                    elem.visit_children_with(self);
+                    return;
+                };
+
+                // Parse namespace from key (e.g., "common:greeting")
+                let (namespace_from_key, base_key) = self.parse_key_with_namespace(&key);
+
+                // Use ns attribute if present, otherwise use namespace from key
+                let namespace = ns_from_attr.or(namespace_from_key);
+
+                // Generate keys based on count attribute
+                if has_count {
+                    // Generate plural forms
+                    self.keys.push(ExtractedKey {
+                        key: format!("{}_one", base_key),
+                        namespace: namespace.clone(),
+                        default_value: default_value.clone(),
+                    });
+                    self.keys.push(ExtractedKey {
+                        key: format!("{}_other", base_key),
+                        namespace,
+                        default_value,
+                    });
+                } else {
                     self.keys.push(ExtractedKey {
                         key: base_key,
                         namespace,
@@ -664,5 +808,126 @@ mod tests {
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "friend_female_one"));
         assert!(keys.iter().any(|k| k.key == "friend_female_other"));
+    }
+
+    #[test]
+    fn test_template_literal_simple() {
+        let source = r#"
+            const text = t(`hello.world`);
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "hello.world");
+    }
+
+    #[test]
+    fn test_template_literal_with_namespace() {
+        let source = r#"
+            const text = t(`common:button.save`);
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "button.save");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_template_literal_with_interpolation_ignored() {
+        let source = r#"
+            const key = 'dynamic';
+            const text = t(`hello.${key}`);
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        // Template literals with interpolations should be skipped
+        assert_eq!(keys.len(), 0);
+    }
+
+    #[test]
+    fn test_trans_children_as_key() {
+        let source = r#"
+            function Component() {
+                return <Trans>Hello World</Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "Hello World");
+        assert_eq!(keys[0].default_value, Some("Hello World".to_string()));
+    }
+
+    #[test]
+    fn test_trans_children_with_html() {
+        let source = r#"
+            function Component() {
+                return <Trans>Hello <strong>World</strong></Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].key.contains("Hello"));
+        assert!(keys[0].key.contains("<strong>"));
+    }
+
+    #[test]
+    fn test_trans_ns_attribute() {
+        let source = r#"
+            function Component() {
+                return <Trans ns="common" i18nKey="greeting">Hello</Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "greeting");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_trans_count_attribute() {
+        let source = r#"
+            function Component() {
+                return <Trans i18nKey="item" count={5}>items</Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "item_one"));
+        assert!(keys.iter().any(|k| k.key == "item_other"));
+    }
+
+    #[test]
+    fn test_trans_children_with_ns_and_count() {
+        let source = r#"
+            function Component() {
+                return <Trans ns="shop" i18nKey="product" count={3}>products</Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "product_one" && k.namespace == Some("shop".to_string())));
+        assert!(keys.iter().any(|k| k.key == "product_other" && k.namespace == Some("shop".to_string())));
     }
 }
