@@ -44,13 +44,16 @@ if (!rustPlatform || !rustArch) {
 
 // Determine binary name and path
 const binaryName = platform === 'win32' ? 'i18next-turbo.exe' : 'i18next-turbo';
-const binaryPath = path.join(__dirname, '..', 'target', 'release', binaryName);
+const binaryPath = resolveBinaryPath(platform, arch, binaryName);
 
 // Check if binary exists
-if (!fs.existsSync(binaryPath)) {
-  console.error(`Error: Binary not found at ${binaryPath}`);
-  console.error('Please build the project first: cargo build --release');
-  console.error('Or install from npm package which includes pre-built binaries.');
+if (!binaryPath || !fs.existsSync(binaryPath)) {
+  console.error('Error: Suitable binary not found for this platform.');
+  if (binaryPath) {
+    console.error(`Checked: ${binaryPath}`);
+  }
+  console.error('Please install the optional binary package for your platform,');
+  console.error('or build the project first: cargo build --release');
   process.exit(1);
 }
 
@@ -166,3 +169,30 @@ function loadConfigFile(configPath) {
   return null;
 }
 
+/**
+ * Resolve the prebuilt binary path from optionalDependencies.
+ * Falls back to local target/release for dev environments.
+ */
+function resolveBinaryPath(platformName, archName, binName) {
+  const pkgName = getBinaryPackageName(platformName, archName);
+  if (pkgName) {
+    try {
+      const pkgJsonPath = require.resolve(`${pkgName}/package.json`);
+      return path.join(path.dirname(pkgJsonPath), binName);
+    } catch (error) {
+      // Optional package not installed; fall back to local build.
+    }
+  }
+
+  return path.join(__dirname, '..', 'target', 'release', binName);
+}
+
+function getBinaryPackageName(platformName, archName) {
+  if (platformName === 'darwin' && archName === 'x64') return 'i18next-turbo-darwin-x64';
+  if (platformName === 'darwin' && archName === 'arm64') return 'i18next-turbo-darwin-arm64';
+  if (platformName === 'linux' && archName === 'x64') return 'i18next-turbo-linux-x64';
+  if (platformName === 'linux' && archName === 'arm64') return 'i18next-turbo-linux-arm64';
+  if (platformName === 'win32' && archName === 'x64') return 'i18next-turbo-win32-x64';
+  if (platformName === 'win32' && archName === 'ia32') return 'i18next-turbo-win32-ia32';
+  return null;
+}
