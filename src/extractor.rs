@@ -44,8 +44,7 @@ pub struct TranslationVisitor {
     trans_components: HashSet<String>,
     /// Extracted keys
     pub keys: Vec<ExtractedKey>,
-    /// Source map for line number lookup (reserved for future use)
-    #[allow(dead_code)]
+    /// Source map for line number lookup
     source_map: Lrc<SourceMap>,
     /// Comments for magic comment detection
     comments: Option<SingleThreadedComments>,
@@ -54,6 +53,8 @@ pub struct TranslationVisitor {
     disabled_lines: HashSet<u32>,
     /// Scope info for variables bound from useTranslation/getFixedT
     scope_bindings: HashMap<String, ScopeInfo>,
+    /// File path being processed (for warning messages)
+    file_path: Option<String>,
 }
 
 impl TranslationVisitor {
@@ -76,6 +77,7 @@ impl TranslationVisitor {
             comments,
             disabled_lines,
             scope_bindings: HashMap::new(),
+            file_path: None,
         }
     }
 
@@ -142,17 +144,19 @@ impl TranslationVisitor {
                 // String literal: t('key')
                 Expr::Lit(Lit::Str(s)) => s.value.as_str().map(|s| s.to_string()),
                 // Template literal: t(`key`)
-                Expr::Tpl(tpl) => self.extract_simple_template_literal(tpl),
+                Expr::Tpl(tpl) => self.extract_simple_template_literal(tpl, call.span),
                 _ => None,
             }
         })
     }
 
     /// Extract key from a template literal (only if it's a simple string without expressions)
-    fn extract_simple_template_literal(&self, tpl: &Tpl) -> Option<String> {
+    fn extract_simple_template_literal(&self, tpl: &Tpl, span: Span) -> Option<String> {
         // Only handle simple template literals without expressions
         // e.g., t(`hello`) is OK, but t(`hello ${name}`) is not
         if !tpl.exprs.is_empty() {
+            // Warn about dynamic template literals that cannot be extracted
+            self.warn_dynamic_template_literal(span);
             return None; // Has interpolations, skip
         }
 
@@ -163,6 +167,22 @@ impl TranslationVisitor {
         }
 
         None
+    }
+
+    /// Warn about dynamic template literals that cannot be extracted
+    fn warn_dynamic_template_literal(&self, span: Span) {
+        let loc = self.source_map.lookup_char_pos(span.lo);
+        let file_path = self
+            .file_path
+            .as_ref()
+            .map(|p| p.as_str())
+            .unwrap_or("<unknown>");
+        eprintln!(
+            "Warning: Dynamic template literal found at {}:{}:{}. Translation key extraction skipped. Consider using i18next-extract-disable-line if intentional.",
+            file_path,
+            loc.line,
+            loc.col_display + 1
+        );
     }
 
     /// Check if call has count option (for plurals)
@@ -996,6 +1016,7 @@ pub fn extract_from_source<P: AsRef<Path>>(
 
     // Visit the AST and extract keys
     let mut visitor = TranslationVisitor::new(functions.to_vec(), cm, Some(comments));
+    visitor.file_path = Some(path.display().to_string());
     module.visit_with(&mut visitor);
 
     // Also extract keys from comments
