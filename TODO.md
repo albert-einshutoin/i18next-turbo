@@ -8,7 +8,7 @@
 - ✅ **完了**: Phase 3の主要コマンド（status, sync, lint, check, typegen, init, rename-key）
 - ✅ **完了**: ネストされた翻訳（$t パターン）、フラットキー、コメントからの抽出
 - ⚠️ **部分的実装**: 言語別複数形カテゴリ（現在は英語ルールのみ）
-- ❌ **未実装**: Phase 1全体（npm配布、CI/CD）、一部の高度な機能
+- ⚠️ **部分的実装**: Phase 1（npm配布の基盤は整備済み、CI/CDは未実装）
 
 ---
 
@@ -17,10 +17,10 @@
 ### Task 1.1: napi-rs の導入とハイブリッド構成化
 
 #### 1.1.1: Cargo.toml の更新
-- [ ] `napi` クレートを追加（バージョン指定）
-- [ ] `napi-derive` クレートを追加
-- [ ] `[lib]` セクションを追加して `crate-type = ["cdylib", "rlib"]` を設定
-- [ ] `[build-dependencies]` に `napi-build` を追加
+- [x] `napi` クレートを追加（バージョン指定）
+- [x] `napi-derive` クレートを追加
+- [x] `[lib]` セクションを追加して `crate-type = ["cdylib", "rlib"]` を設定
+- [x] `[build-dependencies]` に `napi-build` を追加
 
 #### 1.1.2: src/lib.rs の Node.js API 実装
 - [ ] `#[napi]` マクロを使用した関数エクスポート
@@ -30,26 +30,26 @@
 - [ ] エラーハンドリングを `napi::Error` に変換
 
 #### 1.1.3: package.json の作成
-- [ ] `package.json` ファイルを作成
-- [ ] `name`, `version`, `description`, `license` を設定
-- [ ] `bin` フィールドで CLI エントリーポイントを指定
-- [ ] `main` フィールドで Node.js API エントリーポイントを指定
-- [ ] `optionalDependencies` で OS 別バイナリを管理
+- [x] `package.json` ファイルを作成
+- [x] `name`, `version`, `description`, `license` を設定
+- [x] `bin` フィールドで CLI エントリーポイントを指定
+- [x] `main` フィールドで Node.js API エントリーポイントを指定
+- [x] `optionalDependencies` で OS 別バイナリを管理
   - `i18next-turbo-darwin-x64`, `i18next-turbo-darwin-arm64`
   - `i18next-turbo-win32-x64`, `i18next-turbo-win32-ia32`
   - `i18next-turbo-linux-x64`, `i18next-turbo-linux-arm64`
-- [ ] `scripts` に `postinstall` スクリプトを追加（バイナリダウンロード用）
+- [x] `scripts` に `postinstall` スクリプトを追加（バイナリダウンロード用）
 
 #### 1.1.4: Node.js ラッパーの作成
-- [ ] `bin/cli.js` を作成（Rust バイナリを呼び出すラッパー）
-- [ ] `lib/index.js` を作成（Node.js API のエントリーポイント）
+- [x] `bin/cli.js` を作成（Rust バイナリを呼び出すラッパー）
+- [x] `lib/index.js` を作成（Node.js API のエントリーポイント）
 - [ ] JS/TS 設定ファイルの読み込み処理を実装
   - `i18next-parser.config.js` の読み込み
   - `i18next.config.ts` の読み込み（`jiti` または `ts-node` を使用）
   - 設定オブジェクトを JSON 文字列に変換して Rust バイナリに渡す
 
 #### 1.1.5: ビルドスクリプトの作成
-- [ ] `build.rs` を作成（napi-build を使用）
+- [x] `build.rs` を作成（napi-build を使用）
 - [ ] クロスコンパイル用の設定
 - [ ] バイナリのパッケージングスクリプト
 
