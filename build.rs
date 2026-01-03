@@ -1,15 +1,9 @@
 // build.rs - Build script for i18next-turbo
 //
 // This build script is used for NAPI (Node-API) integration.
-// Currently, it's a placeholder. When NAPI is implemented, uncomment the following:
-//
-// fn main() {
-//     napi_build::setup();
-// }
+// It sets up the build environment for creating Node.js native addons.
 
 fn main() {
-    // Placeholder for future NAPI implementation
-    // When NAPI dependencies are added, uncomment:
-    // napi_build::setup();
+    napi_build::setup();
 }
 

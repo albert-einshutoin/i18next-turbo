@@ -30,3 +30,10 @@ swc_ecma_visit = "19"
 
 # Regex for comment extraction
 regex = "1.10"
+
+# NAPI (Node-API) for Node.js integration
+napi = { version = "2", features = ["napi4", "napi5", "napi6", "napi7", "napi8"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2.2"  # Using 2.2.0 for Rust 1.87 compatibility
