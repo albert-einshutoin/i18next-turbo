@@ -16,7 +16,11 @@ use serde_json;
 #[cfg(feature = "napi")]
 use crate::config::{Config, NapiConfig};
 #[cfg(feature = "napi")]
+use crate::cleanup;
+#[cfg(feature = "napi")]
 use crate::extractor::ExtractedKey;
+#[cfg(feature = "napi")]
+use crate::lint;
 
 /// Extract translation keys from source files
 ///
@@ -172,4 +176,105 @@ pub struct ExtractOptions {
 pub struct WatchOptions {
     /// Output directory (overrides config)
     pub output: Option<String>,
+}
+
+/// Lint options
+#[cfg(feature = "napi")]
+#[napi(object)]
+pub struct LintOptions {
+    /// Fail on lint errors
+    pub fail_on_error: Option<bool>,
+}
+
+/// Check options
+#[cfg(feature = "napi")]
+#[napi(object)]
+pub struct CheckOptions {
+    /// Remove dead keys from locale files
+    pub remove: Option<bool>,
+    /// Preview changes without modifying files
+    pub dry_run: Option<bool>,
+    /// Locale to check (defaults to first locale in config)
+    pub locale: Option<String>,
+}
+
+/// Lint source files for hardcoded strings
+#[cfg(feature = "napi")]
+#[napi]
+pub fn lint(config: NapiConfig, options: Option<LintOptions>) -> Result<String> {
+    let config: Config = Config::from_napi(config);
+    let fail_on_error = options
+        .as_ref()
+        .and_then(|o| o.fail_on_error)
+        .unwrap_or(false);
+
+    let result = lint::lint_from_glob(&config.input)
+        .map_err(|e| napi::Error::from_reason(format!("Lint failed: {}", e)))?;
+
+    if fail_on_error && !result.issues.is_empty() {
+        return Err(napi::Error::from_reason(format!(
+            "Lint failed: {} issue(s) found",
+            result.issues.len()
+        )));
+    }
+
+    Ok(serde_json::json!({
+        "files_checked": result.files_checked,
+        "issues": result.issues.iter().map(|issue| serde_json::json!({
+            "file_path": issue.file_path,
+            "line": issue.line,
+            "column": issue.column,
+            "message": issue.message,
+            "text": issue.text,
+        })).collect::<Vec<_>>(),
+    })
+    .to_string())
+}
+
+/// Check for dead (unused) translation keys
+#[cfg(feature = "napi")]
+#[napi]
+pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<String> {
+    let config: Config = Config::from_napi(config);
+    let remove = options.as_ref().and_then(|o| o.remove).unwrap_or(false);
+    let dry_run = options.as_ref().and_then(|o| o.dry_run).unwrap_or(false);
+    let locale = options
+        .as_ref()
+        .and_then(|o| o.locale.as_ref())
+        .map(|s| s.as_str())
+        .or(config.locales.first().map(|s| s.as_str()))
+        .unwrap_or("en");
+
+    let extraction = crate::extractor::extract_from_glob(&config.input, &config.functions)
+        .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
+
+    let mut all_keys: Vec<ExtractedKey> = Vec::new();
+    for (_file_path, keys) in &extraction.files {
+        all_keys.extend(keys.iter().cloned());
+    }
+
+    let locales_path = std::path::Path::new(&config.output);
+    let dead_keys = cleanup::find_dead_keys(
+        locales_path,
+        &all_keys,
+        &config.default_namespace,
+        locale,
+    )
+    .map_err(|e| napi::Error::from_reason(format!("Check failed: {}", e)))?;
+
+    let mut removed_count = 0usize;
+    if remove && !dry_run && !dead_keys.is_empty() {
+        removed_count = cleanup::purge_dead_keys(locales_path, &dead_keys)
+            .map_err(|e| napi::Error::from_reason(format!("Cleanup failed: {}", e)))?;
+    }
+
+    Ok(serde_json::json!({
+        "dead_keys": dead_keys.iter().map(|dk| serde_json::json!({
+            "file_path": dk.file_path,
+            "key_path": dk.key_path,
+            "namespace": dk.namespace,
+        })).collect::<Vec<_>>(),
+        "removed_count": removed_count,
+    })
+    .to_string())
 }
