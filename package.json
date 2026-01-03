@@ -1,0 +1,47 @@
+{
+  "name": "i18next-turbo",
+  "version": "0.1.0",
+  "description": "Blazing fast i18next translation key extractor - 10-100x faster with Rust + SWC",
+  "license": "MIT",
+  "author": "i18next-turbo contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/albert-einshutoin/i18next-turbo.git"
+  },
+  "keywords": [
+    "i18next",
+    "i18n",
+    "internationalization",
+    "translation",
+    "extractor",
+    "parser",
+    "rust",
+    "swc",
+    "fast"
+  ],
+  "main": "lib/index.js",
+  "bin": {
+    "i18next-turbo": "./bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node bin/postinstall.js"
+  },
+  "optionalDependencies": {
+    "i18next-turbo-darwin-x64": "0.1.0",
+    "i18next-turbo-darwin-arm64": "0.1.0",
+    "i18next-turbo-win32-x64": "0.1.0",
+    "i18next-turbo-win32-ia32": "0.1.0",
+    "i18next-turbo-linux-x64": "0.1.0",
+    "i18next-turbo-linux-arm64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}
+
