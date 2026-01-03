@@ -4,10 +4,11 @@
 
 ## 📊 実装状況サマリー
 
-- ✅ **完了**: Phase 2の一部、Phase 3のほぼ全て
-- ⚠️ **部分的実装**: Phase 2の高度な機能
-- ✅ **接続完了**: TypeScript型生成、デッドキー検知（CLIから呼び出し可能）
-- ❌ **未実装**: Phase 1全体、Phase 2の一部、Phase 3以降の追加機能
+- ✅ **完了**: Phase 2の大部分（Trans完全対応、useTranslation/getFixedTスコープ解決）
+- ✅ **完了**: Phase 3の主要コマンド（status, sync, lint, check, typegen, init, rename-key）
+- ✅ **完了**: ネストされた翻訳（$t パターン）、フラットキー、コメントからの抽出
+- ⚠️ **部分的実装**: 言語別複数形カテゴリ（現在は英語ルールのみ）
+- ❌ **未実装**: Phase 1全体（npm配布、CI/CD）、一部の高度な機能
 
 ---
 
@@ -101,12 +102,12 @@
 - [ ] 設定ファイルから `types` セクションを読み込む
 - [x] `extract` コマンド実行時に自動的に型生成するオプション（`--generate-types`）を追加
 
-#### 1.3.2: デッドキー検知コマンドの追加
+#### 1.3.2: デッドキー検知コマンドの追加 ✅
 - [x] `src/main.rs` の `Commands` Enum に `Check` または `Cleanup` バリアントを追加
 - [x] `check` または `cleanup` サブコマンドを実装
   - `--remove` オプション（未使用キーを削除するかどうか）
   - `--dry-run` オプション（削除前にプレビュー）
-- [x] `src/cleanup.rs` の `find_dead_keys()` と `remove_dead_keys()` 関数を呼び出す処理を追加
+- [x] `src/cleanup.rs` の `find_dead_keys()` と `purge_dead_keys()` 関数を呼び出す処理を追加
 - [x] 検出されたデッドキーのレポート表示
 - [ ] 削除実行時の確認プロンプト（`--remove` が指定されている場合）
 
@@ -120,7 +121,7 @@
 
 ## ⚛️ Phase 2: i18next 完全互換 (v1.0.0 目標)
 
-### Task 2.1: `<Trans>` コンポーネントの完全対応 ✅（主要機能完了）
+### Task 2.1: `<Trans>` コンポーネントの完全対応 ✅
 
 #### 2.1.1: 子要素（Children）からのキー抽出 ✅
 - [x] `JSXElement` の子ノードを訪問する Visitor を実装
@@ -137,17 +138,18 @@
 #### 2.1.3: `count` 属性の抽出 ✅
 - [x] `JSXOpeningElement` から `count` 属性を抽出
 - [x] 複数形キー（`_one`, `_other`）を生成
-- [ ] `count` と `context` の組み合わせに対応
+- [x] `count` と `context` の組み合わせに対応
 
-#### 2.1.4: `context` 属性の抽出
-- [ ] `JSXOpeningElement` から `context` 属性を抽出
-- [ ] コンテキスト付きキー（`key_context`）を生成
+#### 2.1.4: `context` 属性の抽出 ✅
+- [x] `JSXOpeningElement` から `context` 属性を抽出
+- [x] コンテキスト付きキー（`key_context`）を生成
 - [ ] 動的なコンテキスト値（三項演算子など）の解析
 
 #### 達成基準
 - [x] `<Trans>Hello</Trans>` から `Hello` がキーとして抽出される
 - [x] `<Trans ns="common">content</Trans>` が `common` 名前空間に保存される
 - [x] `<Trans count={5}>item</Trans>` から `item_one`, `item_other` が生成される
+- [x] `<Trans context="male">friend</Trans>` から `friend_male` が生成される
 
 ---
 
@@ -167,34 +169,35 @@
 - [ ] `key_ordinal_one`, `key_ordinal_other` などのキーを生成
 - [ ] 設定オプションで Ordinal を有効/無効化
 
-#### 2.2.3: コンテキストと複数形の組み合わせ
-- [ ] `context` と `count` の両方が存在する場合の処理
-- [ ] `key_context_one`, `key_context_other` の生成
+#### 2.2.3: コンテキストと複数形の組み合わせ ✅
+- [x] `context` と `count` の両方が存在する場合の処理
+- [x] `key_context_one`, `key_context_other` の生成
 - [ ] ベース複数形キーの生成制御（`generateBasePluralForms` オプション）
 
 #### 達成基準
-- [ ] `t('apple', { count: 5 })` で言語に応じた複数形カテゴリが生成される
-- [ ] 日本語（`other` のみ）では `apple` のみが生成される
-- [ ] ロシア語では `apple_one`, `apple_few`, `apple_many`, `apple_other` が生成される
+- [x] `t('apple', { count: 5 })` で基本的な複数形キー（`_one`, `_other`）が生成される
+- [ ] `t('apple', { count: 5 })` で言語に応じた複数形カテゴリが生成される（言語別カテゴリは未実装）
+- [ ] 日本語（`other` のみ）では `apple` のみが生成される（言語別カテゴリは未実装）
+- [ ] ロシア語では `apple_one`, `apple_few`, `apple_many`, `apple_other` が生成される（言語別カテゴリは未実装）
 
 ---
 
 ### Task 2.3: 高度な抽出パターンの実装
 
-#### 2.3.1: `useTranslation` hook のスコープ解決
-- [ ] `ScopeManager` 相当の機能を実装
-- [ ] `useTranslation('ns', { keyPrefix: 'user' })` の解析
-- [ ] 変数スコープの追跡
-- [ ] `keyPrefix` の適用ロジック
-- [ ] 配列分割代入: `const [t] = useTranslation()`
-- [ ] オブジェクト分割代入: `const { t } = useTranslation()`
-- [ ] エイリアス: `const { t: translate } = useTranslation()`
+#### 2.3.1: `useTranslation` hook のスコープ解決 ✅
+- [x] `ScopeManager` 相当の機能を実装
+- [x] `useTranslation('ns', { keyPrefix: 'user' })` の解析
+- [x] 変数スコープの追跡
+- [x] `keyPrefix` の適用ロジック
+- [x] 配列分割代入: `const [t] = useTranslation()`
+- [x] オブジェクト分割代入: `const { t } = useTranslation()`
+- [x] エイリアス: `const { t: translate } = useTranslation()`
 
-#### 2.3.2: `getFixedT` のサポート
-- [ ] `i18next.getFixedT()` 呼び出しの検出
-- [ ] 引数から namespace と keyPrefix を抽出
-- [ ] スコープ情報を変数に紐付け
-- [ ] `const t = getFixedT('en', 'ns', 'prefix')` の処理
+#### 2.3.2: `getFixedT` のサポート ✅
+- [x] `i18next.getFixedT()` 呼び出しの検出
+- [x] 引数から namespace と keyPrefix を抽出
+- [x] スコープ情報を変数に紐付け
+- [x] `const t = getFixedT('en', 'ns', 'prefix')` の処理
 
 #### 2.3.3: セレクター API のサポート
 - [ ] `t($ => $.key.path)` パターンの検出
@@ -211,13 +214,14 @@
 - [ ] 可能な値を列挙して複数のキーを生成
 - [ ] 解決不可能な場合は警告を出力
 
-#### 2.3.6: ネストされた翻訳（Nested Translations）のサポート
-- [ ] `$t(key)` パターンの検出（文字列内のネストされた翻訳）
+#### 2.3.6: ネストされた翻訳（Nested Translations）のサポート ✅
+- [x] `$t(key)` パターンの検出（文字列内のネストされた翻訳）
 - [ ] `nestingPrefix` と `nestingSuffix` の設定サポート（デフォルト: `$t(` と `)`）
 - [ ] `nestingOptionsSeparator` の設定サポート（デフォルト: `,`）
-- [ ] 文字列内の `$t(key, { options })` パターンの解析
+- [x] 文字列内の `$t(key, { options })` パターンの解析
 - [ ] ネストされたキーから複数形やコンテキストを抽出
-- [ ] デフォルト値内のネストされた翻訳の抽出
+- [x] デフォルト値内のネストされた翻訳の抽出
+- [x] Trans コンポーネントの defaults 属性からの抽出
 
 #### 2.3.7: returnObjects のサポート
 - [ ] `t('key', { returnObjects: true })` の検出
@@ -236,8 +240,8 @@
 - [x] テストケースの追加
 
 #### 達成基準
-- [ ] `const { t } = useTranslation('common', { keyPrefix: 'user' }); t('name')` が `common:user.name` として抽出される
-- [ ] `const t = getFixedT('en', 'ns', 'prefix'); t('key')` が `ns:prefix.key` として抽出される
+- [x] `const { t } = useTranslation('common', { keyPrefix: 'user' }); t('name')` が `common:user.name` として抽出される
+- [x] `const t = getFixedT('en', 'ns', 'prefix'); t('key')` が `ns:prefix.key` として抽出される
 - [ ] `t($ => $.user.profile)` が `user.profile` として抽出される
 - [ ] `t('You have $t(item_count, {"count": {{count}} })')` から `item_count_one`, `item_count_other` が抽出される
 - [ ] `t('countries', { returnObjects: true })` で既存の `countries` オブジェクトが保持される
@@ -309,19 +313,22 @@
 - [x] `--fail-on-error` オプション（CI用）
 - [ ] Watch モードのサポート
 
-#### 3.1.4: `rename-key` コマンド
-- [ ] ソースファイル内のキーを検索
-- [ ] AST ベースでのキー置換
-- [ ] 翻訳ファイル内のキーをリネーム
-- [ ] コンフリクトの検出
-- [ ] Dry-run モード
-- [ ] 変更内容のレポート
+#### 3.1.4: `rename-key` コマンド ✅
+- [x] ソースファイル内のキーを検索
+- [x] 正規表現ベースでのキー置換（ソースファイル）
+- [x] 翻訳ファイル内のキーをリネーム
+- [x] コンフリクトの検出
+- [x] Dry-run モード
+- [x] 変更内容のレポート
+- [x] `--locales-only` オプション（翻訳ファイルのみ変更）
 
-#### 3.1.5: `init` コマンド
-- [ ] 対話的な設定ウィザード
+#### 3.1.5: `init` コマンド ✅
+- [x] CLIオプションで設定値を指定可能
+- [x] i18next-turbo.json の自動生成
+- [x] ロケールディレクトリの自動作成
+- [x] 次のステップのガイダンス表示
+- [ ] 対話的な設定ウィザード（オプション）
 - [ ] プロジェクト構造の自動検出
-- [ ] 設定ファイルの生成（TS/JS 選択可能）
-- [ ] デフォルト値の提案
 
 #### 3.1.6: `migrate-config` コマンド
 - [ ] レガシー設定ファイルの検出
@@ -348,12 +355,12 @@
 - [ ] `removeUnusedKeys`: 未使用キーの削除（デフォルト: `true`）
 - [ ] `ignore`: 抽出対象から除外するファイルパターン（glob 配列）
 
-#### 3.2.3: セパレータと補間の設定 ✅（部分実装）
+#### 3.2.3: セパレータと補間の設定 ✅
 - [x] `keySeparator`: キーのセパレータ（デフォルト: `'.'`）
 - [x] `nsSeparator`: 名前空間セパレータ（デフォルト: `':'`）
 - [x] `contextSeparator`: コンテキストセパレータ（デフォルト: `'_'`）
 - [x] `pluralSeparator`: 複数形セパレータ（デフォルト: `'_'`）
-- [ ] `keySeparator: false` でフラットキーサポート
+- [x] `keySeparator: ""` でフラットキーサポート（空文字列で無効化）
 - [ ] `nsSeparator: false` で無効化
 - [ ] `interpolationPrefix`: 補間プレフィックス（デフォルト: `'{{'`）
 - [ ] `interpolationSuffix`: 補間サフィックス（デフォルト: `'}}'`）
@@ -364,18 +371,18 @@
 #### 3.2.4: 言語とデフォルト値の設定
 - [ ] `primaryLanguage`: プライマリ言語の指定（デフォルト: `locales[0]`）
 - [ ] `secondaryLanguages`: セカンダリ言語の配列（自動計算も可能）
-- [ ] `defaultValue`: デフォルト値の設定
-  - 文字列形式: `''` または `'TODO'`
-  - 関数形式: `(key, namespace, language, value) => string`
-- [ ] `defaultNS`: デフォルト名前空間（デフォルト: `'translation'`、`false` で名前空間なし）
+- [x] `defaultValue`: デフォルト値の設定（部分的実装）
+  - 文字列形式: `''` ✅ 実装済み（`ExtractedKey.default_value` が空文字列として使用される）
+  - 関数形式: `(key, namespace, language, value) => string` - [ ] 未実装
+- [x] `defaultNS`: デフォルト名前空間（デフォルト: `'translation'` ✅ 実装済み、`false` で名前空間なし - [ ] 未実装）
 
 #### 3.2.5: ソートとフォーマット設定
-- [ ] `sort`: キーのソート設定
-  - ブール値: `true`（アルファベット順）または `false`（ソートなし）
-  - 関数形式: `(a: ExtractedKey, b: ExtractedKey) => number`
-- [ ] `indentation`: JSON のインデント
-  - 数値形式: `2`（スペース数）
-  - 文字列形式: `'\t'`（タブ）または `'  '`（スペース）
+- [x] `sort`: キーのソート設定（アルファベット順で実装済み、`sort_keys_alphabetically` 関数）
+  - ブール値: `true`（アルファベット順）✅ 実装済み
+  - 関数形式: `(a: ExtractedKey, b: ExtractedKey) => number` - [ ] 未実装
+- [ ] `indentation`: JSON のインデント（現在は `serde_json::to_string_pretty` のデフォルト）
+  - 数値形式: `2`（スペース数）- [ ] 未実装
+  - 文字列形式: `'\t'`（タブ）または `'  '`（スペース）- [ ] 未実装
 
 #### 3.2.6: Trans コンポーネント設定
 - [ ] `transKeepBasicHtmlNodesFor`: Trans コンポーネントで保持する HTML タグ（デフォルト: `['br', 'strong', 'i']`）
@@ -414,24 +421,25 @@
 
 ---
 
-### Task 3.4: コメントからの抽出
+### Task 3.4: コメントからの抽出 ✅
 
-#### 3.4.1: コメントパターンの検出
-- [ ] `// t('key', 'default')` パターンの検出
-- [ ] `/* t('key') */` パターンの検出
-- [ ] オブジェクト構文の解析: `// t('key', { defaultValue: '...', ns: '...' })`
-- [ ] 複数行コメントのサポート
+#### 3.4.1: コメントパターンの検出 ✅
+- [x] `// t('key', 'default')` パターンの検出
+- [x] `/* t('key') */` パターンの検出
+- [x] オブジェクト構文の解析: `// t('key', { defaultValue: '...', ns: '...' })`
+- [x] 複数行コメントのサポート
+- [x] バッククォート対応: `// t(\`key\`)` パターンの検出
 - [ ] コメント内の複数形パターンの検出
 - [ ] コメント内のコンテキストパターンの検出
 
 #### 3.4.2: スコープ解決
 - [ ] コメント内の `useTranslation` 参照の解決
 - [ ] `keyPrefix` の適用
-- [ ] 名前空間の解決
+- [x] 名前空間の解決
 
 #### 3.4.3: 設定オプション
 - [ ] `extractFromComments: true/false` オプション
-- [ ] デフォルトで有効化
+- [x] デフォルトで有効化
 
 ---
 
@@ -540,23 +548,30 @@
 ### 実装済み機能
 - ✅ 基本的な `t()` 関数の抽出
 - ✅ `i18n.t()` 形式の抽出
-- ✅ `<Trans>` コンポーネントの基本対応（`i18nKey`, `defaults`）
+- ✅ `<Trans>` コンポーネントの完全対応（`i18nKey`, `ns`, `count`, `context`, `defaults`, `children`）
 - ✅ 名前空間サポート
 - ✅ 基本的な複数形サポート（`_one`, `_other`）
 - ✅ コンテキストサポート（基本的な文字列リテラル）
+- ✅ コンテキストと複数形の組み合わせ（`key_context_one`, `key_context_other`）
 - ✅ マジックコメント（`i18next-extract-disable`）
 - ✅ JSON 同期（既存翻訳の保持）
 - ✅ Watch モード
 - ✅ TypeScript 型定義生成
 - ✅ 未使用キーの検知と削除
+- ✅ `useTranslation` hook のスコープ解決（`keyPrefix` 対応）
+- ✅ `getFixedT` のサポート
+- ✅ ネストされた翻訳（`$t(...)` パターン）
+- ✅ テンプレートリテラル（`t(\`key\`)` パターン、静的のみ）
+- ✅ コメントからの抽出（バッククォート対応含む）
+- ✅ フラットキー（`keySeparator: ""`）
 
 ### 未実装の重要な機能（i18next-cli との比較）
 - ✅ **実装済み機能のCLI接続**（typegen、check、status コマンド追加完了）
 - ✅ テンプレートリテラル（`t(\`key\`)`）のサポート
-- ❌ ネストされた翻訳（`$t(...)` パターン）
+- ✅ ネストされた翻訳（`$t(...)` パターン）
 - ❌ `returnObjects` のサポート
-- ❌ フラットキー（`keySeparator: false`）
-- ❌ セパレータの設定（`nsSeparator`, `contextSeparator`, `pluralSeparator`）
+- ✅ フラットキー（`keySeparator: ""`）
+- ✅ セパレータの設定（`nsSeparator`, `contextSeparator`, `pluralSeparator`）
 - ❌ 補間構文の設定（`interpolationPrefix`, `interpolationSuffix`）
 - ❌ ネスト翻訳の設定（`nestingPrefix`, `nestingSuffix`, `nestingOptionsSeparator`）
 - ❌ プライマリ/セカンダリ言語の設定
@@ -589,10 +604,10 @@
 4. Task 2.4: JS/TS 設定ファイルの読み込み
 
 ### P1 (高優先度 - Phase 2 完了のため)
-5. Task 2.1: `<Trans>` コンポーネントの完全対応
+5. ~~Task 2.1: `<Trans>` コンポーネントの完全対応~~ ✅ **完了**
 6. Task 2.2: 言語別複数形カテゴリの生成
-7. Task 2.3.1: `useTranslation` hook のスコープ解決
-8. Task 2.3.2: `getFixedT` のサポート
+7. ~~Task 2.3.1: `useTranslation` hook のスコープ解決~~ ✅ **完了**
+8. ~~Task 2.3.2: `getFixedT` のサポート~~ ✅ **完了**
 9. ~~Task 2.3.8: テンプレートリテラルのサポート~~ ✅ **完了**
 
 ### P2 (中優先度 - 差別化機能)
@@ -602,19 +617,20 @@
 11. Task 3.2: 高度な設定オプション
 
 ### P3 (低優先度 - 拡張機能)
-12. Task 3.1.4: `rename-key` コマンド
-13. Task 3.1.5: `init` コマンド
+12. ~~Task 3.1.4: `rename-key` コマンド~~ ✅ **完了**
+13. ~~Task 3.1.5: `init` コマンド~~ ✅ **完了**
 14. Task 3.1.6: `migrate-config` コマンド
 15. Task 3.3: 出力フォーマットの多様化
-16. Task 3.4: コメントからの抽出
+16. ~~Task 3.4: コメントからの抽出~~ ✅ **完了**
 17. Task 3.5: Locize 統合
-18. Task 2.3.6: ネストされた翻訳のサポート
+18. ~~Task 2.3.6: ネストされた翻訳のサポート~~ ✅ **完了**
 19. Task 2.3.7: returnObjects のサポート
-20. Task 3.2.3-3.2.7: 詳細な設定オプション
-21. Task 3.6: TypeScript 型生成の拡張
-22. Task 3.7: Lint 設定の詳細
-23. Task 3.8: プラグインシステム
-24. Task 2.4.4: ヒューリスティック設定検出
+20. ~~Task 3.2.3: フラットキー（keySeparator）~~ ✅ **完了**
+21. Task 3.2.4-3.2.7: 詳細な設定オプション
+22. Task 3.6: TypeScript 型生成の拡張
+23. Task 3.7: Lint 設定の詳細
+24. Task 3.8: プラグインシステム
+25. Task 2.4.4: ヒューリスティック設定検出
 
 ---
 
@@ -700,5 +716,5 @@
 
 ---
 
-最終更新: 2025-01-XX
+最終更新: 2026-01-03（実装状況の詳細確認とチェック項目の更新）
 
