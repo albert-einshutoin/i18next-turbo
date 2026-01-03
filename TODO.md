@@ -23,11 +23,11 @@
 - [x] `[build-dependencies]` に `napi-build` を追加
 
 #### 1.1.2: src/lib.rs の Node.js API 実装
-- [ ] `#[napi]` マクロを使用した関数エクスポート
-- [ ] `extract()` 関数を Node.js から呼び出し可能にする
-- [ ] `watch()` 関数を Node.js から呼び出し可能にする
-- [ ] 設定オブジェクトを Rust の `Config` 構造体に変換する関数
-- [ ] エラーハンドリングを `napi::Error` に変換
+- [x] `#[napi]` マクロを使用した関数エクスポート
+- [x] `extract()` 関数を Node.js から呼び出し可能にする
+- [x] `watch()` 関数を Node.js から呼び出し可能にする
+- [x] 設定オブジェクトを Rust の `Config` 構造体に変換する関数（JSON文字列経由）
+- [x] エラーハンドリングを `napi::Error` に変換
 
 #### 1.1.3: package.json の作成
 - [x] `package.json` ファイルを作成
@@ -43,6 +43,7 @@
 #### 1.1.4: Node.js ラッパーの作成
 - [x] `bin/cli.js` を作成（Rust バイナリを呼び出すラッパー）
 - [x] `lib/index.js` を作成（Node.js API のエントリーポイント）
+- [x] NAPI関数を呼び出す処理を実装（`extract`, `watch`）
 - [ ] JS/TS 設定ファイルの読み込み処理を実装
   - `i18next-parser.config.js` の読み込み
   - `i18next.config.ts` の読み込み（`jiti` または `ts-node` を使用）
