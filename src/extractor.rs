@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use swc_common::comments::SingleThreadedComments;
 use swc_common::sync::Lrc;
 use swc_common::{FileName, SourceMap, Span};
 use swc_ecma_ast::{
     CallExpr, Callee, Expr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
-    JSXElementChild, JSXElementName, JSXOpeningElement, Lit, MemberProp, ObjectLit, Prop,
-    PropName, PropOrSpread, Tpl,
+    JSXElementChild, JSXElementName, JSXOpeningElement, Lit, MemberProp, ObjectLit, Pat, Prop,
+    PropName, PropOrSpread, Tpl, VarDeclarator,
 };
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{Visit, VisitWith};
@@ -27,6 +27,15 @@ pub struct ExtractionResult {
     pub warning_count: usize,
 }
 
+/// Scope information for useTranslation hook
+#[derive(Debug, Clone, Default)]
+pub struct ScopeInfo {
+    /// Namespace from useTranslation('namespace')
+    pub namespace: Option<String>,
+    /// Key prefix from useTranslation({ keyPrefix: 'prefix' })
+    pub key_prefix: Option<String>,
+}
+
 /// Visitor that traverses the AST and extracts translation keys
 pub struct TranslationVisitor {
     /// Set of function names to look for (e.g., "t", "i18n.t")
@@ -43,6 +52,8 @@ pub struct TranslationVisitor {
     /// Lines disabled via magic comments (reserved for future use)
     #[allow(dead_code)]
     disabled_lines: HashSet<u32>,
+    /// Scope info for variables bound from useTranslation/getFixedT
+    scope_bindings: HashMap<String, ScopeInfo>,
 }
 
 impl TranslationVisitor {
@@ -64,6 +75,7 @@ impl TranslationVisitor {
             source_map,
             comments,
             disabled_lines,
+            scope_bindings: HashMap::new(),
         }
     }
 
@@ -164,6 +176,11 @@ impl TranslationVisitor {
         self.get_option_value(call, "context")
     }
 
+    /// Get defaultValue option from t() call
+    fn get_default_value_option(&self, call: &CallExpr) -> Option<String> {
+        self.get_option_value(call, "defaultValue")
+    }
+
     /// Get a string option value from the second argument object
     fn get_option_value(&self, call: &CallExpr, key: &str) -> Option<String> {
         if call.args.len() < 2 {
@@ -225,6 +242,51 @@ impl TranslationVisitor {
             }
         }
         false
+    }
+
+    /// Extract nested translation keys from a string value
+    /// Detects patterns like $t(key), $t('key'), or $t(key, { options })
+    fn extract_nested_translations(&self, text: &str) -> Vec<ExtractedKey> {
+        let mut keys = Vec::new();
+
+        // Pattern 1: $t('key') or $t("key") - with quotes
+        // Captures key, then optionally matches rest until closing paren (handles nested braces)
+        let quoted_pattern = regex::Regex::new(
+            r#"\$t\s*\(\s*['"]([^'"]+)['"]"#
+        ).unwrap();
+
+        // Pattern 2: $t(key) - without quotes (simple identifier or key with colon/dots)
+        // Captures just the key part before comma or closing paren
+        let unquoted_pattern = regex::Regex::new(
+            r#"\$t\s*\(\s*([a-zA-Z_][a-zA-Z0-9_.:]*)"#
+        ).unwrap();
+
+        // Extract quoted patterns
+        for cap in quoted_pattern.captures_iter(text) {
+            let key = cap.get(1).unwrap().as_str();
+            let (namespace, base_key) = self.parse_key_with_namespace(key);
+            keys.push(ExtractedKey {
+                key: base_key,
+                namespace,
+                default_value: None,
+            });
+        }
+
+        // Extract unquoted patterns
+        for cap in unquoted_pattern.captures_iter(text) {
+            let key = cap.get(1).unwrap().as_str();
+            let (namespace, base_key) = self.parse_key_with_namespace(key);
+            // Avoid duplicates
+            if !keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                keys.push(ExtractedKey {
+                    key: base_key,
+                    namespace,
+                    default_value: None,
+                });
+            }
+        }
+
+        keys
     }
 
     /// Parse namespace:key format
@@ -301,6 +363,22 @@ impl TranslationVisitor {
         false
     }
 
+    /// Extract context attribute from Trans component
+    fn extract_trans_context(&self, elem: &JSXOpeningElement) -> Option<String> {
+        for attr in &elem.attrs {
+            if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
+                if let JSXAttrName::Ident(name) = &jsx_attr.name {
+                    if name.sym.to_string() == "context" {
+                        if let Some(value) = &jsx_attr.value {
+                            return self.extract_jsx_attr_string(value);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Extract text content from JSX children
     fn extract_jsx_children_text(&self, children: &[JSXElementChild]) -> Option<String> {
         let mut text_parts: Vec<String> = Vec::new();
@@ -362,9 +440,308 @@ impl TranslationVisitor {
         }
         None
     }
+
+    /// Check if a call is useTranslation and extract scope info
+    fn parse_use_translation_call(&self, call: &CallExpr) -> Option<ScopeInfo> {
+        // Check if this is useTranslation()
+        if let Callee::Expr(expr) = &call.callee {
+            if let Expr::Ident(ident) = expr.as_ref() {
+                if ident.sym.to_string() != "useTranslation" {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+
+        let mut scope_info = ScopeInfo::default();
+
+        // Parse arguments
+        for (i, arg) in call.args.iter().enumerate() {
+            match i {
+                0 => {
+                    // First arg: namespace (string or array)
+                    if let Expr::Lit(Lit::Str(s)) = arg.expr.as_ref() {
+                        scope_info.namespace = s.value.as_str().map(|s| s.to_string());
+                    }
+                    // Second form: useTranslation({ keyPrefix: '...' })
+                    if let Expr::Object(obj) = arg.expr.as_ref() {
+                        scope_info.key_prefix = self.find_string_prop(obj, "keyPrefix");
+                    }
+                }
+                1 => {
+                    // Second arg: options object
+                    if let Expr::Object(obj) = arg.expr.as_ref() {
+                        scope_info.key_prefix = self.find_string_prop(obj, "keyPrefix");
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Some(scope_info)
+    }
+
+    /// Check if a call is getFixedT and extract scope info
+    fn parse_get_fixed_t_call(&self, call: &CallExpr) -> Option<ScopeInfo> {
+        // Check if this is getFixedT() or i18n.getFixedT()
+        let is_get_fixed_t = match &call.callee {
+            Callee::Expr(expr) => match expr.as_ref() {
+                Expr::Ident(ident) => ident.sym.to_string() == "getFixedT",
+                Expr::Member(member) => {
+                    if let MemberProp::Ident(prop) = &member.prop {
+                        prop.sym.to_string() == "getFixedT"
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+
+        if !is_get_fixed_t {
+            return None;
+        }
+
+        let mut scope_info = ScopeInfo::default();
+
+        // getFixedT(locale, namespace, keyPrefix)
+        // or getFixedT(locale, { ns, keyPrefix })
+        for (i, arg) in call.args.iter().enumerate() {
+            match i {
+                0 => {
+                    // First arg is locale, skip it
+                }
+                1 => {
+                    // Second arg: namespace (string) or options object
+                    if let Expr::Lit(Lit::Str(s)) = arg.expr.as_ref() {
+                        scope_info.namespace = s.value.as_str().map(|s| s.to_string());
+                    }
+                    if let Expr::Object(obj) = arg.expr.as_ref() {
+                        if let Some(ns) = self.find_string_prop(obj, "ns") {
+                            scope_info.namespace = Some(ns);
+                        }
+                        scope_info.key_prefix = self.find_string_prop(obj, "keyPrefix");
+                    }
+                }
+                2 => {
+                    // Third arg: keyPrefix (string)
+                    if let Expr::Lit(Lit::Str(s)) = arg.expr.as_ref() {
+                        scope_info.key_prefix = s.value.as_str().map(|s| s.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Some(scope_info)
+    }
+
+    /// Extract bound variable names from a pattern
+    fn extract_bound_t_name(&self, pat: &Pat) -> Option<String> {
+        match pat {
+            // const t = useTranslation()
+            Pat::Ident(ident) => Some(ident.id.sym.to_string()),
+            // const { t } = useTranslation()
+            Pat::Object(obj) => {
+                for prop in &obj.props {
+                    if let swc_ecma_ast::ObjectPatProp::Assign(assign) = prop {
+                        let name = assign.key.sym.to_string();
+                        if name == "t" {
+                            return Some(name);
+                        }
+                    }
+                    if let swc_ecma_ast::ObjectPatProp::KeyValue(kv) = prop {
+                        if let PropName::Ident(key) = &kv.key {
+                            if key.sym.to_string() == "t" {
+                                // { t: customName } -> return customName
+                                if let Pat::Ident(ident) = kv.value.as_ref() {
+                                    return Some(ident.id.sym.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Check for shorthand { t }
+                for prop in &obj.props {
+                    if let swc_ecma_ast::ObjectPatProp::Assign(assign) = prop {
+                        if assign.key.sym.to_string() == "t" {
+                            return Some("t".to_string());
+                        }
+                    }
+                }
+                None
+            }
+            // const [t] = useTranslation()
+            Pat::Array(arr) => {
+                if let Some(first) = arr.elems.first() {
+                    if let Some(Pat::Ident(ident)) = first {
+                        return Some(ident.id.sym.to_string());
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Apply scope info to a key
+    fn apply_scope_to_key(&self, key: &str, func_name: &str) -> (Option<String>, String) {
+        if let Some(scope) = self.scope_bindings.get(func_name) {
+            let final_key = if let Some(prefix) = &scope.key_prefix {
+                format!("{}.{}", prefix, key)
+            } else {
+                key.to_string()
+            };
+            (scope.namespace.clone(), final_key)
+        } else {
+            self.parse_key_with_namespace(key)
+        }
+    }
+
+    /// Get the function name from a callee
+    fn get_callee_name(&self, callee: &Callee) -> Option<String> {
+        match callee {
+            Callee::Expr(expr) => match expr.as_ref() {
+                Expr::Ident(ident) => Some(ident.sym.to_string()),
+                Expr::Member(member) => {
+                    if let MemberProp::Ident(prop) = &member.prop {
+                        if let Expr::Ident(obj) = member.obj.as_ref() {
+                            return Some(format!("{}.{}", obj.sym, prop.sym));
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Extract keys from comments (e.g., // t('key') or /* t('key', 'default') */)
+    pub fn extract_from_comments(&mut self) {
+        // Collect all comment texts first to avoid borrow issues
+        let comment_texts: Vec<String> = if let Some(comments) = &self.comments {
+            let (leading, trailing) = comments.borrow_all();
+
+            let mut texts = Vec::new();
+
+            // Collect leading comments
+            for comment_list in leading.values() {
+                for comment in comment_list {
+                    texts.push(comment.text.to_string());
+                }
+            }
+
+            // Collect trailing comments
+            for comment_list in trailing.values() {
+                for comment in comment_list {
+                    texts.push(comment.text.to_string());
+                }
+            }
+
+            texts
+        } else {
+            Vec::new()
+        };
+
+        // Now process the collected texts
+        for text in &comment_texts {
+            self.extract_keys_from_comment_text(text);
+        }
+    }
+
+    /// Extract translation keys from a comment string
+    fn extract_keys_from_comment_text(&mut self, text: &str) {
+        // Look for patterns like t('key'), t("key"), t('key', 'default'), t('key', { defaultValue: '...' })
+        // Also support i18n.t('key')
+
+        // Regex patterns for extracting keys from comments
+        // Pattern: t('key') or t("key") or t(`key`)
+        let single_arg_pattern = regex::Regex::new(
+            r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*\)"#
+        ).unwrap();
+
+        // Pattern: t('key', 'default') with simple string default
+        let with_default_pattern = regex::Regex::new(
+            r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]\s*\)"#
+        ).unwrap();
+
+        // Pattern: t('key', { defaultValue: '...' })
+        let with_options_pattern = regex::Regex::new(
+            r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{[^}]*defaultValue\s*:\s*['"`]([^'"`]+)['"`]"#
+        ).unwrap();
+
+        // Extract with options pattern first (most specific)
+        for cap in with_options_pattern.captures_iter(text) {
+            let key = cap.get(1).unwrap().as_str();
+            let default_value = cap.get(2).map(|m| m.as_str().to_string());
+            let (namespace, base_key) = self.parse_key_with_namespace(key);
+            self.keys.push(ExtractedKey {
+                key: base_key,
+                namespace,
+                default_value,
+            });
+        }
+
+        // Extract with default pattern
+        for cap in with_default_pattern.captures_iter(text) {
+            let key = cap.get(1).unwrap().as_str();
+            // Check if already captured by options pattern
+            let (namespace, base_key) = self.parse_key_with_namespace(key);
+            if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                let default_value = cap.get(2).map(|m| m.as_str().to_string());
+                self.keys.push(ExtractedKey {
+                    key: base_key,
+                    namespace,
+                    default_value,
+                });
+            }
+        }
+
+        // Extract single arg pattern
+        for cap in single_arg_pattern.captures_iter(text) {
+            let key = cap.get(1).unwrap().as_str();
+            let (namespace, base_key) = self.parse_key_with_namespace(key);
+            // Check if already captured
+            if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                self.keys.push(ExtractedKey {
+                    key: base_key,
+                    namespace,
+                    default_value: None,
+                });
+            }
+        }
+    }
 }
 
 impl Visit for TranslationVisitor {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        // Check for useTranslation() or getFixedT() calls
+        if let Some(init) = &decl.init {
+            if let Expr::Call(call) = init.as_ref() {
+                // Try useTranslation first
+                if let Some(scope_info) = self.parse_use_translation_call(call) {
+                    if let Some(t_name) = self.extract_bound_t_name(&decl.name) {
+                        self.scope_bindings.insert(t_name, scope_info);
+                    }
+                }
+                // Try getFixedT
+                else if let Some(scope_info) = self.parse_get_fixed_t_call(call) {
+                    if let Some(t_name) = self.extract_bound_t_name(&decl.name) {
+                        self.scope_bindings.insert(t_name, scope_info);
+                    }
+                }
+            }
+        }
+
+        // Continue visiting
+        decl.visit_children_with(self);
+    }
+
     fn visit_call_expr(&mut self, call: &CallExpr) {
         // Check magic comments
         if self.is_disabled(call.span) {
@@ -374,7 +751,13 @@ impl Visit for TranslationVisitor {
 
         if self.is_translation_call(&call.callee) {
             if let Some(key) = self.extract_key_from_args(call) {
-                let (namespace, base_key) = self.parse_key_with_namespace(&key);
+                // Check if the callee is bound to a scope
+                let callee_name = self.get_callee_name(&call.callee);
+                let (namespace_from_scope, base_key) = if let Some(name) = &callee_name {
+                    self.apply_scope_to_key(&key, name)
+                } else {
+                    self.parse_key_with_namespace(&key)
+                };
 
                 // Check for count option (plurals)
                 let has_count = if call.args.len() >= 2 {
@@ -390,6 +773,17 @@ impl Visit for TranslationVisitor {
                 // Check for context option
                 let context = self.get_context_option(call);
 
+                // Check for defaultValue option
+                let default_value = self.get_default_value_option(call);
+
+                // Extract nested translations from defaultValue (e.g., $t('key'))
+                if let Some(ref dv) = default_value {
+                    let nested_keys = self.extract_nested_translations(dv);
+                    for nested_key in nested_keys {
+                        self.keys.push(nested_key);
+                    }
+                }
+
                 if has_count {
                     // Generate plural keys: key_one, key_other
                     let key_one = match &context {
@@ -403,27 +797,27 @@ impl Visit for TranslationVisitor {
 
                     self.keys.push(ExtractedKey {
                         key: key_one,
-                        namespace: namespace.clone(),
-                        default_value: None,
+                        namespace: namespace_from_scope.clone(),
+                        default_value: default_value.clone(),
                     });
                     self.keys.push(ExtractedKey {
                         key: key_other,
-                        namespace,
-                        default_value: None,
+                        namespace: namespace_from_scope,
+                        default_value,
                     });
                 } else if let Some(ctx) = context {
                     // Context without count
                     self.keys.push(ExtractedKey {
                         key: format!("{}_{}", base_key, ctx),
-                        namespace,
-                        default_value: None,
+                        namespace: namespace_from_scope,
+                        default_value,
                     });
                 } else {
                     // Regular key
                     self.keys.push(ExtractedKey {
                         key: base_key,
-                        namespace,
-                        default_value: None,
+                        namespace: namespace_from_scope,
+                        default_value,
                     });
                 }
             }
@@ -458,6 +852,9 @@ impl Visit for TranslationVisitor {
                 // Check for count attribute (plurals)
                 let has_count = self.trans_has_count(&elem.opening);
 
+                // Check for context attribute
+                let context = self.extract_trans_context(&elem.opening);
+
                 // Determine the key and default value
                 let (key, default_value) = if let Some(key) = i18n_key {
                     // i18nKey is present - use it as key
@@ -473,15 +870,36 @@ impl Visit for TranslationVisitor {
                     return;
                 };
 
+                // Extract nested translations from default value (e.g., $t('key'))
+                if let Some(ref dv) = default_value {
+                    let nested_keys = self.extract_nested_translations(dv);
+                    for nested_key in nested_keys {
+                        self.keys.push(nested_key);
+                    }
+                }
+
                 // Parse namespace from key (e.g., "common:greeting")
                 let (namespace_from_key, base_key) = self.parse_key_with_namespace(&key);
 
                 // Use ns attribute if present, otherwise use namespace from key
                 let namespace = ns_from_attr.or(namespace_from_key);
 
-                // Generate keys based on count attribute
-                if has_count {
-                    // Generate plural forms
+                // Generate keys based on count and context attributes
+                if has_count && context.is_some() {
+                    // Both count and context: key_context_one, key_context_other
+                    let ctx = context.as_ref().unwrap();
+                    self.keys.push(ExtractedKey {
+                        key: format!("{}_{}_one", base_key, ctx),
+                        namespace: namespace.clone(),
+                        default_value: default_value.clone(),
+                    });
+                    self.keys.push(ExtractedKey {
+                        key: format!("{}_{}_other", base_key, ctx),
+                        namespace,
+                        default_value,
+                    });
+                } else if has_count {
+                    // Count only: key_one, key_other
                     self.keys.push(ExtractedKey {
                         key: format!("{}_one", base_key),
                         namespace: namespace.clone(),
@@ -492,7 +910,15 @@ impl Visit for TranslationVisitor {
                         namespace,
                         default_value,
                     });
+                } else if let Some(ctx) = context {
+                    // Context only: key_context
+                    self.keys.push(ExtractedKey {
+                        key: format!("{}_{}", base_key, ctx),
+                        namespace,
+                        default_value,
+                    });
                 } else {
+                    // No modifiers: base key
                     self.keys.push(ExtractedKey {
                         key: base_key,
                         namespace,
@@ -571,6 +997,9 @@ pub fn extract_from_source<P: AsRef<Path>>(
     // Visit the AST and extract keys
     let mut visitor = TranslationVisitor::new(functions.to_vec(), cm, Some(comments));
     module.visit_with(&mut visitor);
+
+    // Also extract keys from comments
+    visitor.extract_from_comments();
 
     Ok(visitor.keys)
 }
@@ -929,5 +1358,355 @@ mod tests {
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "product_one" && k.namespace == Some("shop".to_string())));
         assert!(keys.iter().any(|k| k.key == "product_other" && k.namespace == Some("shop".to_string())));
+    }
+
+    #[test]
+    fn test_trans_context_attribute() {
+        let source = r#"
+            function Component() {
+                return <Trans i18nKey="friend" context="male">Male friend</Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "friend_male");
+    }
+
+    #[test]
+    fn test_trans_context_with_count() {
+        let source = r#"
+            function Component() {
+                return <Trans i18nKey="friend" context="female" count={2}>Female friends</Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "friend_female_one"));
+        assert!(keys.iter().any(|k| k.key == "friend_female_other"));
+    }
+
+    #[test]
+    fn test_trans_context_with_ns() {
+        let source = r#"
+            function Component() {
+                return <Trans ns="common" i18nKey="user" context="admin">Admin user</Trans>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "user_admin");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_use_translation_with_namespace() {
+        let source = r#"
+            function Component() {
+                const { t } = useTranslation('common');
+                return <div>{t('greeting')}</div>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "greeting");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_use_translation_with_key_prefix() {
+        let source = r#"
+            function Component() {
+                const { t } = useTranslation('ns', { keyPrefix: 'user' });
+                return <div>{t('name')}</div>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "user.name");
+        assert_eq!(keys[0].namespace, Some("ns".to_string()));
+    }
+
+    #[test]
+    fn test_use_translation_key_prefix_only() {
+        let source = r#"
+            function Component() {
+                const { t } = useTranslation({ keyPrefix: 'settings' });
+                return <div>{t('theme')}</div>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "settings.theme");
+    }
+
+    #[test]
+    fn test_use_translation_array_destructure() {
+        let source = r#"
+            function Component() {
+                const [t] = useTranslation('common');
+                return <div>{t('hello')}</div>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "hello");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_use_translation_alias() {
+        let source = r#"
+            function Component() {
+                const { t: translate } = useTranslation('common');
+                return <div>{translate('world')}</div>;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["translate".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "world");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_get_fixed_t_with_namespace() {
+        let source = r#"
+            const t = i18n.getFixedT('en', 'common');
+            const text = t('greeting');
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "greeting");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_get_fixed_t_with_key_prefix() {
+        let source = r#"
+            const t = getFixedT('en', 'ns', 'user.profile');
+            const text = t('name');
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "user.profile.name");
+        assert_eq!(keys[0].namespace, Some("ns".to_string()));
+    }
+
+    #[test]
+    fn test_default_value_extraction() {
+        let source = r#"
+            const text = t('greeting', { defaultValue: 'Hello World!' });
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "greeting");
+        assert_eq!(keys[0].default_value, Some("Hello World!".to_string()));
+    }
+
+    #[test]
+    fn test_default_value_with_namespace() {
+        let source = r#"
+            const text = t('common:welcome', { defaultValue: 'Welcome back!' });
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "welcome");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+        assert_eq!(keys[0].default_value, Some("Welcome back!".to_string()));
+    }
+
+    #[test]
+    fn test_default_value_with_count() {
+        let source = r#"
+            const text = t('item', { count: 5, defaultValue: '{{count}} items' });
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "item_one" && k.default_value == Some("{{count}} items".to_string())));
+        assert!(keys.iter().any(|k| k.key == "item_other" && k.default_value == Some("{{count}} items".to_string())));
+    }
+
+    #[test]
+    fn test_extract_from_single_line_comment() {
+        let source = r#"
+            // t('comment.key')
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "comment.key");
+    }
+
+    #[test]
+    fn test_extract_from_block_comment() {
+        let source = r#"
+            /* t('block.key') */
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "block.key");
+    }
+
+    #[test]
+    fn test_extract_from_comment_with_default() {
+        let source = r#"
+            // t('greeting', 'Hello!')
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "greeting");
+        assert_eq!(keys[0].default_value, Some("Hello!".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_comment_with_options() {
+        let source = r#"
+            // t('message', { defaultValue: 'Default message' })
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "message");
+        assert_eq!(keys[0].default_value, Some("Default message".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_comment_with_namespace() {
+        let source = r#"
+            // t('common:nav.home')
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "nav.home");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_nested_translation_in_default_value() {
+        let source = r#"
+            const text = t('greeting', { defaultValue: 'Hello $t(world)!' });
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "greeting"));
+        assert!(keys.iter().any(|k| k.key == "world"));
+    }
+
+    #[test]
+    fn test_nested_translation_with_namespace() {
+        let source = r#"
+            const text = t('message', { defaultValue: 'See $t(common:link)' });
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "message"));
+        assert!(keys.iter().any(|k| k.key == "link" && k.namespace == Some("common".to_string())));
+    }
+
+    #[test]
+    fn test_multiple_nested_translations() {
+        let source = r#"
+            const text = t('full', { defaultValue: '$t(hello), $t(world)!' });
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 3);
+        assert!(keys.iter().any(|k| k.key == "full"));
+        assert!(keys.iter().any(|k| k.key == "hello"));
+        assert!(keys.iter().any(|k| k.key == "world"));
+    }
+
+    #[test]
+    fn test_nested_translation_with_options() {
+        let source = r#"
+            const text = t('count_msg', { defaultValue: 'You have $t(item, { count: {{count}} })' });
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "count_msg"));
+        assert!(keys.iter().any(|k| k.key == "item"));
+    }
+
+    #[test]
+    fn test_nested_translation_in_trans_defaults() {
+        let source = r#"
+            function Component() {
+                return <Trans i18nKey="greeting" defaults="Hello $t(name)!" />;
+            }
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "greeting"));
+        assert!(keys.iter().any(|k| k.key == "name"));
     }
 }

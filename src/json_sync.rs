@@ -87,11 +87,13 @@ pub fn sort_keys_alphabetically(map: &Map<String, Value>) -> Map<String, Value> 
 /// Merge extracted keys into an existing translation map.
 /// - New keys are added with default_value if available, otherwise empty string
 /// - Existing keys are preserved (translations are kept)
+/// - If key_separator is empty, keys are stored flat (not nested)
 pub fn merge_keys(
     existing: &mut Map<String, Value>,
     keys: &[ExtractedKey],
     target_namespace: &str,
     default_namespace: &str,
+    key_separator: &str,
 ) -> SyncResult {
     let mut result = SyncResult::default();
 
@@ -108,16 +110,27 @@ pub fn merge_keys(
             continue;
         }
 
-        // Handle nested keys: "button.submit" -> {"button": {"submit": ""}}
-        let parts: Vec<&str> = key.key.split('.').collect();
-
         // Use default_value if available, otherwise empty string
         let value = key.default_value.as_deref().unwrap_or("");
 
-        if insert_nested_key(existing, &parts, value) {
-            result.added_keys.push(key.key.clone());
+        // If key_separator is empty, use flat keys
+        if key_separator.is_empty() {
+            // Flat key mode: store as-is
+            if existing.contains_key(&key.key) {
+                result.existing_keys += 1;
+            } else {
+                existing.insert(key.key.clone(), Value::String(value.to_string()));
+                result.added_keys.push(key.key.clone());
+            }
         } else {
-            result.existing_keys += 1;
+            // Handle nested keys: "button.submit" -> {"button": {"submit": ""}}
+            let parts: Vec<&str> = key.key.split(key_separator).collect();
+
+            if insert_nested_key(existing, &parts, value) {
+                result.added_keys.push(key.key.clone());
+            } else {
+                result.existing_keys += 1;
+            }
         }
     }
 
@@ -183,7 +196,7 @@ pub fn sync_all_locales(
 
             // Merge new keys
             let mut sync_result =
-                merge_keys(&mut content, keys, namespace, &config.default_namespace);
+                merge_keys(&mut content, keys, namespace, &config.default_namespace, &config.key_separator);
             sync_result.file_path = file_path.display().to_string();
 
             // Sort keys alphabetically
@@ -283,7 +296,7 @@ mod tests {
             },
         ];
 
-        let result = merge_keys(&mut existing, &keys, "translation", "translation");
+        let result = merge_keys(&mut existing, &keys, "translation", "translation", ".");
 
         assert_eq!(result.added_keys.len(), 1);
         assert_eq!(result.added_keys[0], "new.key");
@@ -312,7 +325,7 @@ mod tests {
             },
         ];
 
-        let result = merge_keys(&mut existing, &keys, "translation", "translation");
+        let result = merge_keys(&mut existing, &keys, "translation", "translation", ".");
 
         assert_eq!(result.added_keys.len(), 2);
         // Key with default_value should use that value
@@ -325,5 +338,40 @@ mod tests {
             existing.get("no_default"),
             Some(&Value::String("".to_string()))
         );
+    }
+
+    #[test]
+    fn test_merge_keys_flat_mode() {
+        let mut existing = Map::new();
+
+        let keys = vec![
+            ExtractedKey {
+                key: "button.submit".to_string(),
+                namespace: None,
+                default_value: Some("Submit".to_string()),
+            },
+            ExtractedKey {
+                key: "form.validation.required".to_string(),
+                namespace: None,
+                default_value: None,
+            },
+        ];
+
+        // Empty separator = flat key mode
+        let result = merge_keys(&mut existing, &keys, "translation", "translation", "");
+
+        assert_eq!(result.added_keys.len(), 2);
+        // Keys should be stored as-is, not nested
+        assert_eq!(
+            existing.get("button.submit"),
+            Some(&Value::String("Submit".to_string()))
+        );
+        assert_eq!(
+            existing.get("form.validation.required"),
+            Some(&Value::String("".to_string()))
+        );
+        // Should NOT have nested structure
+        assert!(existing.get("button").is_none());
+        assert!(existing.get("form").is_none());
     }
 }
