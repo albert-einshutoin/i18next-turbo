@@ -12,7 +12,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { cosmiconfigSync, defaultLoaders } = require('cosmiconfig');
+const { cosmiconfig, defaultLoaders } = require('cosmiconfig');
+const { pathToFileURL } = require('url');
 
 // Detect platform and architecture
 const platform = os.platform();
@@ -58,68 +59,82 @@ if (!binaryPath || !fs.existsSync(binaryPath)) {
   process.exit(1);
 }
 
-// Load configuration file if it exists
-let configJson = null;
-const args = process.argv.slice(2);
+async function main() {
+  // Load configuration file if it exists
+  let configJson = null;
+  const args = process.argv.slice(2);
 
-// Check if --config is already specified
-const configIndex = args.findIndex(arg => arg === '--config' || arg === '-c');
-if (configIndex === -1) {
-  try {
-    const config = loadConfigFromDisk();
-    if (config) {
-      configJson = JSON.stringify(config);
+  // Check if --config is already specified
+  const configIndex = args.findIndex(arg => arg === '--config' || arg === '-c');
+  if (configIndex === -1) {
+    try {
+      const config = await loadConfigFromDisk();
+      const normalized = normalizeConfig(config);
+      if (normalized) {
+        configJson = JSON.stringify(normalized);
+      }
+    } catch (error) {
+      console.warn(`Warning: Failed to load config file: ${error.message}`);
+      // Continue without config - Rust binary will use defaults
     }
-  } catch (error) {
-    console.warn(`Warning: Failed to load config file: ${error.message}`);
-    // Continue without config - Rust binary will use defaults
   }
+
+  // Build arguments for Rust binary
+  const rustArgs = [];
+  if (configJson) {
+    rustArgs.push('--config-json', configJson);
+  }
+  // Add all other arguments (including --config if specified)
+  rustArgs.push(...args);
+
+  // Spawn the Rust binary
+  const child = spawn(binaryPath, rustArgs, {
+    stdio: 'inherit',
+    cwd: process.cwd()
+  });
+
+  child.on('error', (error) => {
+    console.error(`Error: Failed to start i18next-turbo: ${error.message}`);
+    process.exit(1);
+  });
+
+  child.on('exit', (code) => {
+    process.exit(code || 0);
+  });
 }
 
-// Build arguments for Rust binary
-const rustArgs = [];
-if (configJson) {
-  rustArgs.push('--config-json', configJson);
-}
-// Add all other arguments (including --config if specified)
-rustArgs.push(...args);
-
-// Spawn the Rust binary
-const child = spawn(binaryPath, rustArgs, {
-  stdio: 'inherit',
-  cwd: process.cwd()
-});
-
-child.on('error', (error) => {
-  console.error(`Error: Failed to start i18next-turbo: ${error.message}`);
+main().catch((error) => {
+  console.error(`Error: ${error.message}`);
   process.exit(1);
-});
-
-child.on('exit', (code) => {
-  process.exit(code || 0);
 });
 
 /**
  * Find and load configuration file in current directory
  * Priority: i18next-turbo.json > i18next-parser.config.(js|json) > i18next.config.(ts|js)
  */
-function loadConfigFromDisk() {
-  const explorer = cosmiconfigSync('i18next-turbo', {
+async function loadConfigFromDisk() {
+  const explorer = cosmiconfig('i18next-turbo', {
     searchPlaces: [
       'i18next-turbo.json',
       'i18next-parser.config.json',
       'i18next-parser.config.js',
+      'i18next-parser.config.cjs',
+      'i18next-parser.config.mjs',
       'i18next.config.ts',
-      'i18next.config.js'
+      'i18next.config.js',
+      'i18next.config.cjs',
+      'i18next.config.mjs'
     ],
     loaders: {
       '.js': defaultLoaders['.js'],
       '.json': defaultLoaders['.json'],
+      '.cjs': loadCommonJsConfig,
+      '.mjs': loadEsmConfig,
       '.ts': loadTypeScriptConfig
     }
   });
 
-  const result = explorer.search();
+  const result = await explorer.search();
   if (!result) {
     return null;
   }
@@ -142,6 +157,116 @@ function loadTypeScriptConfig(filepath) {
 
   const config = jiti(filepath);
   return config && config.default ? config.default : config;
+}
+
+function loadCommonJsConfig(filepath) {
+  delete require.cache[require.resolve(filepath)];
+  const config = require(filepath);
+  return config && config.default ? config.default : config;
+}
+
+async function loadEsmConfig(filepath) {
+  const configUrl = pathToFileURL(filepath).href;
+  const configModule = await import(`${configUrl}?t=${Date.now()}`);
+  return configModule && configModule.default ? configModule.default : configModule;
+}
+
+function normalizeConfig(rawConfig) {
+  if (!rawConfig || typeof rawConfig !== 'object') {
+    return null;
+  }
+
+  const mapped = mapCliExtractConfig(rawConfig);
+  const normalized = {
+    ...mapped,
+    ...rawConfig
+  };
+
+  delete normalized.extract;
+  return normalized;
+}
+
+function mapCliExtractConfig(rawConfig) {
+  const extract = rawConfig.extract;
+  if (!extract || typeof extract !== 'object') {
+    return {};
+  }
+
+  const mapped = {};
+
+  if (Array.isArray(rawConfig.locales)) {
+    mapped.locales = rawConfig.locales;
+  }
+
+  if (typeof extract.input === 'string') {
+    mapped.input = [extract.input];
+  } else if (Array.isArray(extract.input)) {
+    mapped.input = extract.input;
+  }
+
+  if (typeof extract.output === 'string') {
+    const outputDir = coerceOutputDir(extract.output);
+    if (outputDir) {
+      mapped.output = outputDir;
+    }
+  } else if (typeof extract.output === 'function') {
+    console.warn('Warning: extract.output function is not supported by i18next-turbo.');
+  }
+
+  if (Array.isArray(extract.functions)) {
+    mapped.functions = extract.functions;
+  }
+
+  if (typeof extract.defaultNS === 'string') {
+    mapped.defaultNamespace = extract.defaultNS;
+  } else if (extract.defaultNS === false) {
+    console.warn('Warning: extract.defaultNS=false is not supported by i18next-turbo.');
+  }
+
+  if (typeof extract.keySeparator === 'string') {
+    mapped.keySeparator = extract.keySeparator;
+  } else if (extract.keySeparator === false || extract.keySeparator === null) {
+    mapped.keySeparator = '';
+  }
+
+  if (typeof extract.nsSeparator === 'string') {
+    mapped.nsSeparator = extract.nsSeparator;
+  } else if (extract.nsSeparator === false || extract.nsSeparator === null) {
+    mapped.nsSeparator = '';
+  }
+
+  if (typeof extract.contextSeparator === 'string') {
+    mapped.contextSeparator = extract.contextSeparator;
+  }
+
+  if (typeof extract.pluralSeparator === 'string') {
+    mapped.pluralSeparator = extract.pluralSeparator;
+  }
+
+  return mapped;
+}
+
+function coerceOutputDir(output) {
+  if (!output) {
+    return null;
+  }
+
+  const templateIndex = output.indexOf('{{');
+  if (templateIndex !== -1) {
+    const base = output.slice(0, templateIndex).replace(/[\\/]+$/, '');
+    if (base) {
+      return base;
+    }
+    console.warn('Warning: extract.output template could not be mapped to an output directory.');
+    return null;
+  }
+
+  const ext = path.extname(output);
+  if (ext) {
+    return path.dirname(output);
+  }
+
+  return output;
 }
 
 /**

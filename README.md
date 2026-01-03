@@ -284,6 +284,29 @@ Basically the same configuration works!
 3. Verify generated JSON files
 4. Start development with watch mode
 
+### i18next-cli Config Compatibility
+
+`i18next-turbo` can read `i18next-cli` config files and map a subset of `extract` options.
+
+Supported mappings:
+
+| i18next-cli (extract) | i18next-turbo |
+|:---|:---|
+| `input` | `input` |
+| `output` (string) | `output` (directory) |
+| `functions` | `functions` |
+| `defaultNS` | `defaultNamespace` |
+| `keySeparator` | `keySeparator` (`false` -> empty string) |
+| `nsSeparator` | `nsSeparator` (`false` -> empty string) |
+| `contextSeparator` | `contextSeparator` |
+| `pluralSeparator` | `pluralSeparator` |
+
+Notes:
+- `extract.output` function is not supported.
+- `extract.defaultNS = false` (namespace-less mode) is not supported.
+- Output templates like `locales/{{language}}/{{namespace}}.json` are reduced to a base directory.
+- Other `extract` options (ignore, transComponents, lint, types, etc.) are ignored.
+
 ---
 
 ## 🔧 Advanced Features
@@ -707,6 +730,29 @@ t('apple', { count });  // → apple_one, apple_other が生成される
 2. `i18next-turbo extract` を実行
 3. 生成された JSON ファイルを確認
 4. Watch モードで開発を開始
+
+### i18next-cli 設定との互換性
+
+`i18next-turbo` は `i18next-cli` の設定ファイルを読み込み、一部の `extract` 設定をマッピングします。
+
+対応するマッピング:
+
+| i18next-cli (extract) | i18next-turbo |
+|:---|:---|
+| `input` | `input` |
+| `output` (文字列) | `output` (ディレクトリ) |
+| `functions` | `functions` |
+| `defaultNS` | `defaultNamespace` |
+| `keySeparator` | `keySeparator` (`false` -> 空文字) |
+| `nsSeparator` | `nsSeparator` (`false` -> 空文字) |
+| `contextSeparator` | `contextSeparator` |
+| `pluralSeparator` | `pluralSeparator` |
+
+注意点:
+- `extract.output` が関数の場合は非対応です。
+- `extract.defaultNS = false`（namespace 無効）は非対応です。
+- `locales/{{language}}/{{namespace}}.json` のようなテンプレート出力はベースディレクトリに変換します。
+- それ以外の `extract` オプション（ignore, transComponents, lint, types など）は無視されます。
 
 ---
 
