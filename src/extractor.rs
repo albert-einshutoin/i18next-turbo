@@ -169,7 +169,7 @@ impl TranslationVisitor {
             if let Some(cooked) = quasi.cooked.as_ref() {
                 return cooked.as_str().map(|s| s.to_string());
             }
-            return quasi.raw.value.as_str().map(|s| s.to_string());
+            return Some(quasi.raw.to_string());
         }
 
         None
