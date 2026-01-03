@@ -43,6 +43,24 @@ pub struct Config {
     pub plural_separator: String,
 }
 
+#[cfg(feature = "napi")]
+use napi_derive::napi;
+
+#[cfg(feature = "napi")]
+#[napi(object)]
+#[allow(non_snake_case)]
+pub struct NapiConfig {
+    pub input: Option<Vec<String>>,
+    pub output: Option<String>,
+    pub locales: Option<Vec<String>>,
+    pub defaultNamespace: Option<String>,
+    pub functions: Option<Vec<String>>,
+    pub keySeparator: Option<String>,
+    pub nsSeparator: Option<String>,
+    pub contextSeparator: Option<String>,
+    pub pluralSeparator: Option<String>,
+}
+
 fn default_input() -> Vec<String> {
     vec!["src/**/*.{ts,tsx,js,jsx}".to_string()]
 }
@@ -127,6 +145,28 @@ impl Config {
                     Ok(Self::default())
                 }
             }
+        }
+    }
+
+    #[cfg(feature = "napi")]
+    pub fn from_napi(config: NapiConfig) -> Self {
+        let defaults = Config::default();
+        Config {
+            input: config.input.unwrap_or(defaults.input),
+            output: config.output.unwrap_or(defaults.output),
+            locales: config.locales.unwrap_or(defaults.locales),
+            default_namespace: config
+                .defaultNamespace
+                .unwrap_or(defaults.default_namespace),
+            functions: config.functions.unwrap_or(defaults.functions),
+            key_separator: config.keySeparator.unwrap_or(defaults.key_separator),
+            ns_separator: config.nsSeparator.unwrap_or(defaults.ns_separator),
+            context_separator: config
+                .contextSeparator
+                .unwrap_or(defaults.context_separator),
+            plural_separator: config
+                .pluralSeparator
+                .unwrap_or(defaults.plural_separator),
         }
     }
 }

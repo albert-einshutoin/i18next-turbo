@@ -14,27 +14,25 @@ use napi_derive::napi;
 use serde_json;
 
 #[cfg(feature = "napi")]
-use crate::config::Config;
+use crate::config::{Config, NapiConfig};
 #[cfg(feature = "napi")]
 use crate::extractor::ExtractedKey;
 
 /// Extract translation keys from source files
 ///
 /// # Arguments
-/// * `config_json` - JSON string representation of the Config struct
+/// * `config` - Configuration object
 /// * `options` - Optional extraction options (output, fail_on_warnings, generate_types, types_output)
 ///
 /// # Returns
 /// Returns a JSON string with extraction results
-#[cfg(feature = "napi")]
 #[napi]
+#[cfg(feature = "napi")]
 pub fn extract(
-    config_json: String,
+    config: NapiConfig,
     options: Option<ExtractOptions>,
 ) -> Result<String> {
-    // Parse config from JSON
-    let config: Config = serde_json::from_str(&config_json)
-        .map_err(|e| napi::Error::from_reason(format!("Failed to parse config: {}", e)))?;
+    let config: Config = Config::from_napi(config);
 
     // Extract options
     let output = options.as_ref().and_then(|o| o.output.as_ref());
@@ -130,18 +128,16 @@ pub fn extract(
 /// Watch for file changes and extract keys automatically
 ///
 /// # Arguments
-/// * `config_json` - JSON string representation of the Config struct
+/// * `config` - Configuration object
 /// * `options` - Optional watch options (output)
 ///
 /// # Note
 /// This function runs indefinitely until interrupted. In a Node.js context,
 /// this should be called in a separate thread or worker.
-#[cfg(feature = "napi")]
 #[napi]
-pub fn watch(config_json: String, options: Option<WatchOptions>) -> Result<()> {
-    // Parse config from JSON
-    let config: Config = serde_json::from_str(&config_json)
-        .map_err(|e| napi::Error::from_reason(format!("Failed to parse config: {}", e)))?;
+#[cfg(feature = "napi")]
+pub fn watch(config: NapiConfig, options: Option<WatchOptions>) -> Result<()> {
+    let config: Config = Config::from_napi(config);
 
     // Extract options
     let output = options.as_ref().and_then(|o| o.output.as_ref());

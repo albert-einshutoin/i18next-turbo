@@ -32,6 +32,9 @@
   "scripts": {
     "postinstall": "node bin/postinstall.js"
   },
+  "dependencies": {
+    "cosmiconfig": "^9.0.0"
+  },
   "optionalDependencies": {
     "i18next-turbo-darwin-x64": "0.1.0",
     "i18next-turbo-darwin-arm64": "0.1.0",
@@ -44,4 +47,3 @@
     "node": ">=14"
   }
 }
-
