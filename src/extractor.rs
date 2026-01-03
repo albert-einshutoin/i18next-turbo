@@ -55,6 +55,8 @@ pub struct TranslationVisitor {
     scope_bindings: HashMap<String, ScopeInfo>,
     /// File path being processed (for warning messages)
     file_path: Option<String>,
+    /// Warning count for non-extractable patterns
+    warning_count: usize,
 }
 
 impl TranslationVisitor {
@@ -78,6 +80,7 @@ impl TranslationVisitor {
             disabled_lines,
             scope_bindings: HashMap::new(),
             file_path: None,
+            warning_count: 0,
         }
     }
 
@@ -138,7 +141,7 @@ impl TranslationVisitor {
     }
 
     /// Extract string literal or template literal from the first argument
-    fn extract_key_from_args(&self, call: &CallExpr) -> Option<String> {
+    fn extract_key_from_args(&mut self, call: &CallExpr) -> Option<String> {
         call.args.first().and_then(|arg| {
             match arg.expr.as_ref() {
                 // String literal: t('key')
@@ -151,7 +154,7 @@ impl TranslationVisitor {
     }
 
     /// Extract key from a template literal (only if it's a simple string without expressions)
-    fn extract_simple_template_literal(&self, tpl: &Tpl, span: Span) -> Option<String> {
+    fn extract_simple_template_literal(&mut self, tpl: &Tpl, span: Span) -> Option<String> {
         // Only handle simple template literals without expressions
         // e.g., t(`hello`) is OK, but t(`hello ${name}`) is not
         if !tpl.exprs.is_empty() {
@@ -163,20 +166,24 @@ impl TranslationVisitor {
         // Template literal with no expressions should have exactly one quasi
         if tpl.quasis.len() == 1 {
             let quasi = &tpl.quasis[0];
-            return quasi.cooked.as_ref().and_then(|s| s.as_str().map(|s| s.to_string()));
+            if let Some(cooked) = quasi.cooked.as_ref() {
+                return cooked.as_str().map(|s| s.to_string());
+            }
+            return quasi.raw.value.as_str().map(|s| s.to_string());
         }
 
         None
     }
 
     /// Warn about dynamic template literals that cannot be extracted
-    fn warn_dynamic_template_literal(&self, span: Span) {
+    fn warn_dynamic_template_literal(&mut self, span: Span) {
         let loc = self.source_map.lookup_char_pos(span.lo);
         let file_path = self
             .file_path
             .as_ref()
             .map(|p| p.as_str())
             .unwrap_or("<unknown>");
+        self.warning_count += 1;
         eprintln!(
             "Warning: Dynamic template literal found at {}:{}:{}. Translation key extraction skipped. Consider using i18next-extract-disable-line if intentional.",
             file_path,
@@ -969,11 +976,19 @@ pub fn extract_from_file<P: AsRef<Path>>(
     path: P,
     functions: &[String],
 ) -> Result<Vec<ExtractedKey>> {
+    let (keys, _) = extract_from_file_with_warnings(path, functions)?;
+    Ok(keys)
+}
+
+fn extract_from_file_with_warnings<P: AsRef<Path>>(
+    path: P,
+    functions: &[String],
+) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let source_code = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
-    extract_from_source(&source_code, path, functions)
+    extract_from_source_with_warnings(&source_code, path, functions)
 }
 
 /// Extract translation keys from source code string
@@ -982,6 +997,15 @@ pub fn extract_from_source<P: AsRef<Path>>(
     path: P,
     functions: &[String],
 ) -> Result<Vec<ExtractedKey>> {
+    let (keys, _) = extract_from_source_with_warnings(source, path, functions)?;
+    Ok(keys)
+}
+
+fn extract_from_source_with_warnings<P: AsRef<Path>>(
+    source: &str,
+    path: P,
+    functions: &[String],
+) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
 
@@ -1021,7 +1045,7 @@ pub fn extract_from_source<P: AsRef<Path>>(
                 path.display(),
                 e.kind()
             );
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
     };
 
@@ -1033,7 +1057,7 @@ pub fn extract_from_source<P: AsRef<Path>>(
     // Also extract keys from comments
     visitor.extract_from_comments();
 
-    Ok(visitor.keys)
+    Ok((visitor.keys, visitor.warning_count))
 }
 
 /// Extract keys from multiple files using glob patterns
@@ -1070,11 +1094,17 @@ pub fn extract_from_glob(
     let results: Vec<_> = all_files
         .par_iter()
         .filter_map(|path| {
-            match extract_from_file(path, functions) {
-                Ok(keys) if !keys.is_empty() => {
-                    Some((path.display().to_string(), keys))
+            match extract_from_file_with_warnings(path, functions) {
+                Ok((keys, warnings)) => {
+                    if warnings > 0 {
+                        warning_count.fetch_add(warnings, Ordering::Relaxed);
+                    }
+                    if !keys.is_empty() {
+                        Some((path.display().to_string(), keys))
+                    } else {
+                        None
+                    }
                 }
-                Ok(_) => None, // No keys found
                 Err(e) => {
                     eprintln!("Warning: {}", e);
                     warning_count.fetch_add(1, Ordering::Relaxed);
