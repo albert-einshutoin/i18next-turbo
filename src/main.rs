@@ -17,6 +17,10 @@ struct Cli {
     #[arg(short, long, global = true)]
     config: Option<PathBuf>,
 
+    /// Configuration as JSON string (used by Node.js wrapper for JS/TS config files)
+    #[arg(long, global = true, hide = true)]
+    config_json: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -153,7 +157,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load configuration
-    let config = Config::load_or_default(cli.config.as_ref())?;
+    // Priority: --config-json > --config > default
+    let config = if let Some(config_json) = cli.config_json {
+        // Load from JSON string (used by Node.js wrapper)
+        Config::from_json_string(&config_json)?
+    } else {
+        // Load from file or use default
+        Config::load_or_default(cli.config.as_ref())?
+    };
 
     match cli.command {
         Commands::Extract {

@@ -4,7 +4,8 @@
  * i18next-turbo CLI wrapper
  * 
  * This script detects the user's OS and architecture, then calls the appropriate
- * Rust binary. In the future, this will call the NAPI .node addon instead.
+ * Rust binary. It also handles loading JS/TS configuration files and converting
+ * them to JSON for the Rust binary.
  */
 
 const { spawn } = require('child_process');
@@ -53,8 +54,38 @@ if (!fs.existsSync(binaryPath)) {
   process.exit(1);
 }
 
-// Spawn the Rust binary with all arguments passed through
-const child = spawn(binaryPath, process.argv.slice(2), {
+// Load configuration file if it exists
+let configJson = null;
+const args = process.argv.slice(2);
+
+// Check if --config is already specified
+const configIndex = args.findIndex(arg => arg === '--config' || arg === '-c');
+if (configIndex === -1) {
+  // Try to find and load config file
+  const configPath = findConfigFile();
+  if (configPath) {
+    try {
+      const config = loadConfigFile(configPath);
+      if (config) {
+        configJson = JSON.stringify(config);
+      }
+    } catch (error) {
+      console.warn(`Warning: Failed to load config file ${configPath}: ${error.message}`);
+      // Continue without config - Rust binary will use defaults
+    }
+  }
+}
+
+// Build arguments for Rust binary
+const rustArgs = [];
+if (configJson) {
+  rustArgs.push('--config-json', configJson);
+}
+// Add all other arguments (including --config if specified)
+rustArgs.push(...args);
+
+// Spawn the Rust binary
+const child = spawn(binaryPath, rustArgs, {
   stdio: 'inherit',
   cwd: process.cwd()
 });
@@ -67,4 +98,71 @@ child.on('error', (error) => {
 child.on('exit', (code) => {
   process.exit(code || 0);
 });
+
+/**
+ * Find configuration file in current directory
+ * Priority: i18next-turbo.json > i18next-parser.config.js > i18next.config.ts > i18next.config.js
+ */
+function findConfigFile() {
+  const cwd = process.cwd();
+  const configFiles = [
+    'i18next-turbo.json',
+    'i18next-parser.config.js',
+    'i18next.config.ts',
+    'i18next.config.js'
+  ];
+
+  for (const file of configFiles) {
+    const filePath = path.join(cwd, file);
+    if (fs.existsSync(filePath)) {
+      return filePath;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Load configuration file (supports JS/TS files)
+ */
+function loadConfigFile(configPath) {
+  const ext = path.extname(configPath);
+  
+  if (ext === '.json') {
+    // JSON file - read and parse directly
+    const content = fs.readFileSync(configPath, 'utf-8');
+    return JSON.parse(content);
+  } else if (ext === '.js' || ext === '.ts') {
+    // JS/TS file - use require() or jiti
+    try {
+      // Try to use jiti for TypeScript support (if available)
+      let jiti;
+      try {
+        jiti = require('jiti')(process.cwd(), {
+          esmResolve: true,
+          interopDefault: true
+        });
+      } catch (e) {
+        // jiti not available, fall back to require() for .js files
+        if (ext === '.ts') {
+          throw new Error('TypeScript config files require "jiti" package. Install it with: npm install --save-dev jiti');
+        }
+        // For .js files, use require()
+        delete require.cache[require.resolve(configPath)];
+        const config = require(configPath);
+        // Handle both default export and module.exports
+        return config.default || config;
+      }
+      
+      // Use jiti to load the config file
+      const config = jiti(configPath);
+      // Handle both default export and module.exports
+      return config.default || config;
+    } catch (error) {
+      throw new Error(`Failed to load config file: ${error.message}`);
+    }
+  }
+  
+  return null;
+}
 

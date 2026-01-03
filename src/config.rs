@@ -108,6 +108,13 @@ impl Config {
         Ok(config)
     }
 
+    /// Load configuration from a JSON string
+    pub fn from_json_string(json_str: &str) -> Result<Self> {
+        let config: Config = serde_json::from_str(json_str)
+            .with_context(|| "Failed to parse config JSON string")?;
+        Ok(config)
+    }
+
     /// Try to load from default config file, or return default config
     pub fn load_or_default<P: AsRef<Path>>(path: Option<P>) -> Result<Self> {
         match path {
