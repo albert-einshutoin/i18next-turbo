@@ -16,11 +16,11 @@ use serde_json;
 #[cfg(feature = "napi")]
 use crate::config::{Config, NapiConfig};
 #[cfg(feature = "napi")]
-use crate::cleanup;
+use crate::cleanup as cleanup_mod;
 #[cfg(feature = "napi")]
 use crate::extractor::ExtractedKey;
 #[cfg(feature = "napi")]
-use crate::lint;
+use crate::lint as lint_mod;
 
 /// Extract translation keys from source files
 ///
@@ -208,7 +208,7 @@ pub fn lint(config: NapiConfig, options: Option<LintOptions>) -> Result<String> 
         .and_then(|o| o.fail_on_error)
         .unwrap_or(false);
 
-    let result = lint::lint_from_glob(&config.input)
+    let result = lint_mod::lint_from_glob(&config.input)
         .map_err(|e| napi::Error::from_reason(format!("Lint failed: {}", e)))?;
 
     if fail_on_error && !result.issues.is_empty() {
@@ -254,7 +254,7 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<String
     }
 
     let locales_path = std::path::Path::new(&config.output);
-    let dead_keys = cleanup::find_dead_keys(
+    let dead_keys = cleanup_mod::find_dead_keys(
         locales_path,
         &all_keys,
         &config.default_namespace,
@@ -264,7 +264,7 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<String
 
     let mut removed_count = 0usize;
     if remove && !dry_run && !dead_keys.is_empty() {
-        removed_count = cleanup::purge_dead_keys(locales_path, &dead_keys)
+        removed_count = cleanup_mod::purge_dead_keys(locales_path, &dead_keys)
             .map_err(|e| napi::Error::from_reason(format!("Cleanup failed: {}", e)))?;
     }
 
