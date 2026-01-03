@@ -73,12 +73,17 @@ pub fn sort_keys_alphabetically(map: &Map<String, Value>) -> Map<String, Value> 
     keys.sort();
 
     for key in keys {
-        let value = map.get(key).unwrap();
-        let sorted_value = match value {
-            Value::Object(nested) => Value::Object(sort_keys_alphabetically(nested)),
-            other => other.clone(),
-        };
-        sorted.insert(key.clone(), sorted_value);
+        // Use safe access instead of unwrap() to prevent panics
+        if let Some(value) = map.get(key) {
+            let sorted_value = match value {
+                Value::Object(nested) => Value::Object(sort_keys_alphabetically(nested)),
+                other => other.clone(),
+            };
+            sorted.insert(key.clone(), sorted_value);
+        }
+        // Note: In normal operation, the key should always exist since we iterate over map.keys().
+        // However, using safe access prevents potential panics from concurrent modifications
+        // or unexpected data structures.
     }
 
     sorted
