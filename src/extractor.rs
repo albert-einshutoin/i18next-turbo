@@ -273,36 +273,40 @@ impl TranslationVisitor {
         // Captures key, then optionally matches rest until closing paren (handles nested braces)
         let quoted_pattern = regex::Regex::new(
             r#"\$t\s*\(\s*['"]([^'"]+)['"]"#
-        ).unwrap();
+        ).expect("Failed to compile quoted pattern regex");
 
         // Pattern 2: $t(key) - without quotes (simple identifier or key with colon/dots)
         // Captures just the key part before comma or closing paren
         let unquoted_pattern = regex::Regex::new(
             r#"\$t\s*\(\s*([a-zA-Z_][a-zA-Z0-9_.:]*)"#
-        ).unwrap();
+        ).expect("Failed to compile unquoted pattern regex");
 
         // Extract quoted patterns
         for cap in quoted_pattern.captures_iter(text) {
-            let key = cap.get(1).unwrap().as_str();
-            let (namespace, base_key) = self.parse_key_with_namespace(key);
-            keys.push(ExtractedKey {
-                key: base_key,
-                namespace,
-                default_value: None,
-            });
-        }
-
-        // Extract unquoted patterns
-        for cap in unquoted_pattern.captures_iter(text) {
-            let key = cap.get(1).unwrap().as_str();
-            let (namespace, base_key) = self.parse_key_with_namespace(key);
-            // Avoid duplicates
-            if !keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+            if let Some(key_match) = cap.get(1) {
+                let key = key_match.as_str();
+                let (namespace, base_key) = self.parse_key_with_namespace(key);
                 keys.push(ExtractedKey {
                     key: base_key,
                     namespace,
                     default_value: None,
                 });
+            }
+        }
+
+        // Extract unquoted patterns
+        for cap in unquoted_pattern.captures_iter(text) {
+            if let Some(key_match) = cap.get(1) {
+                let key = key_match.as_str();
+                let (namespace, base_key) = self.parse_key_with_namespace(key);
+                // Avoid duplicates
+                if !keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                    keys.push(ExtractedKey {
+                        key: base_key,
+                        namespace,
+                        default_value: None,
+                    });
+                }
             }
         }
 
@@ -683,37 +687,24 @@ impl TranslationVisitor {
         // Pattern: t('key') or t("key") or t(`key`)
         let single_arg_pattern = regex::Regex::new(
             r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*\)"#
-        ).unwrap();
+        ).expect("Failed to compile single_arg_pattern regex");
 
         // Pattern: t('key', 'default') with simple string default
         let with_default_pattern = regex::Regex::new(
             r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]\s*\)"#
-        ).unwrap();
+        ).expect("Failed to compile with_default_pattern regex");
 
         // Pattern: t('key', { defaultValue: '...' })
         let with_options_pattern = regex::Regex::new(
             r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{[^}]*defaultValue\s*:\s*['"`]([^'"`]+)['"`]"#
-        ).unwrap();
+        ).expect("Failed to compile with_options_pattern regex");
 
         // Extract with options pattern first (most specific)
         for cap in with_options_pattern.captures_iter(text) {
-            let key = cap.get(1).unwrap().as_str();
-            let default_value = cap.get(2).map(|m| m.as_str().to_string());
-            let (namespace, base_key) = self.parse_key_with_namespace(key);
-            self.keys.push(ExtractedKey {
-                key: base_key,
-                namespace,
-                default_value,
-            });
-        }
-
-        // Extract with default pattern
-        for cap in with_default_pattern.captures_iter(text) {
-            let key = cap.get(1).unwrap().as_str();
-            // Check if already captured by options pattern
-            let (namespace, base_key) = self.parse_key_with_namespace(key);
-            if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+            if let Some(key_match) = cap.get(1) {
+                let key = key_match.as_str();
                 let default_value = cap.get(2).map(|m| m.as_str().to_string());
+                let (namespace, base_key) = self.parse_key_with_namespace(key);
                 self.keys.push(ExtractedKey {
                     key: base_key,
                     namespace,
@@ -722,17 +713,36 @@ impl TranslationVisitor {
             }
         }
 
+        // Extract with default pattern
+        for cap in with_default_pattern.captures_iter(text) {
+            if let Some(key_match) = cap.get(1) {
+                let key = key_match.as_str();
+                // Check if already captured by options pattern
+                let (namespace, base_key) = self.parse_key_with_namespace(key);
+                if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                    let default_value = cap.get(2).map(|m| m.as_str().to_string());
+                    self.keys.push(ExtractedKey {
+                        key: base_key,
+                        namespace,
+                        default_value,
+                    });
+                }
+            }
+        }
+
         // Extract single arg pattern
         for cap in single_arg_pattern.captures_iter(text) {
-            let key = cap.get(1).unwrap().as_str();
-            let (namespace, base_key) = self.parse_key_with_namespace(key);
-            // Check if already captured
-            if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
-                self.keys.push(ExtractedKey {
-                    key: base_key,
-                    namespace,
-                    default_value: None,
-                });
+            if let Some(key_match) = cap.get(1) {
+                let key = key_match.as_str();
+                let (namespace, base_key) = self.parse_key_with_namespace(key);
+                // Check if already captured
+                if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                    self.keys.push(ExtractedKey {
+                        key: base_key,
+                        namespace,
+                        default_value: None,
+                    });
+                }
             }
         }
     }
@@ -907,17 +917,18 @@ impl Visit for TranslationVisitor {
                 // Generate keys based on count and context attributes
                 if has_count && context.is_some() {
                     // Both count and context: key_context_one, key_context_other
-                    let ctx = context.as_ref().unwrap();
-                    self.keys.push(ExtractedKey {
-                        key: format!("{}_{}_one", base_key, ctx),
-                        namespace: namespace.clone(),
-                        default_value: default_value.clone(),
-                    });
-                    self.keys.push(ExtractedKey {
-                        key: format!("{}_{}_other", base_key, ctx),
-                        namespace,
-                        default_value,
-                    });
+                    if let Some(ctx) = context.as_ref() {
+                        self.keys.push(ExtractedKey {
+                            key: format!("{}_{}_one", base_key, ctx),
+                            namespace: namespace.clone(),
+                            default_value: default_value.clone(),
+                        });
+                        self.keys.push(ExtractedKey {
+                            key: format!("{}_{}_other", base_key, ctx),
+                            namespace,
+                            default_value,
+                        });
+                    }
                 } else if has_count {
                     // Count only: key_one, key_other
                     self.keys.push(ExtractedKey {

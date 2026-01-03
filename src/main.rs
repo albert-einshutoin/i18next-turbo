@@ -633,11 +633,11 @@ fn run_sync(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
                             std::fs::create_dir_all(parent)?;
                         }
                         // Sort and write
-                        let sorted = json_sync::sort_keys_alphabetically(
-                            secondary_json.as_object().unwrap(),
-                        );
-                        let output = serde_json::to_string_pretty(&sorted)?;
-                        std::fs::write(&secondary_path, format!("{}\n", output))?;
+                        if let Some(obj) = secondary_json.as_object() {
+                            let sorted = json_sync::sort_keys_alphabetically(obj);
+                            let output = serde_json::to_string_pretty(&sorted)?;
+                            std::fs::write(&secondary_path, format!("{}\n", output))?;
+                        }
                     }
 
                     total_added += added;
@@ -888,9 +888,11 @@ fn run_rename_key(
             if old_ns != new_ns {
                 // Write updated old namespace file
                 if !dry_run {
-                    let sorted = json_sync::sort_keys_alphabetically(json.as_object().unwrap());
-                    let output = serde_json::to_string_pretty(&sorted)?;
-                    std::fs::write(&ns_file, format!("{}\n", output))?;
+                    if let Some(obj) = json.as_object() {
+                        let sorted = json_sync::sort_keys_alphabetically(obj);
+                        let output = serde_json::to_string_pretty(&sorted)?;
+                        std::fs::write(&ns_file, format!("{}\n", output))?;
+                    }
                 }
 
                 // Add to new namespace file
@@ -912,9 +914,11 @@ fn run_rename_key(
                 set_nested_value(&mut new_json, &new_key_path, value);
 
                 if !dry_run {
-                    let sorted = json_sync::sort_keys_alphabetically(new_json.as_object().unwrap());
-                    let output = serde_json::to_string_pretty(&sorted)?;
-                    std::fs::write(&new_ns_file, format!("{}\n", output))?;
+                    if let Some(obj) = new_json.as_object() {
+                        let sorted = json_sync::sort_keys_alphabetically(obj);
+                        let output = serde_json::to_string_pretty(&sorted)?;
+                        std::fs::write(&new_ns_file, format!("{}\n", output))?;
+                    }
                 }
 
                 println!("  {}/{}.json -> {}/{}.json", locale, old_ns, locale, new_ns);
@@ -923,9 +927,11 @@ fn run_rename_key(
                 set_nested_value(&mut json, &new_key_path, value);
 
                 if !dry_run {
-                    let sorted = json_sync::sort_keys_alphabetically(json.as_object().unwrap());
-                    let output = serde_json::to_string_pretty(&sorted)?;
-                    std::fs::write(&ns_file, format!("{}\n", output))?;
+                    if let Some(obj) = json.as_object() {
+                        let sorted = json_sync::sort_keys_alphabetically(obj);
+                        let output = serde_json::to_string_pretty(&sorted)?;
+                        std::fs::write(&ns_file, format!("{}\n", output))?;
+                    }
                 }
 
                 println!("  {}/{}.json", locale, old_ns);
@@ -1003,7 +1009,9 @@ fn remove_nested_key(json: &mut serde_json::Value, path: &str) {
 
     // Remove the last key
     if let serde_json::Value::Object(obj) = current {
-        obj.remove(*parts.last().unwrap());
+        if let Some(last) = parts.last() {
+            obj.remove(*last);
+        }
     }
 }
 
@@ -1026,7 +1034,13 @@ fn set_nested_value(json: &mut serde_json::Value, path: &str, value: serde_json:
             if !obj.contains_key(*part) {
                 obj.insert((*part).to_string(), serde_json::Value::Object(serde_json::Map::new()));
             }
-            current = obj.get_mut(*part).unwrap();
+            if let Some(val) = obj.get_mut(*part) {
+                current = val;
+            } else {
+                // This should not happen since we just inserted the key above
+                // But we handle it gracefully to avoid panics
+                return;
+            }
         }
     }
 }
