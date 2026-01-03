@@ -236,7 +236,11 @@ mod tests {
         let added = insert_nested_key(&mut map, &["button", "submit"], "");
 
         assert!(added);
-        let button = map.get("button").unwrap().as_object().unwrap();
+        let button = map
+            .get("button")
+            .expect("button should exist after insert_nested_key")
+            .as_object()
+            .expect("button should be an object after insert_nested_key");
         assert_eq!(button.get("submit"), Some(&Value::String("".to_string())));
     }
 
@@ -274,7 +278,11 @@ mod tests {
         map.insert("nested".to_string(), Value::Object(inner));
 
         let sorted = sort_keys_alphabetically(&map);
-        let nested = sorted.get("nested").unwrap().as_object().unwrap();
+        let nested = sorted
+            .get("nested")
+            .expect("nested should exist after sort_keys_alphabetically")
+            .as_object()
+            .expect("nested should be an object in sort_keys_alphabetically");
         let keys: Vec<_> = nested.keys().collect();
 
         assert_eq!(keys, vec!["a", "z"]);

@@ -6,11 +6,16 @@ pub mod lint;
 pub mod typegen;
 pub mod watcher;
 
+#[cfg(feature = "napi")]
 use napi::bindgen_prelude::*;
+#[cfg(feature = "napi")]
 use napi_derive::napi;
+#[cfg(feature = "napi")]
 use serde_json;
 
+#[cfg(feature = "napi")]
 use crate::config::Config;
+#[cfg(feature = "napi")]
 use crate::extractor::ExtractedKey;
 
 /// Extract translation keys from source files
@@ -21,6 +26,7 @@ use crate::extractor::ExtractedKey;
 ///
 /// # Returns
 /// Returns a JSON string with extraction results
+#[cfg(feature = "napi")]
 #[napi]
 pub fn extract(
     config_json: String,
@@ -130,6 +136,7 @@ pub fn extract(
 /// # Note
 /// This function runs indefinitely until interrupted. In a Node.js context,
 /// this should be called in a separate thread or worker.
+#[cfg(feature = "napi")]
 #[napi]
 pub fn watch(config_json: String, options: Option<WatchOptions>) -> Result<()> {
     // Parse config from JSON
@@ -150,6 +157,7 @@ pub fn watch(config_json: String, options: Option<WatchOptions>) -> Result<()> {
 }
 
 /// Extract options
+#[cfg(feature = "napi")]
 #[napi(object)]
 pub struct ExtractOptions {
     /// Output directory (overrides config)
@@ -163,6 +171,7 @@ pub struct ExtractOptions {
 }
 
 /// Watch options
+#[cfg(feature = "napi")]
 #[napi(object)]
 pub struct WatchOptions {
     /// Output directory (overrides config)

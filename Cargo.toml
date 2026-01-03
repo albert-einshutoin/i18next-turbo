@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+napi = ["dep:napi", "dep:napi-derive"]
+
 [dependencies]
 # CLI & Config
 clap = { version = "4.4", features = ["derive"] }
@@ -32,8 +36,8 @@ swc_ecma_visit = "19"
 regex = "1.10"
 
 # NAPI (Node-API) for Node.js integration
-napi = { version = "2", features = ["napi4", "napi5", "napi6", "napi7", "napi8"] }
-napi-derive = "2"
+napi = { version = "2", optional = true, features = ["napi4", "napi5", "napi6", "napi7", "napi8"] }
+napi-derive = { version = "2", optional = true }
 
 [build-dependencies]
 napi-build = "2.2"  # Using 2.2.0 for Rust 1.87 compatibility
