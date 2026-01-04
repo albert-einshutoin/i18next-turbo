@@ -1,6 +1,54 @@
 use anyhow::{Context, Result};
+use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::OnceLock;
+use unicode_normalization::UnicodeNormalization;
+
+/// Normalize a string to NFC form for consistent key handling
+/// This ensures that keys like "が" (NFD: か+゛) and "が" (NFC) are treated as identical
+fn normalize_key(key: &str) -> String {
+    key.nfc().collect()
+}
+
+// Static regex patterns for nested translations (compiled once)
+static NESTED_QUOTED_REGEX: OnceLock<Regex> = OnceLock::new();
+static NESTED_UNQUOTED_REGEX: OnceLock<Regex> = OnceLock::new();
+
+// Static regex patterns for comment extraction (compiled once)
+static COMMENT_SINGLE_ARG_REGEX: OnceLock<Regex> = OnceLock::new();
+static COMMENT_WITH_DEFAULT_REGEX: OnceLock<Regex> = OnceLock::new();
+static COMMENT_WITH_OPTIONS_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_nested_quoted_regex() -> &'static Regex {
+    NESTED_QUOTED_REGEX.get_or_init(|| {
+        Regex::new(r#"\$t\s*\(\s*['"]([^'"]+)['"]"#).unwrap()
+    })
+}
+
+fn get_nested_unquoted_regex() -> &'static Regex {
+    NESTED_UNQUOTED_REGEX.get_or_init(|| {
+        Regex::new(r#"\$t\s*\(\s*([a-zA-Z_][a-zA-Z0-9_.:]*)"#).unwrap()
+    })
+}
+
+fn get_comment_single_arg_regex() -> &'static Regex {
+    COMMENT_SINGLE_ARG_REGEX.get_or_init(|| {
+        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*\)"#).unwrap()
+    })
+}
+
+fn get_comment_with_default_regex() -> &'static Regex {
+    COMMENT_WITH_DEFAULT_REGEX.get_or_init(|| {
+        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]\s*\)"#).unwrap()
+    })
+}
+
+fn get_comment_with_options_regex() -> &'static Regex {
+    COMMENT_WITH_OPTIONS_REGEX.get_or_init(|| {
+        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{[^}]*defaultValue\s*:\s*['"`]([^'"`]+)['"`]"#).unwrap()
+    })
+}
 use swc_common::comments::SingleThreadedComments;
 use swc_common::sync::Lrc;
 use swc_common::{FileName, SourceMap, Span};
@@ -20,11 +68,19 @@ pub struct ExtractedKey {
     pub default_value: Option<String>,
 }
 
+/// Error encountered during extraction
+#[derive(Debug, Clone)]
+pub struct ExtractionError {
+    pub file_path: String,
+    pub message: String,
+}
+
 /// Result of extraction from multiple files
 #[derive(Debug, Default)]
 pub struct ExtractionResult {
     pub files: Vec<(String, Vec<ExtractedKey>)>,
     pub warning_count: usize,
+    pub errors: Vec<ExtractionError>,
 }
 
 /// Scope information for useTranslation hook
@@ -276,17 +332,9 @@ impl TranslationVisitor {
     fn extract_nested_translations(&self, text: &str) -> Vec<ExtractedKey> {
         let mut keys = Vec::new();
 
-        // Pattern 1: $t('key') or $t("key") - with quotes
-        // Captures key, then optionally matches rest until closing paren (handles nested braces)
-        let quoted_pattern = regex::Regex::new(
-            r#"\$t\s*\(\s*['"]([^'"]+)['"]"#
-        ).expect("Failed to compile quoted pattern regex");
-
-        // Pattern 2: $t(key) - without quotes (simple identifier or key with colon/dots)
-        // Captures just the key part before comma or closing paren
-        let unquoted_pattern = regex::Regex::new(
-            r#"\$t\s*\(\s*([a-zA-Z_][a-zA-Z0-9_.:]*)"#
-        ).expect("Failed to compile unquoted pattern regex");
+        // Use static regex patterns (compiled once, reused across all calls)
+        let quoted_pattern = get_nested_quoted_regex();
+        let unquoted_pattern = get_nested_unquoted_regex();
 
         // Extract quoted patterns
         for cap in quoted_pattern.captures_iter(text) {
@@ -320,13 +368,15 @@ impl TranslationVisitor {
         keys
     }
 
-    /// Parse namespace:key format
+    /// Parse namespace:key format with Unicode normalization
     fn parse_key_with_namespace(&self, key: &str) -> (Option<String>, String) {
-        if key.contains(':') {
-            let parts: Vec<&str> = key.splitn(2, ':').collect();
+        // Normalize the key to NFC form for consistent handling
+        let normalized = normalize_key(key);
+        if normalized.contains(':') {
+            let parts: Vec<&str> = normalized.splitn(2, ':').collect();
             (Some(parts[0].to_string()), parts[1].to_string())
         } else {
-            (None, key.to_string())
+            (None, normalized)
         }
     }
 
@@ -690,21 +740,10 @@ impl TranslationVisitor {
         // Look for patterns like t('key'), t("key"), t('key', 'default'), t('key', { defaultValue: '...' })
         // Also support i18n.t('key')
 
-        // Regex patterns for extracting keys from comments
-        // Pattern: t('key') or t("key") or t(`key`)
-        let single_arg_pattern = regex::Regex::new(
-            r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*\)"#
-        ).expect("Failed to compile single_arg_pattern regex");
-
-        // Pattern: t('key', 'default') with simple string default
-        let with_default_pattern = regex::Regex::new(
-            r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]\s*\)"#
-        ).expect("Failed to compile with_default_pattern regex");
-
-        // Pattern: t('key', { defaultValue: '...' })
-        let with_options_pattern = regex::Regex::new(
-            r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{[^}]*defaultValue\s*:\s*['"`]([^'"`]+)['"`]"#
-        ).expect("Failed to compile with_options_pattern regex");
+        // Use static regex patterns (compiled once, reused across all calls)
+        let single_arg_pattern = get_comment_single_arg_regex();
+        let with_default_pattern = get_comment_with_default_regex();
+        let with_options_pattern = get_comment_with_options_regex();
 
         // Extract with options pattern first (most specific)
         for cap in with_options_pattern.captures_iter(text) {
@@ -1067,9 +1106,11 @@ pub fn extract_from_glob(
 ) -> Result<ExtractionResult> {
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     let mut all_files: Vec<std::path::PathBuf> = Vec::new();
     let warning_count = AtomicUsize::new(0);
+    let errors: Mutex<Vec<ExtractionError>> = Mutex::new(Vec::new());
 
     for pattern in patterns {
         let matches = glob::glob(pattern)
@@ -1083,7 +1124,10 @@ pub fn extract_from_glob(
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Glob error: {}", e);
+                    errors.lock().unwrap().push(ExtractionError {
+                        file_path: pattern.clone(),
+                        message: format!("Glob error: {}", e),
+                    });
                     warning_count.fetch_add(1, Ordering::Relaxed);
                 }
             }
@@ -1106,7 +1150,10 @@ pub fn extract_from_glob(
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: {}", e);
+                    errors.lock().unwrap().push(ExtractionError {
+                        file_path: path.display().to_string(),
+                        message: e.to_string(),
+                    });
                     warning_count.fetch_add(1, Ordering::Relaxed);
                     None
                 }
@@ -1117,6 +1164,7 @@ pub fn extract_from_glob(
     Ok(ExtractionResult {
         files: results,
         warning_count: warning_count.load(Ordering::Relaxed),
+        errors: errors.into_inner().unwrap(),
     })
 }
 

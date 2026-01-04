@@ -1,4 +1,5 @@
 pub mod cleanup;
+pub mod commands;
 pub mod config;
 pub mod extractor;
 pub mod json_sync;

@@ -35,6 +35,9 @@ swc_ecma_visit = "19"
 # Regex for comment extraction
 regex = "1.10"
 
+# Unicode normalization for consistent key handling
+unicode-normalization = "0.1"
+
 # NAPI (Node-API) for Node.js integration
 napi = { version = "2", optional = true, features = ["napi4", "napi5", "napi6", "napi7", "napi8"] }
 napi-derive = { version = "2", optional = true }
