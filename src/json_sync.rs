@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::config::Config;
 use crate::extractor::ExtractedKey;
+use crate::fs::FileSystem;
 
 /// Result of syncing keys to a locale file
 #[derive(Debug, Default)]
@@ -15,11 +16,17 @@ pub struct SyncResult {
 
 /// Read a JSON locale file, returning an empty map if it doesn't exist
 pub fn read_locale_file(path: &Path) -> Result<Map<String, Value>> {
-    if !path.exists() {
+    read_locale_file_with_fs(path, &crate::fs::RealFileSystem)
+}
+
+/// Read a JSON locale file using the provided FileSystem
+pub fn read_locale_file_with_fs<F: FileSystem>(path: &Path, fs: &F) -> Result<Map<String, Value>> {
+    if !fs.exists(path) {
         return Ok(Map::new());
     }
 
-    let content = std::fs::read_to_string(path)
+    let content = fs
+        .read_to_string(path)
         .with_context(|| format!("Failed to read locale file: {}", path.display()))?;
 
     // Handle empty files
@@ -144,28 +151,31 @@ pub fn merge_keys(
 
 /// Write JSON to file atomically using temp file + rename pattern
 pub fn write_locale_file(path: &Path, content: &Map<String, Value>) -> Result<()> {
-    use std::io::Write;
+    write_locale_file_with_fs(path, content, &crate::fs::RealFileSystem)
+}
 
+/// Write JSON to file using the provided FileSystem
+pub fn write_locale_file_with_fs<F: FileSystem>(
+    path: &Path,
+    content: &Map<String, Value>,
+    fs: &F,
+) -> Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        fs.create_dir_all(parent)
             .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
 
     // Write to temp file first
     let temp_path = path.with_extension("json.tmp");
     let json = serde_json::to_string_pretty(content)?;
+    let json_with_newline = format!("{}\n", json);
 
-    {
-        let mut file = std::fs::File::create(&temp_path)
-            .with_context(|| format!("Failed to create temp file: {}", temp_path.display()))?;
-        file.write_all(json.as_bytes())?;
-        file.write_all(b"\n")?; // Trailing newline
-        file.sync_all()?;
-    }
+    fs.write(&temp_path, &json_with_newline)
+        .with_context(|| format!("Failed to write temp file: {}", temp_path.display()))?;
 
     // Atomic rename
-    std::fs::rename(&temp_path, path)
+    fs.rename(&temp_path, path)
         .with_context(|| format!("Failed to rename temp file to: {}", path.display()))?;
 
     Ok(())

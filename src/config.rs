@@ -41,6 +41,16 @@ pub struct Config {
     /// Plural separator (e.g., "_" for "item_one")
     #[serde(default = "default_plural_separator")]
     pub plural_separator: String,
+
+    /// Plural suffixes to generate (e.g., ["one", "other"] for English)
+    /// Supported values: zero, one, two, few, many, other
+    /// Examples:
+    ///   - English: ["one", "other"]
+    ///   - Arabic: ["zero", "one", "two", "few", "many", "other"]
+    ///   - Russian: ["one", "few", "many", "other"]
+    ///   - Japanese: ["other"] (no plural forms)
+    #[serde(default = "default_plural_suffixes")]
+    pub plural_suffixes: Vec<String>,
 }
 
 #[cfg(feature = "napi")]
@@ -59,6 +69,7 @@ pub struct NapiConfig {
     pub nsSeparator: Option<String>,
     pub contextSeparator: Option<String>,
     pub pluralSeparator: Option<String>,
+    pub pluralSuffixes: Option<Vec<String>>,
 }
 
 fn default_input() -> Vec<String> {
@@ -97,6 +108,10 @@ fn default_plural_separator() -> String {
     "_".to_string()
 }
 
+fn default_plural_suffixes() -> Vec<String> {
+    vec!["one".to_string(), "other".to_string()]
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -109,6 +124,7 @@ impl Default for Config {
             ns_separator: default_ns_separator(),
             context_separator: default_context_separator(),
             plural_separator: default_plural_separator(),
+            plural_suffixes: default_plural_suffixes(),
         }
     }
 }
@@ -258,6 +274,9 @@ impl Config {
             plural_separator: config
                 .pluralSeparator
                 .unwrap_or(defaults.plural_separator),
+            plural_suffixes: config
+                .pluralSuffixes
+                .unwrap_or(defaults.plural_suffixes),
         };
         config.validate()?;
         Ok(config)

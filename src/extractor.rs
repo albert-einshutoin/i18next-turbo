@@ -113,6 +113,10 @@ pub struct TranslationVisitor {
     file_path: Option<String>,
     /// Warning count for non-extractable patterns
     warning_count: usize,
+    /// Plural separator (e.g., "_" for "item_one")
+    plural_separator: String,
+    /// Plural suffixes to generate (e.g., ["one", "other"])
+    plural_suffixes: Vec<String>,
 }
 
 impl TranslationVisitor {
@@ -120,6 +124,22 @@ impl TranslationVisitor {
         functions: Vec<String>,
         source_map: Lrc<SourceMap>,
         comments: Option<SingleThreadedComments>,
+    ) -> Self {
+        Self::with_plural_config(
+            functions,
+            source_map,
+            comments,
+            "_".to_string(),
+            vec!["one".to_string(), "other".to_string()],
+        )
+    }
+
+    pub fn with_plural_config(
+        functions: Vec<String>,
+        source_map: Lrc<SourceMap>,
+        comments: Option<SingleThreadedComments>,
+        plural_separator: String,
+        plural_suffixes: Vec<String>,
     ) -> Self {
         let mut trans_components = HashSet::new();
         trans_components.insert("Trans".to_string());
@@ -137,6 +157,8 @@ impl TranslationVisitor {
             scope_bindings: HashMap::new(),
             file_path: None,
             warning_count: 0,
+            plural_separator,
+            plural_suffixes,
         }
     }
 
@@ -252,6 +274,34 @@ impl TranslationVisitor {
     #[allow(dead_code)]
     fn has_count_option(&self, call: &CallExpr) -> bool {
         self.get_option_value(call, "count").is_some()
+    }
+
+    /// Generate plural keys based on configuration
+    /// Returns a list of keys with the appropriate plural suffixes
+    fn generate_plural_keys(
+        &self,
+        base_key: &str,
+        context: Option<&str>,
+        namespace: Option<String>,
+        default_value: Option<String>,
+    ) -> Vec<ExtractedKey> {
+        self.plural_suffixes
+            .iter()
+            .map(|suffix| {
+                let key = match context {
+                    Some(ctx) => format!(
+                        "{}{}{}{}{}",
+                        base_key, self.plural_separator, ctx, self.plural_separator, suffix
+                    ),
+                    None => format!("{}{}{}", base_key, self.plural_separator, suffix),
+                };
+                ExtractedKey {
+                    key,
+                    namespace: namespace.clone(),
+                    default_value: default_value.clone(),
+                }
+            })
+            .collect()
     }
 
     /// Check if call has context option
@@ -861,26 +911,14 @@ impl Visit for TranslationVisitor {
                 }
 
                 if has_count {
-                    // Generate plural keys: key_one, key_other
-                    let key_one = match &context {
-                        Some(ctx) => format!("{}_{}_one", base_key, ctx),
-                        None => format!("{}_one", base_key),
-                    };
-                    let key_other = match &context {
-                        Some(ctx) => format!("{}_{}_other", base_key, ctx),
-                        None => format!("{}_other", base_key),
-                    };
-
-                    self.keys.push(ExtractedKey {
-                        key: key_one,
-                        namespace: namespace_from_scope.clone(),
-                        default_value: default_value.clone(),
-                    });
-                    self.keys.push(ExtractedKey {
-                        key: key_other,
-                        namespace: namespace_from_scope,
+                    // Generate plural keys based on configuration
+                    let plural_keys = self.generate_plural_keys(
+                        &base_key,
+                        context.as_deref(),
+                        namespace_from_scope,
                         default_value,
-                    });
+                    );
+                    self.keys.extend(plural_keys);
                 } else if let Some(ctx) = context {
                     // Context without count
                     self.keys.push(ExtractedKey {
@@ -961,32 +999,15 @@ impl Visit for TranslationVisitor {
                 let namespace = ns_from_attr.or(namespace_from_key);
 
                 // Generate keys based on count and context attributes
-                if has_count && context.is_some() {
-                    // Both count and context: key_context_one, key_context_other
-                    if let Some(ctx) = context.as_ref() {
-                        self.keys.push(ExtractedKey {
-                            key: format!("{}_{}_one", base_key, ctx),
-                            namespace: namespace.clone(),
-                            default_value: default_value.clone(),
-                        });
-                        self.keys.push(ExtractedKey {
-                            key: format!("{}_{}_other", base_key, ctx),
-                            namespace,
-                            default_value,
-                        });
-                    }
-                } else if has_count {
-                    // Count only: key_one, key_other
-                    self.keys.push(ExtractedKey {
-                        key: format!("{}_one", base_key),
-                        namespace: namespace.clone(),
-                        default_value: default_value.clone(),
-                    });
-                    self.keys.push(ExtractedKey {
-                        key: format!("{}_other", base_key),
+                if has_count {
+                    // Generate plural keys based on configuration
+                    let plural_keys = self.generate_plural_keys(
+                        &base_key,
+                        context.as_deref(),
                         namespace,
                         default_value,
-                    });
+                    );
+                    self.keys.extend(plural_keys);
                 } else if let Some(ctx) = context {
                     // Context only: key_context
                     self.keys.push(ExtractedKey {
