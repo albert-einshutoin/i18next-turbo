@@ -44,3 +44,10 @@ napi-derive = { version = "2", optional = true }
 
 [build-dependencies]
 napi-build = "2.2"  # Using 2.2.0 for Rust 1.87 compatibility
+
+[profile.release]
+lto = true              # Link Time Optimization for smaller binary
+codegen-units = 1       # Better optimization (slower compile, faster/smaller binary)
+strip = true            # Remove debug symbols
+panic = "abort"         # No unwinding, smaller binary
+opt-level = "z"         # Optimize for size

@@ -180,8 +180,18 @@ impl FileWatcher {
         removed_files.sort();
         removed_files.dedup();
 
-        // Remove deleted files from cache
+        // Collect namespaces from removed files before removing from cache
+        let mut affected_namespaces = HashSet::new();
         for path in &removed_files {
+            if let Some(keys) = self.file_cache.get(path) {
+                for key in keys {
+                    if let Some(ns) = &key.namespace {
+                        affected_namespaces.insert(ns.clone());
+                    } else {
+                        affected_namespaces.insert(self.config.default_namespace.clone());
+                    }
+                }
+            }
             self.file_cache.remove(path);
         }
 
@@ -197,13 +207,26 @@ impl FileWatcher {
             println!("  Removed: {}", f.display());
         }
 
-        // Re-extract only changed files
-        self.incremental_extract(&changed_files)?;
+        // Re-extract only changed files and collect their namespaces
+        let changed_keys = self.incremental_extract(&changed_files)?;
+        for key in &changed_keys {
+            if let Some(ns) = &key.namespace {
+                affected_namespaces.insert(ns.clone());
+            } else {
+                affected_namespaces.insert(self.config.default_namespace.clone());
+            }
+        }
 
-        // Merge all cached keys and sync to JSON
+        // Merge all cached keys but only sync affected namespaces
         let all_keys: Vec<ExtractedKey> = self.file_cache.values().flatten().cloned().collect();
 
-        let sync_results = json_sync::sync_all_locales(&self.config, &all_keys, &self.output_dir)?;
+        // Only sync the affected namespaces (IO optimization)
+        let sync_results = json_sync::sync_namespaces(
+            &self.config,
+            &all_keys,
+            &self.output_dir,
+            &affected_namespaces,
+        )?;
 
         let total_added: usize = sync_results.iter().map(|r| r.added_keys.len()).sum();
         if total_added > 0 {
@@ -216,7 +239,8 @@ impl FileWatcher {
     }
 
     /// Extract keys from only the changed files
-    fn incremental_extract(&mut self, changed_files: &[PathBuf]) -> Result<()> {
+    /// Returns all extracted keys from the changed files
+    fn incremental_extract(&mut self, changed_files: &[PathBuf]) -> Result<Vec<ExtractedKey>> {
         use rayon::prelude::*;
 
         let results: Vec<_> = changed_files
@@ -232,15 +256,17 @@ impl FileWatcher {
             })
             .collect();
 
-        // Update cache
+        // Update cache and collect all extracted keys
+        let mut all_extracted_keys = Vec::new();
         for (path, keys) in results {
             if keys.is_empty() {
                 self.file_cache.remove(&path);
             } else {
+                all_extracted_keys.extend(keys.clone());
                 self.file_cache.insert(path, keys);
             }
         }
 
-        Ok(())
+        Ok(all_extracted_keys)
     }
 }

@@ -171,17 +171,10 @@ pub fn write_locale_file(path: &Path, content: &Map<String, Value>) -> Result<()
     Ok(())
 }
 
-/// Sync extracted keys to all locale files
-pub fn sync_all_locales(
-    config: &Config,
-    keys: &[ExtractedKey],
-    output_dir: &str,
-) -> Result<Vec<SyncResult>> {
-    let mut results = Vec::new();
-
-    // Collect all namespaces from keys
-    let mut namespaces: std::collections::HashSet<String> = std::collections::HashSet::new();
-    namespaces.insert(config.default_namespace.clone());
+/// Collect unique namespaces from a set of extracted keys
+pub fn collect_namespaces(keys: &[ExtractedKey], default_namespace: &str) -> std::collections::HashSet<String> {
+    let mut namespaces = std::collections::HashSet::new();
+    namespaces.insert(default_namespace.to_string());
 
     for key in keys {
         if let Some(ns) = &key.namespace {
@@ -189,9 +182,22 @@ pub fn sync_all_locales(
         }
     }
 
-    // Process each locale and namespace combination
+    namespaces
+}
+
+/// Sync extracted keys to specific namespace files only (for incremental updates)
+/// This is more efficient when only a subset of namespaces have changed
+pub fn sync_namespaces(
+    config: &Config,
+    keys: &[ExtractedKey],
+    output_dir: &str,
+    namespaces: &std::collections::HashSet<String>,
+) -> Result<Vec<SyncResult>> {
+    let mut results = Vec::new();
+
+    // Process only the specified namespace files
     for locale in &config.locales {
-        for namespace in &namespaces {
+        for namespace in namespaces {
             let file_path = Path::new(output_dir)
                 .join(locale)
                 .join(format!("{}.json", namespace));
@@ -204,17 +210,33 @@ pub fn sync_all_locales(
                 merge_keys(&mut content, keys, namespace, &config.default_namespace, &config.key_separator);
             sync_result.file_path = file_path.display().to_string();
 
-            // Sort keys alphabetically
-            let sorted = sort_keys_alphabetically(&content);
+            // Only write if there were changes
+            if !sync_result.added_keys.is_empty() {
+                // Sort keys alphabetically
+                let sorted = sort_keys_alphabetically(&content);
 
-            // Write back to file
-            write_locale_file(&file_path, &sorted)?;
+                // Write back to file
+                write_locale_file(&file_path, &sorted)?;
+            }
 
             results.push(sync_result);
         }
     }
 
     Ok(results)
+}
+
+/// Sync extracted keys to all locale files
+pub fn sync_all_locales(
+    config: &Config,
+    keys: &[ExtractedKey],
+    output_dir: &str,
+) -> Result<Vec<SyncResult>> {
+    // Collect all namespaces from keys
+    let namespaces = collect_namespaces(keys, &config.default_namespace);
+
+    // Use the namespace-specific sync
+    sync_namespaces(config, keys, output_dir, &namespaces)
 }
 
 #[cfg(test)]

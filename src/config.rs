@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -114,6 +114,94 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Validate configuration values
+    pub fn validate(&self) -> Result<()> {
+        // Check locales is not empty
+        if self.locales.is_empty() {
+            bail!(
+                "Configuration error: 'locales' must contain at least one locale.\n\
+                 Example: \"locales\": [\"en\", \"ja\"]"
+            );
+        }
+
+        // Check for empty locale strings
+        for (i, locale) in self.locales.iter().enumerate() {
+            if locale.trim().is_empty() {
+                bail!(
+                    "Configuration error: 'locales[{}]' is empty.\n\
+                     Each locale must be a non-empty string like \"en\" or \"ja\".",
+                    i
+                );
+            }
+        }
+
+        // Check input patterns are not empty
+        if self.input.is_empty() {
+            bail!(
+                "Configuration error: 'input' must contain at least one glob pattern.\n\
+                 Example: \"input\": [\"src/**/*.tsx\", \"src/**/*.ts\"]"
+            );
+        }
+
+        // Validate each input pattern is a valid glob
+        for pattern in &self.input {
+            if pattern.trim().is_empty() {
+                bail!(
+                    "Configuration error: empty input pattern found.\n\
+                     Each input pattern must be a non-empty glob like \"src/**/*.tsx\"."
+                );
+            }
+            // Try to compile the glob pattern to catch syntax errors early
+            if let Err(e) = glob::Pattern::new(pattern) {
+                bail!(
+                    "Configuration error: invalid glob pattern '{}'.\n\
+                     Glob error: {}\n\
+                     Example of valid patterns: \"src/**/*.tsx\", \"lib/*.js\"",
+                    pattern,
+                    e
+                );
+            }
+        }
+
+        // Check output is not empty
+        if self.output.trim().is_empty() {
+            bail!(
+                "Configuration error: 'output' must be a non-empty directory path.\n\
+                 Example: \"output\": \"locales\""
+            );
+        }
+
+        // Check for potentially problematic output path characters
+        let invalid_chars = ['<', '>', '|', '\0'];
+        for c in invalid_chars {
+            if self.output.contains(c) {
+                bail!(
+                    "Configuration error: 'output' contains invalid character '{}'.\n\
+                     Please use a valid directory path.",
+                    c
+                );
+            }
+        }
+
+        // Check functions is not empty
+        if self.functions.is_empty() {
+            bail!(
+                "Configuration error: 'functions' must contain at least one function name.\n\
+                 Example: \"functions\": [\"t\", \"i18n.t\"]"
+            );
+        }
+
+        // Check default_namespace is not empty
+        if self.default_namespace.trim().is_empty() {
+            bail!(
+                "Configuration error: 'defaultNamespace' must be a non-empty string.\n\
+                 Example: \"defaultNamespace\": \"translation\""
+            );
+        }
+
+        Ok(())
+    }
+
     /// Load configuration from a JSON file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
@@ -123,6 +211,7 @@ impl Config {
         let config: Config = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
 
+        config.validate()?;
         Ok(config)
     }
 
@@ -130,6 +219,7 @@ impl Config {
     pub fn from_json_string(json_str: &str) -> Result<Self> {
         let config: Config = serde_json::from_str(json_str)
             .with_context(|| "Failed to parse config JSON string")?;
+        config.validate()?;
         Ok(config)
     }
 
@@ -142,6 +232,7 @@ impl Config {
                 if default_path.exists() {
                     Self::load(default_path)
                 } else {
+                    // Default config is pre-validated, no need to validate again
                     Ok(Self::default())
                 }
             }
@@ -149,9 +240,9 @@ impl Config {
     }
 
     #[cfg(feature = "napi")]
-    pub fn from_napi(config: NapiConfig) -> Self {
+    pub fn from_napi(config: NapiConfig) -> Result<Self> {
         let defaults = Config::default();
-        Config {
+        let config = Config {
             input: config.input.unwrap_or(defaults.input),
             output: config.output.unwrap_or(defaults.output),
             locales: config.locales.unwrap_or(defaults.locales),
@@ -167,6 +258,8 @@ impl Config {
             plural_separator: config
                 .pluralSeparator
                 .unwrap_or(defaults.plural_separator),
-        }
+        };
+        config.validate()?;
+        Ok(config)
     }
 }

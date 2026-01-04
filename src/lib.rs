@@ -37,7 +37,8 @@ pub fn extract(
     config: NapiConfig,
     options: Option<ExtractOptions>,
 ) -> Result<String> {
-    let config: Config = Config::from_napi(config);
+    let config: Config = Config::from_napi(config)
+        .map_err(|e| napi::Error::from_reason(format!("Config validation failed: {}", e)))?;
 
     // Extract options
     let output = options.as_ref().and_then(|o| o.output.as_ref());
@@ -142,7 +143,8 @@ pub fn extract(
 #[napi]
 #[cfg(feature = "napi")]
 pub fn watch(config: NapiConfig, options: Option<WatchOptions>) -> Result<()> {
-    let config: Config = Config::from_napi(config);
+    let config: Config = Config::from_napi(config)
+        .map_err(|e| napi::Error::from_reason(format!("Config validation failed: {}", e)))?;
 
     // Extract options
     let output = options.as_ref().and_then(|o| o.output.as_ref());
@@ -203,7 +205,8 @@ pub struct CheckOptions {
 #[cfg(feature = "napi")]
 #[napi]
 pub fn lint(config: NapiConfig, options: Option<LintOptions>) -> Result<String> {
-    let config: Config = Config::from_napi(config);
+    let config: Config = Config::from_napi(config)
+        .map_err(|e| napi::Error::from_reason(format!("Config validation failed: {}", e)))?;
     let fail_on_error = options
         .as_ref()
         .and_then(|o| o.fail_on_error)
@@ -236,7 +239,8 @@ pub fn lint(config: NapiConfig, options: Option<LintOptions>) -> Result<String> 
 #[cfg(feature = "napi")]
 #[napi]
 pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<String> {
-    let config: Config = Config::from_napi(config);
+    let config: Config = Config::from_napi(config)
+        .map_err(|e| napi::Error::from_reason(format!("Config validation failed: {}", e)))?;
     let remove = options.as_ref().and_then(|o| o.remove).unwrap_or(false);
     let dry_run = options.as_ref().and_then(|o| o.dry_run).unwrap_or(false);
     let locale = options

@@ -82,16 +82,23 @@ async function main() {
   // Build arguments for Rust binary
   const rustArgs = [];
   if (configJson) {
-    rustArgs.push('--config-json', configJson);
+    // Use stdin to pass config (avoids ARG_MAX limits and hides from process list)
+    rustArgs.push('--config-stdin');
   }
   // Add all other arguments (including --config if specified)
   rustArgs.push(...args);
 
   // Spawn the Rust binary
   const child = spawn(binaryPath, rustArgs, {
-    stdio: 'inherit',
+    stdio: configJson ? ['pipe', 'inherit', 'inherit'] : 'inherit',
     cwd: process.cwd()
   });
+
+  // If we have config, write it to stdin
+  if (configJson) {
+    child.stdin.write(configJson);
+    child.stdin.end();
+  }
 
   child.on('error', (error) => {
     console.error(`Error: Failed to start i18next-turbo: ${error.message}`);

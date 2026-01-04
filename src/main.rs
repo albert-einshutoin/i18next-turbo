@@ -1,8 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use i18next_turbo::commands;
 use i18next_turbo::config::Config;
 use i18next_turbo::watcher::FileWatcher;
+use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -16,6 +17,10 @@ struct Cli {
     /// Configuration as JSON string (used by Node.js wrapper for JS/TS config files)
     #[arg(long, global = true, hide = true)]
     config_json: Option<String>,
+
+    /// Read configuration JSON from stdin (avoids ARG_MAX limits for large configs)
+    #[arg(long, global = true, hide = true)]
+    config_stdin: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -153,8 +158,15 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load configuration
-    // Priority: --config-json > --config > default
-    let config = if let Some(config_json) = cli.config_json {
+    // Priority: --config-stdin > --config-json > --config > default
+    let config = if cli.config_stdin {
+        // Read config from stdin (avoids ARG_MAX limits and hides from process list)
+        let mut stdin_content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut stdin_content)
+            .context("Failed to read config from stdin")?;
+        Config::from_json_string(&stdin_content)?
+    } else if let Some(config_json) = cli.config_json {
         // Load from JSON string (used by Node.js wrapper)
         Config::from_json_string(&config_json)?
     } else {
