@@ -333,7 +333,7 @@ impl TranslationVisitor {
         match callee {
             Callee::Expr(expr) => match expr.as_ref() {
                 // Simple function call: t('key')
-                Expr::Ident(ident) => self.functions.contains(&ident.sym.to_string()),
+                Expr::Ident(ident) => self.functions.contains(ident.sym.as_ref()),
                 // Member expression: i18n.t('key')
                 Expr::Member(member) => {
                     if let MemberProp::Ident(prop) = &member.prop {
@@ -388,11 +388,7 @@ impl TranslationVisitor {
     /// Warn about dynamic template literals that cannot be extracted
     fn warn_dynamic_template_literal(&mut self, span: Span) {
         let loc = self.source_map.lookup_char_pos(span.lo);
-        let file_path = self
-            .file_path
-            .as_ref()
-            .map(|p| p.as_str())
-            .unwrap_or("<unknown>");
+        let file_path = self.file_path.as_deref().unwrap_or("<unknown>");
         self.warning_count += 1;
         eprintln!(
             "Warning: Dynamic template literal found at {}:{}:{}. Translation key extraction skipped. Consider using i18next-extract-disable-line if intentional.",
@@ -500,7 +496,7 @@ impl TranslationVisitor {
                 }
                 // Handle shorthand: { count }
                 if let Prop::Shorthand(ident) = prop.as_ref() {
-                    if ident.sym.to_string() == key {
+                    if ident.sym.as_ref() == key {
                         return true;
                     }
                 }
@@ -588,7 +584,7 @@ impl TranslationVisitor {
         for attr in &elem.attrs {
             if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
                 if let JSXAttrName::Ident(name) = &jsx_attr.name {
-                    if name.sym.to_string() == "i18nKey" {
+                    if name.sym.as_ref() == "i18nKey" {
                         if let Some(value) = &jsx_attr.value {
                             return self.extract_jsx_attr_string(value);
                         }
@@ -604,7 +600,7 @@ impl TranslationVisitor {
         for attr in &elem.attrs {
             if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
                 if let JSXAttrName::Ident(name) = &jsx_attr.name {
-                    if name.sym.to_string() == "ns" {
+                    if name.sym.as_ref() == "ns" {
                         if let Some(value) = &jsx_attr.value {
                             return self.extract_jsx_attr_string(value);
                         }
@@ -620,7 +616,7 @@ impl TranslationVisitor {
         for attr in &elem.attrs {
             if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
                 if let JSXAttrName::Ident(name) = &jsx_attr.name {
-                    if name.sym.to_string() == "count" {
+                    if name.sym.as_ref() == "count" {
                         return true;
                     }
                 }
@@ -634,7 +630,7 @@ impl TranslationVisitor {
         for attr in &elem.attrs {
             if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
                 if let JSXAttrName::Ident(name) = &jsx_attr.name {
-                    if name.sym.to_string() == "context" {
+                    if name.sym.as_ref() == "context" {
                         if let Some(value) = &jsx_attr.value {
                             return self.extract_jsx_attr_string(value);
                         }
@@ -646,6 +642,7 @@ impl TranslationVisitor {
     }
 
     /// Extract text content from JSX children
+    #[allow(clippy::only_used_in_recursion)]
     fn extract_jsx_children_text(&self, children: &[JSXElementChild]) -> Option<String> {
         let mut text_parts: Vec<String> = Vec::new();
 
@@ -696,7 +693,7 @@ impl TranslationVisitor {
         for attr in &elem.attrs {
             if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
                 if let JSXAttrName::Ident(name) = &jsx_attr.name {
-                    if name.sym.to_string() == "defaults" {
+                    if name.sym.as_ref() == "defaults" {
                         if let Some(value) = &jsx_attr.value {
                             return self.extract_jsx_attr_string(value);
                         }
@@ -712,7 +709,7 @@ impl TranslationVisitor {
         // Check if this is useTranslation()
         if let Callee::Expr(expr) = &call.callee {
             if let Expr::Ident(ident) = expr.as_ref() {
-                if ident.sym.to_string() != "useTranslation" {
+                if ident.sym.as_ref() != "useTranslation" {
                     return None;
                 }
             } else {
@@ -755,10 +752,10 @@ impl TranslationVisitor {
         // Check if this is getFixedT() or i18n.getFixedT()
         let is_get_fixed_t = match &call.callee {
             Callee::Expr(expr) => match expr.as_ref() {
-                Expr::Ident(ident) => ident.sym.to_string() == "getFixedT",
+                Expr::Ident(ident) => ident.sym.as_ref() == "getFixedT",
                 Expr::Member(member) => {
                     if let MemberProp::Ident(prop) = &member.prop {
-                        prop.sym.to_string() == "getFixedT"
+                        prop.sym.as_ref() == "getFixedT"
                     } else {
                         false
                     }
@@ -822,7 +819,7 @@ impl TranslationVisitor {
                     }
                     if let swc_ecma_ast::ObjectPatProp::KeyValue(kv) = prop {
                         if let PropName::Ident(key) = &kv.key {
-                            if key.sym.to_string() == "t" {
+                            if key.sym.as_ref() == "t" {
                                 // { t: customName } -> return customName
                                 if let Pat::Ident(ident) = kv.value.as_ref() {
                                     return Some(ident.id.sym.to_string());
@@ -834,7 +831,7 @@ impl TranslationVisitor {
                 // Check for shorthand { t }
                 for prop in &obj.props {
                     if let swc_ecma_ast::ObjectPatProp::Assign(assign) = prop {
-                        if assign.key.sym.to_string() == "t" {
+                        if assign.key.sym.as_ref() == "t" {
                             return Some("t".to_string());
                         }
                     }
@@ -843,10 +840,8 @@ impl TranslationVisitor {
             }
             // const [t] = useTranslation()
             Pat::Array(arr) => {
-                if let Some(first) = arr.elems.first() {
-                    if let Some(Pat::Ident(ident)) = first {
-                        return Some(ident.id.sym.to_string());
-                    }
+                if let Some(Pat::Ident(ident)) = arr.elems.first().and_then(|elem| elem.as_ref()) {
+                    return Some(ident.id.sym.to_string());
                 }
                 None
             }
@@ -1126,7 +1121,7 @@ impl Visit for TranslationVisitor {
 
         // Check if this is a Trans component
         if let JSXElementName::Ident(ident) = &elem.opening.name {
-            if self.trans_components.contains(&ident.sym.to_string()) {
+            if self.trans_components.contains(ident.sym.as_ref()) {
                 // Extract i18nKey attribute (primary key source)
                 let i18n_key = self.extract_trans_key(&elem.opening);
 

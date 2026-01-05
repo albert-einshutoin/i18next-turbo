@@ -136,7 +136,7 @@ fn generate_ts_content(resources: &Map<String, Value>) -> String {
 
 /// Convert namespace to PascalCase for interface name
 fn to_pascal_case(s: &str) -> String {
-    s.split(|c: char| c == '-' || c == '_' || c == '.')
+    s.split(['-', '_', '.'])
         .filter(|part| !part.is_empty())
         .map(|part| {
             let mut chars = part.chars();

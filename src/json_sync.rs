@@ -37,13 +37,11 @@ impl Default for JsonStyle {
 
 /// Detect JSON formatting style from file content
 pub fn detect_json_style(content: &str) -> JsonStyle {
-    let mut style = JsonStyle::default();
-
-    // Detect line endings
-    style.use_crlf = content.contains("\r\n");
-
-    // Detect trailing newline
-    style.trailing_newline = content.ends_with('\n') || content.ends_with("\r\n");
+    let mut style = JsonStyle {
+        use_crlf: content.contains("\r\n"),
+        trailing_newline: content.ends_with('\n') || content.ends_with("\r\n"),
+        ..JsonStyle::default()
+    };
 
     // Detect indentation by looking at the first indented line
     // JSON objects start with "{" and the first key is indented
@@ -402,11 +400,7 @@ pub fn merge_keys(
 
     for key in keys {
         // Determine which namespace this key belongs to
-        let key_namespace = key
-            .namespace
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or(default_namespace);
+        let key_namespace = key.namespace.as_deref().unwrap_or(default_namespace);
 
         // Skip keys that don't belong to this namespace
         if key_namespace != target_namespace {

@@ -33,53 +33,39 @@ pub fn run(
         println!("Scanning source files...");
 
         for pattern in &config.input {
-            let matches = glob::glob(pattern)?;
-            for entry in matches {
-                if let Ok(path) = entry {
-                    if path.is_file() {
-                        let content = std::fs::read_to_string(&path)?;
+            for path in glob::glob(pattern)?.flatten().filter(|p| p.is_file()) {
+                let content = std::fs::read_to_string(&path)?;
 
-                        // Build the full old key for search
-                        let search_key = if old_ns == config.default_namespace {
-                            old_key_path.clone()
-                        } else {
-                            format!("{}:{}", old_ns, old_key_path)
-                        };
+                let search_key = if old_ns == config.default_namespace {
+                    old_key_path.clone()
+                } else {
+                    format!("{}:{}", old_ns, old_key_path)
+                };
 
-                        // Build the full new key for replacement
-                        let replace_key = if new_ns == config.default_namespace {
-                            new_key_path.clone()
-                        } else {
-                            format!("{}:{}", new_ns, new_key_path)
-                        };
+                let replace_key = if new_ns == config.default_namespace {
+                    new_key_path.clone()
+                } else {
+                    format!("{}:{}", new_ns, new_key_path)
+                };
 
-                        // Check if file contains the old key
-                        if content.contains(&format!("'{}'", search_key))
-                            || content.contains(&format!("\"{}\"", search_key))
-                            || content.contains(&format!("`{}`", search_key))
-                        {
-                            let new_content = content
-                                .replace(
-                                    &format!("'{}'", search_key),
-                                    &format!("'{}'", replace_key),
-                                )
-                                .replace(
-                                    &format!("\"{}\"", search_key),
-                                    &format!("\"{}\"", replace_key),
-                                )
-                                .replace(
-                                    &format!("`{}`", search_key),
-                                    &format!("`{}`", replace_key),
-                                );
+                if content.contains(&format!("'{}'", search_key))
+                    || content.contains(&format!("\"{}\"", search_key))
+                    || content.contains(&format!("`{}`", search_key))
+                {
+                    let new_content = content
+                        .replace(&format!("'{}'", search_key), &format!("'{}'", replace_key))
+                        .replace(
+                            &format!("\"{}\"", search_key),
+                            &format!("\"{}\"", replace_key),
+                        )
+                        .replace(&format!("`{}`", search_key), &format!("`{}`", replace_key));
 
-                            if new_content != content {
-                                println!("  {}", path.display());
-                                source_changes += 1;
+                    if new_content != content {
+                        println!("  {}", path.display());
+                        source_changes += 1;
 
-                                if !dry_run {
-                                    std::fs::write(&path, new_content)?;
-                                }
-                            }
+                        if !dry_run {
+                            std::fs::write(&path, new_content)?;
                         }
                     }
                 }

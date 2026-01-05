@@ -59,16 +59,8 @@ impl FileWatcher {
         self.full_extract()?;
 
         // Process events in a loop
-        loop {
-            match rx.recv() {
-                Ok(result) => {
-                    self.handle_events(result)?;
-                }
-                Err(_) => {
-                    // Channel closed, exit
-                    break;
-                }
-            }
+        while let Ok(result) = rx.recv() {
+            self.handle_events(result)?;
         }
 
         Ok(())

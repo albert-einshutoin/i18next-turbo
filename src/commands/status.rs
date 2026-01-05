@@ -52,7 +52,7 @@ pub fn run(
                 .namespace
                 .as_deref()
                 .unwrap_or(&config.default_namespace);
-            if namespace_filter.map_or(true, |filter| filter == namespace) {
+            if namespace_filter.is_none_or(|filter| filter == namespace) {
                 let full_key = format!("{}:{}", namespace, key.key);
                 source_keys.insert(full_key);
             }
@@ -109,7 +109,7 @@ pub fn run(
     )?;
     let dead_keys: Vec<_> = dead_keys
         .into_iter()
-        .filter(|dk| namespace_filter.map_or(true, |ns| dk.namespace == ns))
+        .filter(|dk| namespace_filter.is_none_or(|ns| dk.namespace == ns))
         .collect();
 
     // Find missing keys (in source but not in locale)

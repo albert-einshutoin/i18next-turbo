@@ -111,7 +111,7 @@ impl LintVisitor {
             "vh",
             "vw",
         ];
-        if skip_patterns.iter().any(|p| trimmed == *p) {
+        if skip_patterns.contains(&trimmed) {
             return false;
         }
 
@@ -123,7 +123,7 @@ impl Visit for LintVisitor {
     fn visit_jsx_element(&mut self, elem: &JSXElement) {
         // Check if this is a Trans component
         let is_trans = if let JSXElementName::Ident(ident) = &elem.opening.name {
-            ident.sym.to_string() == "Trans"
+            ident.sym.as_ref() == "Trans"
         } else {
             false
         };
