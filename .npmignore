@@ -1,0 +1,13 @@
+/.github
+/target
+/.gitignore
+/.git
+/Cargo.lock
+/Cargo.toml
+/src
+/tests
+/examples
+/docs
+/benches
+/.vscode
+/.idea

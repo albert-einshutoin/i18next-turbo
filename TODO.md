@@ -66,27 +66,27 @@
 ### Task 1.2: CI/CD (GitHub Actions) の構築
 
 #### 1.2.1: GitHub Actions ワークフローの作成
-- [ ] `.github/workflows/ci.yml` を作成
-- [ ] マトリックス戦略で OS 別ビルドを設定
+- [x] `.github/workflows/ci.yml` を作成
+- [x] マトリックス戦略で OS 別ビルドを設定
   - `windows-latest`
   - `macos-latest` (x64, arm64)
   - `ubuntu-latest` (x64, arm64)
-- [ ] Rust ツールチェーンのセットアップ
-- [ ] 各 OS で `cargo build --release` を実行
-- [ ] ビルド成果物をアッカイブ
+- [x] Rust ツールチェーンのセットアップ
+- [x] 各 OS で `cargo build --release` を実行
+- [x] ビルド成果物をアッカイブ
 
 #### 1.2.2: リリースワークフローの作成
-- [ ] `.github/workflows/release.yml` を作成
-- [ ] タグプッシュ時にトリガー
-- [ ] 全 OS 向けにビルド
-- [ ] GitHub Releases にバイナリをアップロード
-- [ ] npm への公開処理
+- [x] `.github/workflows/release.yml` を作成
+- [x] タグプッシュ時にトリガー
+- [x] 全 OS 向けにビルド
+- [x] GitHub Releases にバイナリをアップロード
+- [x] npm への公開処理
   - `NPM_TOKEN` シークレットの設定
   - `npm publish` の実行
 
 #### 1.2.3: npm パッケージの設定
-- [ ] `package.json` に `files` フィールドを追加
-- [ ] `.npmignore` を作成
+- [x] `package.json` に `files` フィールドを追加
+- [x] `.npmignore` を作成
 - [ ] バージョン管理の自動化
 
 #### 達成基準
