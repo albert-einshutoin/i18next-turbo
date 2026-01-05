@@ -300,6 +300,7 @@ Supported mappings:
 | `nsSeparator` | `nsSeparator` (`false` -> empty string) |
 | `contextSeparator` | `contextSeparator` |
 | `pluralSeparator` | `pluralSeparator` |
+| `extractFromComments` | `extractFromComments` (default `true`) |
 
 Not supported:
 
@@ -320,7 +321,6 @@ Not supported:
 | `outputFormat` | Not implemented in i18next-turbo |
 | `mergeNamespaces` | Not implemented in i18next-turbo |
 | `removeUnusedKeys` | Not implemented in i18next-turbo |
-| `extractFromComments` | Not implemented in i18next-turbo |
 | `generateBasePluralForms` | Not implemented in i18next-turbo |
 | `disablePlurals` | Not implemented in i18next-turbo |
 | `nestingPrefix` / `nestingSuffix` / `nestingOptionsSeparator` | Not implemented in i18next-turbo |
@@ -769,6 +769,7 @@ t('apple', { count });  // → apple_one, apple_other が生成される
 | `nsSeparator` | `nsSeparator` (`false` -> 空文字) |
 | `contextSeparator` | `contextSeparator` |
 | `pluralSeparator` | `pluralSeparator` |
+| `extractFromComments` | `extractFromComments`（デフォルト `true`） |
 
 未対応:
 
@@ -789,7 +790,6 @@ t('apple', { count });  // → apple_one, apple_other が生成される
 | `outputFormat` | 未実装 |
 | `mergeNamespaces` | 未実装 |
 | `removeUnusedKeys` | 未実装 |
-| `extractFromComments` | 未実装 |
 | `generateBasePluralForms` | 未実装 |
 | `disablePlurals` | 未実装 |
 | `nestingPrefix` / `nestingSuffix` / `nestingOptionsSeparator` | 未実装 |

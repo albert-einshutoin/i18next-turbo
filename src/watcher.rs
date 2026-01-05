@@ -117,7 +117,11 @@ impl FileWatcher {
     fn full_extract(&mut self) -> Result<()> {
         println!("--- Initial extraction ---");
 
-        let extraction = extractor::extract_from_glob(&self.config.input, &self.config.functions)?;
+        let extraction = extractor::extract_from_glob_with_options(
+            &self.config.input,
+            &self.config.functions,
+            self.config.extract_from_comments,
+        )?;
 
         // Populate cache
         for (file_path, keys) in &extraction.files {
@@ -246,7 +250,11 @@ impl FileWatcher {
         let results: Vec<_> = changed_files
             .par_iter()
             .filter_map(|path| {
-                match extractor::extract_from_file(path, &self.config.functions) {
+                match extractor::extract_from_file_with_options(
+                    path,
+                    &self.config.functions,
+                    self.config.extract_from_comments,
+                ) {
                     Ok(keys) => Some((path.clone(), keys)),
                     Err(e) => {
                         eprintln!("  Warning: {}", e);

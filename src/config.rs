@@ -51,6 +51,11 @@ pub struct Config {
     ///   - Japanese: ["other"] (no plural forms)
     #[serde(default = "default_plural_suffixes")]
     pub plural_suffixes: Vec<String>,
+
+    /// Whether to extract keys from comments (e.g., // t('key'))
+    /// Default: true
+    #[serde(default = "default_extract_from_comments")]
+    pub extract_from_comments: bool,
 }
 
 #[cfg(feature = "napi")]
@@ -70,6 +75,7 @@ pub struct NapiConfig {
     pub contextSeparator: Option<String>,
     pub pluralSeparator: Option<String>,
     pub pluralSuffixes: Option<Vec<String>>,
+    pub extractFromComments: Option<bool>,
 }
 
 fn default_input() -> Vec<String> {
@@ -112,6 +118,10 @@ fn default_plural_suffixes() -> Vec<String> {
     vec!["one".to_string(), "other".to_string()]
 }
 
+fn default_extract_from_comments() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -125,6 +135,7 @@ impl Default for Config {
             context_separator: default_context_separator(),
             plural_separator: default_plural_separator(),
             plural_suffixes: default_plural_suffixes(),
+            extract_from_comments: default_extract_from_comments(),
         }
     }
 }
@@ -277,6 +288,9 @@ impl Config {
             plural_suffixes: config
                 .pluralSuffixes
                 .unwrap_or(defaults.plural_suffixes),
+            extract_from_comments: config
+                .extractFromComments
+                .unwrap_or(defaults.extract_from_comments),
         };
         config.validate()?;
         Ok(config)

@@ -1083,32 +1083,62 @@ impl Visit for TranslationVisitor {
 }
 
 /// Extract translation keys from a TypeScript/JavaScript file
+/// Note: This function always extracts from comments for backward compatibility.
 pub fn extract_from_file<P: AsRef<Path>>(
     path: P,
     functions: &[String],
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) = extract_from_file_with_warnings(path, functions)?;
+    let (keys, _) = extract_from_file_with_warnings(path, functions, true)?;
+    Ok(keys)
+}
+
+/// Extract translation keys from a file with configurable options
+pub fn extract_from_file_with_options<P: AsRef<Path>>(
+    path: P,
+    functions: &[String],
+    extract_from_comments: bool,
+) -> Result<Vec<ExtractedKey>> {
+    let (keys, _) = extract_from_file_with_warnings(path, functions, extract_from_comments)?;
     Ok(keys)
 }
 
 fn extract_from_file_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
+    extract_from_comments: bool,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let source_code = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
-    extract_from_source_with_warnings(&source_code, path, functions)
+    extract_from_source_with_warnings(&source_code, path, functions, extract_from_comments)
 }
 
 /// Extract translation keys from source code string
+/// Note: This function always extracts from comments for backward compatibility.
+/// Use `extract_from_glob` with config for production use.
 pub fn extract_from_source<P: AsRef<Path>>(
     source: &str,
     path: P,
     functions: &[String],
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) = extract_from_source_with_warnings(source, path, functions)?;
+    let (keys, _) = extract_from_source_with_warnings(source, path, functions, true)?;
+    Ok(keys)
+}
+
+/// Extract translation keys from a source string with configurable options
+pub fn extract_from_source_with_options<P: AsRef<Path>>(
+    source: &str,
+    path: P,
+    functions: &[String],
+    extract_from_comments: bool,
+) -> Result<Vec<ExtractedKey>> {
+    let (keys, _) = extract_from_source_with_warnings(
+        source,
+        path,
+        functions,
+        extract_from_comments,
+    )?;
     Ok(keys)
 }
 
@@ -1116,6 +1146,7 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     source: &str,
     path: P,
     functions: &[String],
+    should_extract_from_comments: bool,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
@@ -1172,8 +1203,10 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     visitor.file_path = Some(path.display().to_string());
     module.visit_with(&mut visitor);
 
-    // Also extract keys from comments
-    visitor.extract_from_comments();
+    // Also extract keys from comments (if enabled)
+    if should_extract_from_comments {
+        visitor.extract_from_comments();
+    }
 
     Ok((visitor.keys, visitor.warning_count))
 }
@@ -1201,6 +1234,15 @@ enum FileExtractionResult {
 pub fn extract_from_glob(
     patterns: &[String],
     functions: &[String],
+) -> Result<ExtractionResult> {
+    extract_from_glob_with_options(patterns, functions, true)
+}
+
+/// Extract keys from multiple files using glob patterns with configurable options.
+pub fn extract_from_glob_with_options(
+    patterns: &[String],
+    functions: &[String],
+    extract_from_comments: bool,
 ) -> Result<ExtractionResult> {
     use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
@@ -1249,7 +1291,7 @@ pub fn extract_from_glob(
         .map(|item| {
             match item {
                 GlobItem::Path(path) => {
-                    match extract_from_file_with_warnings(&path, functions) {
+                    match extract_from_file_with_warnings(&path, functions, extract_from_comments) {
                         Ok((keys, warnings)) => {
                             if keys.is_empty() {
                                 FileExtractionResult::Empty { warnings }
@@ -1323,6 +1365,15 @@ pub fn extract_from_glob_deduplicated(
     patterns: &[String],
     functions: &[String],
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
+    extract_from_glob_deduplicated_with_options(patterns, functions, true)
+}
+
+/// Extract keys with early deduplication and configurable comment extraction
+pub fn extract_from_glob_deduplicated_with_options(
+    patterns: &[String],
+    functions: &[String],
+    extract_from_comments: bool,
+) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
     use rayon::prelude::*;
 
     let mut all_files: Vec<std::path::PathBuf> = Vec::new();
@@ -1360,7 +1411,7 @@ pub fn extract_from_glob_deduplicated(
         .fold(
             || initial.clone(),
             |mut acc, path| {
-                match extract_from_file_with_warnings(path, functions) {
+                match extract_from_file_with_warnings(path, functions, extract_from_comments) {
                     Ok((keys, warnings)) => {
                         acc.1 += warnings;
                         // Insert into HashSet for deduplication

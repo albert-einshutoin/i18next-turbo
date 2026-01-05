@@ -354,7 +354,7 @@
 - [ ] `preserveContextVariants`: コンテキスト変種の保持
 - [ ] `generateBasePluralForms`: ベース複数形の生成制御
 - [ ] `disablePlurals`: 複数形の完全無効化
-- [ ] `extractFromComments`: コメントからの抽出
+- [x] `extractFromComments`: コメントからの抽出
 - [ ] `removeUnusedKeys`: 未使用キーの削除（デフォルト: `true`）
 - [ ] `ignore`: 抽出対象から除外するファイルパターン（glob 配列）
 
@@ -441,7 +441,7 @@
 - [x] 名前空間の解決
 
 #### 3.4.3: 設定オプション
-- [ ] `extractFromComments: true/false` オプション
+- [x] `extractFromComments: true/false` オプション
 - [x] デフォルトで有効化
 
 ---
@@ -729,4 +729,3 @@
 ---
 
 最終更新: 2026-01-05（技術的改善: tempfile原子的書込、キー競合レポート、globストリーミング、NFC最適化、エラーメッセージ改善、JSONインデント検知・保持、FileSystemトレイト統合）
-

@@ -89,6 +89,10 @@ enum Commands {
         /// Locale to check (defaults to first locale in config)
         #[arg(short, long)]
         locale: Option<String>,
+
+        /// Exit with non-zero code if translations are incomplete (useful for CI)
+        #[arg(long)]
+        fail_on_incomplete: bool,
     },
 
     /// Sync translation keys across locales
@@ -202,8 +206,8 @@ fn main() -> Result<()> {
         } => {
             commands::check::run(&config, remove, dry_run, locale)?;
         }
-        Commands::Status { locale } => {
-            commands::status::run(&config, locale)?;
+        Commands::Status { locale, fail_on_incomplete } => {
+            commands::status::run(&config, locale, fail_on_incomplete)?;
         }
         Commands::Sync {
             remove_unused,

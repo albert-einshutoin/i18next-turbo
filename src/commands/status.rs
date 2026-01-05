@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path;
@@ -7,7 +7,7 @@ use crate::cleanup;
 use crate::config::Config;
 use crate::extractor::{self, ExtractedKey};
 
-pub fn run(config: &Config, locale: Option<String>) -> Result<()> {
+pub fn run(config: &Config, locale: Option<String>, fail_on_incomplete: bool) -> Result<()> {
     println!("=== i18next-turbo status ===\n");
 
     // Determine locale to check
@@ -25,7 +25,11 @@ pub fn run(config: &Config, locale: Option<String>) -> Result<()> {
 
     // Extract keys from source
     println!("Scanning source files...");
-    let extraction = extractor::extract_from_glob(&config.input, &config.functions)?;
+    let extraction = extractor::extract_from_glob_with_options(
+        &config.input,
+        &config.functions,
+        config.extract_from_comments,
+    )?;
 
     let mut source_keys: HashSet<String> = HashSet::new();
     let mut all_keys: Vec<ExtractedKey> = Vec::new();
@@ -90,18 +94,20 @@ pub fn run(config: &Config, locale: Option<String>) -> Result<()> {
     println!("Summary:");
     println!("{}", "=".repeat(40));
 
-    if dead_keys.is_empty() && missing_count == 0 {
-        println!("  All keys are synchronized!");
+    let is_incomplete = missing_count > 0 || !dead_keys.is_empty();
+
+    if !is_incomplete {
+        println!("  \x1b[32m✓\x1b[0m All keys are synchronized!");
     } else {
         if missing_count > 0 {
             println!(
-                "  Missing keys (in source, not in locale): {}",
+                "  \x1b[33m!\x1b[0m Missing keys (in source, not in locale): {}",
                 missing_count
             );
         }
         if !dead_keys.is_empty() {
             println!(
-                "  Dead keys (in locale, not in source): {}",
+                "  \x1b[33m!\x1b[0m Dead keys (in locale, not in source): {}",
                 dead_keys.len()
             );
         }
@@ -110,6 +116,15 @@ pub fn run(config: &Config, locale: Option<String>) -> Result<()> {
         if !dead_keys.is_empty() {
             println!("Run 'i18next-turbo check --remove' to remove dead keys.");
         }
+    }
+
+    // Fail if incomplete and --fail-on-incomplete is set
+    if fail_on_incomplete && is_incomplete {
+        bail!(
+            "Translations are incomplete: {} missing, {} dead (--fail-on-incomplete enabled)",
+            missing_count,
+            dead_keys.len()
+        );
     }
 
     Ok(())

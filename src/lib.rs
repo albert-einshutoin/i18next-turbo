@@ -131,7 +131,11 @@ pub fn extract(
     let output_dir = output.unwrap_or(&config.output);
 
     // Extract keys from files
-    let extraction = crate::extractor::extract_from_glob(&config.input, &config.functions)
+    let extraction = crate::extractor::extract_from_glob_with_options(
+        &config.input,
+        &config.functions,
+        config.extract_from_comments,
+    )
         .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
     if extraction.files.is_empty() {
@@ -331,7 +335,11 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
         .or(config.locales.first().map(|s| s.as_str()))
         .unwrap_or("en");
 
-    let extraction = crate::extractor::extract_from_glob(&config.input, &config.functions)
+    let extraction = crate::extractor::extract_from_glob_with_options(
+        &config.input,
+        &config.functions,
+        config.extract_from_comments,
+    )
         .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
     let mut all_keys: Vec<ExtractedKey> = Vec::new();

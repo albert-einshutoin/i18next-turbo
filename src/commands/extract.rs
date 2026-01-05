@@ -26,7 +26,11 @@ pub fn run(
     println!();
 
     // Extract keys from files
-    let extraction = extractor::extract_from_glob(&config.input, &config.functions)?;
+    let extraction = extractor::extract_from_glob_with_options(
+        &config.input,
+        &config.functions,
+        config.extract_from_comments,
+    )?;
 
     // Report any errors encountered during extraction
     if !extraction.errors.is_empty() {
