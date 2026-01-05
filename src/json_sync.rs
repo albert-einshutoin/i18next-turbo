@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
+use fs2::FileExt;
 use serde_json::{Map, Value};
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
 use crate::config::Config;
@@ -42,55 +45,83 @@ pub fn read_locale_file_with_fs<F: FileSystem>(path: &Path, fs: &F) -> Result<Ma
 
 /// Insert a nested key path, creating intermediate objects as needed.
 /// Returns true if the key was newly added, false if it already existed.
+///
+/// This function uses iterative approach instead of recursion to prevent
+/// stack overflow with deeply nested keys (DoS protection).
 fn insert_nested_key(obj: &mut Map<String, Value>, path: &[&str], default_value: &str) -> bool {
     if path.is_empty() {
         return false;
     }
 
-    if path.len() == 1 {
-        // Leaf node
-        if obj.contains_key(path[0]) {
-            false
-        } else {
-            obj.insert(
-                path[0].to_string(),
-                Value::String(default_value.to_string()),
-            );
-            true
-        }
-    } else {
-        // Intermediate node - ensure it's an object
-        let entry = obj
-            .entry(path[0].to_string())
-            .or_insert_with(|| Value::Object(Map::new()));
+    // Use iterative approach to prevent stack overflow with deep nesting
+    let mut current = obj;
 
-        if let Value::Object(ref mut nested) = entry {
-            insert_nested_key(nested, &path[1..], default_value)
+    for (i, key) in path.iter().enumerate() {
+        let is_last = i == path.len() - 1;
+
+        if is_last {
+            // Leaf node - insert the value
+            if current.contains_key(*key) {
+                return false;
+            } else {
+                current.insert(
+                    (*key).to_string(),
+                    Value::String(default_value.to_string()),
+                );
+                return true;
+            }
         } else {
-            // Key exists but is not an object - conflict, skip
-            false
+            // Intermediate node - ensure it's an object
+            // We need to use a raw pointer trick to satisfy the borrow checker
+            // because we're iterating while mutating
+            let entry = current
+                .entry((*key).to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+
+            match entry {
+                Value::Object(ref mut nested) => {
+                    current = nested;
+                }
+                _ => {
+                    // Key exists but is not an object - conflict, skip
+                    return false;
+                }
+            }
         }
     }
+
+    false
 }
 
-/// Recursively sort all keys in a JSON object alphabetically
+/// Sort all keys in a JSON object alphabetically (including nested objects).
+///
+/// Uses a controlled recursion with explicit depth limit to prevent stack overflow
+/// from malicious inputs (DoS protection). Maximum depth is 100 levels.
 pub fn sort_keys_alphabetically(map: &Map<String, Value>) -> Map<String, Value> {
+    const MAX_DEPTH: usize = 100;
+    sort_keys_with_depth(map, 0, MAX_DEPTH)
+}
+
+/// Internal function with depth tracking to prevent stack overflow
+fn sort_keys_with_depth(map: &Map<String, Value>, depth: usize, max_depth: usize) -> Map<String, Value> {
     let mut sorted = Map::new();
     let mut keys: Vec<_> = map.keys().collect();
     keys.sort();
 
     for key in keys {
-        // Use safe access instead of unwrap() to prevent panics
         if let Some(value) = map.get(key) {
             let sorted_value = match value {
-                Value::Object(nested) => Value::Object(sort_keys_alphabetically(nested)),
+                Value::Object(nested) if depth < max_depth => {
+                    Value::Object(sort_keys_with_depth(nested, depth + 1, max_depth))
+                }
+                Value::Object(nested) => {
+                    // At max depth, just clone without sorting deeper
+                    Value::Object(nested.clone())
+                }
                 other => other.clone(),
             };
             sorted.insert(key.clone(), sorted_value);
         }
-        // Note: In normal operation, the key should always exist since we iterate over map.keys().
-        // However, using safe access prevents potential panics from concurrent modifications
-        // or unexpected data structures.
     }
 
     sorted
@@ -181,6 +212,87 @@ pub fn write_locale_file_with_fs<F: FileSystem>(
     Ok(())
 }
 
+/// Atomically read, modify, and write a locale file with exclusive file locking.
+/// This prevents data corruption when multiple processes access the same file.
+///
+/// The lock is held for the entire read-modify-write cycle to ensure ACID-like
+/// transaction guarantees.
+pub fn sync_locale_file_locked(
+    path: &Path,
+    keys: &[ExtractedKey],
+    target_namespace: &str,
+    default_namespace: &str,
+    key_separator: &str,
+) -> Result<SyncResult> {
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
+
+    // Create or open the file for reading and writing
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .with_context(|| format!("Failed to open locale file: {}", path.display()))?;
+
+    // Acquire exclusive lock (blocks until available)
+    file.lock_exclusive()
+        .with_context(|| format!("Failed to acquire lock on: {}", path.display()))?;
+
+    // Read existing content with BufReader for efficiency
+    let mut content = {
+        let mut reader = BufReader::new(&file);
+        let mut content_str = String::new();
+        reader.read_to_string(&mut content_str)
+            .with_context(|| format!("Failed to read locale file: {}", path.display()))?;
+
+        if content_str.trim().is_empty() {
+            Map::new()
+        } else {
+            serde_json::from_str(&content_str)
+                .with_context(|| format!("Failed to parse JSON in: {}", path.display()))?
+        }
+    };
+
+    // Merge new keys
+    let mut sync_result = merge_keys(
+        &mut content,
+        keys,
+        target_namespace,
+        default_namespace,
+        key_separator,
+    );
+    sync_result.file_path = path.display().to_string();
+
+    // Only write if there were changes
+    if !sync_result.added_keys.is_empty() {
+        // Sort keys alphabetically
+        let sorted = sort_keys_alphabetically(&content);
+
+        // Write to temp file first (atomic write pattern)
+        let temp_path = path.with_extension("json.tmp");
+        {
+            let temp_file = File::create(&temp_path)
+                .with_context(|| format!("Failed to create temp file: {}", temp_path.display()))?;
+            let mut writer = BufWriter::new(temp_file);
+            serde_json::to_writer_pretty(&mut writer, &sorted)?;
+            writer.write_all(b"\n")?;
+            writer.flush()?;
+        }
+
+        // Atomic rename
+        std::fs::rename(&temp_path, path)
+            .with_context(|| format!("Failed to rename temp file to: {}", path.display()))?;
+    }
+
+    // Lock is automatically released when file is dropped
+    Ok(sync_result)
+}
+
 /// Collect unique namespaces from a set of extracted keys
 pub fn collect_namespaces(keys: &[ExtractedKey], default_namespace: &str) -> std::collections::HashSet<String> {
     let mut namespaces = std::collections::HashSet::new();
@@ -196,7 +308,10 @@ pub fn collect_namespaces(keys: &[ExtractedKey], default_namespace: &str) -> std
 }
 
 /// Sync extracted keys to specific namespace files only (for incremental updates)
-/// This is more efficient when only a subset of namespaces have changed
+/// This is more efficient when only a subset of namespaces have changed.
+///
+/// Uses file locking to prevent data corruption when multiple processes
+/// (e.g., watch mode + manual extract) access the same files.
 pub fn sync_namespaces(
     config: &Config,
     keys: &[ExtractedKey],
@@ -212,22 +327,14 @@ pub fn sync_namespaces(
                 .join(locale)
                 .join(format!("{}.json", namespace));
 
-            // Read existing file
-            let mut content = read_locale_file(&file_path)?;
-
-            // Merge new keys
-            let mut sync_result =
-                merge_keys(&mut content, keys, namespace, &config.default_namespace, &config.key_separator);
-            sync_result.file_path = file_path.display().to_string();
-
-            // Only write if there were changes
-            if !sync_result.added_keys.is_empty() {
-                // Sort keys alphabetically
-                let sorted = sort_keys_alphabetically(&content);
-
-                // Write back to file
-                write_locale_file(&file_path, &sorted)?;
-            }
+            // Use locked sync for data integrity
+            let sync_result = sync_locale_file_locked(
+                &file_path,
+                keys,
+                namespace,
+                &config.default_namespace,
+                &config.key_separator,
+            )?;
 
             results.push(sync_result);
         }

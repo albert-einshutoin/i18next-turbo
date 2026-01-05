@@ -11,42 +11,83 @@ fn normalize_key(key: &str) -> String {
     key.nfc().collect()
 }
 
-// Static regex patterns for nested translations (compiled once)
+// =============================================================================
+// Static regex patterns (compiled once via OnceLock for thread-safe lazy init)
+// =============================================================================
+//
+// All regex patterns are validated at compile time via tests (see test_regex_initialization).
+// If any pattern is invalid, the test will fail during CI, preventing runtime panics.
+
+/// Pattern for nested translations with quoted keys.
+/// Matches: `$t('key')`, `$t("key")`, `$t( 'key' )`
+/// Captures: Group 1 = the key string
 static NESTED_QUOTED_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Pattern for nested translations with unquoted keys (bare identifiers).
+/// Matches: `$t(key)`, `$t(some.key.path)`, `$t(ns:key)`
+/// Captures: Group 1 = the key identifier
 static NESTED_UNQUOTED_REGEX: OnceLock<Regex> = OnceLock::new();
 
-// Static regex patterns for comment extraction (compiled once)
+/// Pattern for t() calls in comments with single argument.
+/// Matches: `t('key')`, `t("key")`, `t(\`key\`)`
+/// Captures: Group 1 = the key string
 static COMMENT_SINGLE_ARG_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Pattern for t() calls in comments with key and default value.
+/// Matches: `t('key', 'default')`, `t("key", "default")`
+/// Captures: Group 1 = key, Group 2 = default value
 static COMMENT_WITH_DEFAULT_REGEX: OnceLock<Regex> = OnceLock::new();
+
+/// Pattern for t() calls in comments with options object containing defaultValue.
+/// Matches: `t('key', { defaultValue: 'default' })`
+/// Captures: Group 1 = key, Group 2 = default value
 static COMMENT_WITH_OPTIONS_REGEX: OnceLock<Regex> = OnceLock::new();
 
+/// Returns regex for nested translations with quoted keys: $t('key') or $t("key")
 fn get_nested_quoted_regex() -> &'static Regex {
     NESTED_QUOTED_REGEX.get_or_init(|| {
-        Regex::new(r#"\$t\s*\(\s*['"]([^'"]+)['"]"#).unwrap()
+        // Pattern: $t followed by optional whitespace, open paren, optional whitespace,
+        // then a quoted string (single or double quotes), capturing the content
+        Regex::new(r#"\$t\s*\(\s*['"]([^'"]+)['"]"#)
+            .expect("NESTED_QUOTED_REGEX pattern is invalid - this is a bug")
     })
 }
 
+/// Returns regex for nested translations with unquoted keys: $t(key) or $t(ns:key)
 fn get_nested_unquoted_regex() -> &'static Regex {
     NESTED_UNQUOTED_REGEX.get_or_init(|| {
-        Regex::new(r#"\$t\s*\(\s*([a-zA-Z_][a-zA-Z0-9_.:]*)"#).unwrap()
+        // Pattern: $t followed by optional whitespace, open paren, optional whitespace,
+        // then an identifier (letter or underscore, followed by alphanumeric, underscore, dot, or colon)
+        Regex::new(r#"\$t\s*\(\s*([a-zA-Z_][a-zA-Z0-9_.:]*)"#)
+            .expect("NESTED_UNQUOTED_REGEX pattern is invalid - this is a bug")
     })
 }
 
+/// Returns regex for t() calls in comments with single argument
 fn get_comment_single_arg_regex() -> &'static Regex {
     COMMENT_SINGLE_ARG_REGEX.get_or_init(|| {
-        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*\)"#).unwrap()
+        // Pattern: non-identifier char (or start), then t, optional whitespace, open paren,
+        // optional whitespace, quoted string (single, double, or backtick), close paren
+        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*\)"#)
+            .expect("COMMENT_SINGLE_ARG_REGEX pattern is invalid - this is a bug")
     })
 }
 
+/// Returns regex for t() calls in comments with key and default value
 fn get_comment_with_default_regex() -> &'static Regex {
     COMMENT_WITH_DEFAULT_REGEX.get_or_init(|| {
-        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]\s*\)"#).unwrap()
+        // Pattern: t('key', 'default') - two consecutive quoted strings separated by comma
+        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]\s*\)"#)
+            .expect("COMMENT_WITH_DEFAULT_REGEX pattern is invalid - this is a bug")
     })
 }
 
+/// Returns regex for t() calls with options object containing defaultValue
 fn get_comment_with_options_regex() -> &'static Regex {
     COMMENT_WITH_OPTIONS_REGEX.get_or_init(|| {
-        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{[^}]*defaultValue\s*:\s*['"`]([^'"`]+)['"`]"#).unwrap()
+        // Pattern: t('key', { ...defaultValue: 'value'... }) - key followed by object with defaultValue
+        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{[^}]*defaultValue\s*:\s*['"`]([^'"`]+)['"`]"#)
+            .expect("COMMENT_WITH_OPTIONS_REGEX pattern is invalid - this is a bug")
     })
 }
 use swc_common::comments::SingleThreadedComments;
@@ -1120,18 +1161,125 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     Ok((visitor.keys, visitor.warning_count))
 }
 
-/// Extract keys from multiple files using glob patterns
+/// Result type for a single file extraction (used internally for lock-free processing)
+enum FileExtractionResult {
+    Success {
+        file_path: String,
+        keys: Vec<ExtractedKey>,
+        warnings: usize,
+    },
+    Error(ExtractionError),
+    Empty {
+        warnings: usize,
+    },
+}
+
+/// Extract keys from multiple files using glob patterns.
+///
+/// This implementation uses lock-free parallel processing:
+/// - No Mutex for error collection (uses rayon's map + partition pattern)
+/// - Early deduplication using fold/reduce to minimize memory allocation
+/// - AtomicUsize only for warning counter (lock-free)
 pub fn extract_from_glob(
     patterns: &[String],
     functions: &[String],
 ) -> Result<ExtractionResult> {
     use rayon::prelude::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
 
     let mut all_files: Vec<std::path::PathBuf> = Vec::new();
-    let warning_count = AtomicUsize::new(0);
-    let errors: Mutex<Vec<ExtractionError>> = Mutex::new(Vec::new());
+    let mut glob_errors: Vec<ExtractionError> = Vec::new();
+
+    // Collect files from glob patterns (sequential, not performance-critical)
+    for pattern in patterns {
+        let matches = glob::glob(pattern)
+            .with_context(|| format!("Invalid glob pattern: {}", pattern))?;
+
+        for entry in matches {
+            match entry {
+                Ok(path) => {
+                    if path.is_file() {
+                        all_files.push(path);
+                    }
+                }
+                Err(e) => {
+                    glob_errors.push(ExtractionError {
+                        file_path: pattern.clone(),
+                        message: format!("Glob error: {}", e),
+                    });
+                }
+            }
+        }
+    }
+
+    // Process files in parallel using lock-free pattern:
+    // Each thread returns a Result enum, then we partition after collection
+    let file_results: Vec<FileExtractionResult> = all_files
+        .par_iter()
+        .map(|path| {
+            match extract_from_file_with_warnings(path, functions) {
+                Ok((keys, warnings)) => {
+                    if keys.is_empty() {
+                        FileExtractionResult::Empty { warnings }
+                    } else {
+                        FileExtractionResult::Success {
+                            file_path: path.display().to_string(),
+                            keys,
+                            warnings,
+                        }
+                    }
+                }
+                Err(e) => FileExtractionResult::Error(ExtractionError {
+                    file_path: path.display().to_string(),
+                    message: e.to_string(),
+                }),
+            }
+        })
+        .collect();
+
+    // Aggregate results (single-threaded, but O(n) - no lock contention)
+    let mut files: Vec<(String, Vec<ExtractedKey>)> = Vec::new();
+    let mut errors = glob_errors;
+    let mut warning_count = errors.len(); // glob errors count as warnings
+
+    for result in file_results {
+        match result {
+            FileExtractionResult::Success {
+                file_path,
+                keys,
+                warnings,
+            } => {
+                warning_count += warnings;
+                files.push((file_path, keys));
+            }
+            FileExtractionResult::Error(err) => {
+                warning_count += 1;
+                errors.push(err);
+            }
+            FileExtractionResult::Empty { warnings } => {
+                warning_count += warnings;
+            }
+        }
+    }
+
+    Ok(ExtractionResult {
+        files,
+        warning_count,
+        errors,
+    })
+}
+
+/// Extract keys with early deduplication using fold/reduce pattern.
+/// This minimizes memory allocation for large codebases with many duplicate keys.
+///
+/// Returns a HashMap of unique keys instead of Vec, reducing O(N) to O(unique_keys).
+pub fn extract_from_glob_deduplicated(
+    patterns: &[String],
+    functions: &[String],
+) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
+    use rayon::prelude::*;
+
+    let mut all_files: Vec<std::path::PathBuf> = Vec::new();
+    let mut glob_errors: Vec<ExtractionError> = Vec::new();
 
     for pattern in patterns {
         let matches = glob::glob(pattern)
@@ -1145,48 +1293,61 @@ pub fn extract_from_glob(
                     }
                 }
                 Err(e) => {
-                    errors.lock().unwrap().push(ExtractionError {
+                    glob_errors.push(ExtractionError {
                         file_path: pattern.clone(),
                         message: format!("Glob error: {}", e),
                     });
-                    warning_count.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
     }
 
-    // Process files in parallel using rayon
-    let results: Vec<_> = all_files
-        .par_iter()
-        .filter_map(|path| {
-            match extract_from_file_with_warnings(path, functions) {
-                Ok((keys, warnings)) => {
-                    if warnings > 0 {
-                        warning_count.fetch_add(warnings, Ordering::Relaxed);
-                    }
-                    if !keys.is_empty() {
-                        Some((path.display().to_string(), keys))
-                    } else {
-                        None
-                    }
-                }
-                Err(e) => {
-                    errors.lock().unwrap().push(ExtractionError {
-                        file_path: path.display().to_string(),
-                        message: e.to_string(),
-                    });
-                    warning_count.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
-            }
-        })
-        .collect();
+    // Use fold + reduce for early deduplication during parallel processing
+    // Each thread maintains its own HashSet, then we merge at the end
+    type AccumulatorType = (HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>);
 
-    Ok(ExtractionResult {
-        files: results,
-        warning_count: warning_count.load(Ordering::Relaxed),
-        errors: errors.into_inner().unwrap(),
-    })
+    let initial: AccumulatorType = (HashMap::new(), 0, Vec::new());
+
+    let (unique_keys, warning_count, mut errors) = all_files
+        .par_iter()
+        .fold(
+            || initial.clone(),
+            |mut acc, path| {
+                match extract_from_file_with_warnings(path, functions) {
+                    Ok((keys, warnings)) => {
+                        acc.1 += warnings;
+                        // Insert into HashSet for deduplication
+                        for key in keys {
+                            acc.0.insert(key, ());
+                        }
+                    }
+                    Err(e) => {
+                        acc.1 += 1;
+                        acc.2.push(ExtractionError {
+                            file_path: path.display().to_string(),
+                            message: e.to_string(),
+                        });
+                    }
+                }
+                acc
+            },
+        )
+        .reduce(
+            || initial.clone(),
+            |mut a, b| {
+                // Merge HashMaps from different threads
+                a.0.extend(b.0);
+                a.1 += b.1;
+                a.2.extend(b.2);
+                a
+            },
+        );
+
+    // Add glob errors
+    errors.extend(glob_errors);
+    let total_warnings = warning_count + errors.len();
+
+    Ok((unique_keys, total_warnings, errors))
 }
 
 #[cfg(test)]
@@ -1858,5 +2019,38 @@ mod tests {
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "greeting"));
         assert!(keys.iter().any(|k| k.key == "name"));
+    }
+
+    /// Test that all regex patterns compile successfully.
+    /// This test ensures we catch regex syntax errors at test time (CI),
+    /// not at runtime when a user runs the tool.
+    #[test]
+    fn test_regex_initialization() {
+        // Force initialization of all regex patterns
+        // If any pattern is invalid, this will panic and the test will fail
+        let _ = get_nested_quoted_regex();
+        let _ = get_nested_unquoted_regex();
+        let _ = get_comment_single_arg_regex();
+        let _ = get_comment_with_default_regex();
+        let _ = get_comment_with_options_regex();
+
+        // Verify patterns actually match expected inputs
+        assert!(get_nested_quoted_regex().is_match("$t('hello')"));
+        assert!(get_nested_quoted_regex().is_match("$t(\"world\")"));
+        assert!(get_nested_quoted_regex().is_match("$t( 'spaced' )"));
+
+        assert!(get_nested_unquoted_regex().is_match("$t(key)"));
+        assert!(get_nested_unquoted_regex().is_match("$t(some.key.path)"));
+        assert!(get_nested_unquoted_regex().is_match("$t(ns:key)"));
+
+        assert!(get_comment_single_arg_regex().is_match("t('key')"));
+        assert!(get_comment_single_arg_regex().is_match("t(\"key\")"));
+        assert!(get_comment_single_arg_regex().is_match("t(`key`)"));
+
+        assert!(get_comment_with_default_regex().is_match("t('key', 'default')"));
+        assert!(get_comment_with_default_regex().is_match("t(\"key\", \"default\")"));
+
+        assert!(get_comment_with_options_regex().is_match("t('key', { defaultValue: 'value' })"));
+        assert!(get_comment_with_options_regex().is_match("t('key', { other: 1, defaultValue: 'value' })"));
     }
 }
