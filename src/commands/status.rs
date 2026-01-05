@@ -7,7 +7,12 @@ use crate::cleanup;
 use crate::config::Config;
 use crate::extractor::{self, ExtractedKey};
 
-pub fn run(config: &Config, locale: Option<String>, fail_on_incomplete: bool) -> Result<()> {
+pub fn run(
+    config: &Config,
+    locale: Option<String>,
+    fail_on_incomplete: bool,
+    namespace: Option<String>,
+) -> Result<()> {
     println!("=== i18next-turbo status ===\n");
 
     // Determine locale to check
@@ -17,10 +22,15 @@ pub fn run(config: &Config, locale: Option<String>, fail_on_incomplete: bool) ->
         .map(|s| s.as_str())
         .unwrap_or("en");
 
+    let namespace_filter = namespace.as_deref();
+
     println!("Configuration:");
     println!("  Locales directory: {}", config.output);
     println!("  Checking locale: {}", check_locale);
     println!("  Default namespace: {}", config.default_namespace);
+    if let Some(ns) = namespace_filter {
+        println!("  Namespace filter: {}", ns);
+    }
     println!();
 
     // Extract keys from source
@@ -36,11 +46,14 @@ pub fn run(config: &Config, locale: Option<String>, fail_on_incomplete: bool) ->
 
     for (_file_path, keys) in &extraction.files {
         for key in keys {
-            let full_key = match &key.namespace {
-                Some(ns) => format!("{}:{}", ns, key.key),
-                None => format!("{}:{}", config.default_namespace, key.key),
-            };
-            source_keys.insert(full_key);
+            let namespace = key
+                .namespace
+                .as_deref()
+                .unwrap_or(&config.default_namespace);
+            if namespace_filter.map_or(true, |filter| filter == namespace) {
+                let full_key = format!("{}:{}", namespace, key.key);
+                source_keys.insert(full_key);
+            }
             all_keys.push(key.clone());
         }
     }
@@ -65,6 +78,12 @@ pub fn run(config: &Config, locale: Option<String>, fail_on_incomplete: bool) ->
                     .and_then(|s| s.to_str())
                     .unwrap_or("translation");
 
+                if let Some(filter) = namespace_filter {
+                    if namespace != filter {
+                        continue;
+                    }
+                }
+
                 let content = std::fs::read_to_string(&path)?;
                 if content.trim().is_empty() {
                     continue;
@@ -80,14 +99,29 @@ pub fn run(config: &Config, locale: Option<String>, fail_on_incomplete: bool) ->
     println!("  Keys in locale: {}", locale_keys.len());
 
     // Find dead keys
-    let dead_keys =
-        cleanup::find_dead_keys(locales_path, &all_keys, &config.default_namespace, check_locale)?;
+    let dead_keys = cleanup::find_dead_keys(
+        locales_path,
+        &all_keys,
+        &config.default_namespace,
+        check_locale,
+    )?;
+    let dead_keys: Vec<_> = dead_keys
+        .into_iter()
+        .filter(|dk| namespace_filter.map_or(true, |ns| dk.namespace == ns))
+        .collect();
 
     // Find missing keys (in source but not in locale)
     let missing_count = source_keys
         .iter()
         .filter(|k| !locale_keys.contains(*k))
         .count();
+
+    let total_keys = source_keys.len();
+    let completed = total_keys.saturating_sub(missing_count);
+    println!(
+        "  Progress: {}",
+        format_progress_bar(completed, total_keys)
+    );
 
     // Summary
     println!("\n{}", "=".repeat(40));
@@ -148,4 +182,21 @@ fn count_json_keys(value: &Value, namespace: &str, prefix: &str, keys: &mut Hash
         }
         _ => {}
     }
+}
+
+fn format_progress_bar(completed: usize, total: usize) -> String {
+    const BAR_WIDTH: usize = 30;
+
+    if total == 0 {
+        return format!("[{}] 0.0% (0/0)", "-".repeat(BAR_WIDTH));
+    }
+
+    let ratio = completed as f64 / total as f64;
+    let filled = ((ratio * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
+    let bar = format!(
+        "[{}{}]",
+        "#".repeat(filled),
+        "-".repeat(BAR_WIDTH - filled)
+    );
+    format!("{} {:>5.1}% ({}/{})", bar, ratio * 100.0, completed, total)
 }

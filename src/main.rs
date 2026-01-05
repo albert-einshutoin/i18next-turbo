@@ -93,6 +93,10 @@ enum Commands {
         /// Exit with non-zero code if translations are incomplete (useful for CI)
         #[arg(long)]
         fail_on_incomplete: bool,
+
+        /// Only include keys from the specified namespace
+        #[arg(long)]
+        namespace: Option<String>,
     },
 
     /// Sync translation keys across locales
@@ -206,8 +210,12 @@ fn main() -> Result<()> {
         } => {
             commands::check::run(&config, remove, dry_run, locale)?;
         }
-        Commands::Status { locale, fail_on_incomplete } => {
-            commands::status::run(&config, locale, fail_on_incomplete)?;
+        Commands::Status {
+            locale,
+            fail_on_incomplete,
+            namespace,
+        } => {
+            commands::status::run(&config, locale, fail_on_incomplete, namespace)?;
         }
         Commands::Sync {
             remove_unused,

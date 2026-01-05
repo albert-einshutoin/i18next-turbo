@@ -191,6 +191,21 @@ Watching for changes... (Ctrl+C to stop)
 
 Run this command in the background during development to automatically update JSON files when you add translation keys.
 
+### 4. Translation Status
+
+Check translation progress for a specific locale:
+
+```bash
+i18next-turbo status --locale ja
+```
+
+Useful flags:
+
+- `--namespace <name>`: limit the report to a single namespace
+- `--fail-on-incomplete`: exit with a non-zero status when missing or dead keys are found (great for CI)
+
+The summary includes a textual progress bar so you can instantly gauge completion status for the selected locale/namespace.
+
 ---
 
 ## 📝 Examples
@@ -415,10 +430,6 @@ interface Translation {
 
 ### 📅 Planned
 
-- [ ] `status` command (translation completion rate)
-- [ ] `sync` command (locale synchronization)
-- [ ] `lint` command (hardcoded string detection)
-- [ ] `rename-key` command (bulk key renaming)
 - [ ] Locize integration
 
 See [TODO.md](./TODO.md) for details.

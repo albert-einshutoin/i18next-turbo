@@ -92,13 +92,112 @@ fn get_comment_with_default_regex() -> &'static Regex {
     })
 }
 
-/// Returns regex for t() calls with options object containing defaultValue
+/// Returns regex for t() calls with options object (captures key and opening brace)
 fn get_comment_with_options_regex() -> &'static Regex {
     COMMENT_WITH_OPTIONS_REGEX.get_or_init(|| {
-        // Pattern: t('key', { ...defaultValue: 'value'... }) - key followed by object with defaultValue
-        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{[^}]*defaultValue\s*:\s*['"`]([^'"`]+)['"`]"#)
+        Regex::new(r#"(?s)(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(\{)"#)
             .expect("COMMENT_WITH_OPTIONS_REGEX pattern is invalid - this is a bug")
     })
+}
+
+#[derive(Default)]
+struct CommentOptionsData {
+    default_value: Option<String>,
+    namespace: Option<String>,
+    context: Option<String>,
+    has_count: bool,
+}
+
+impl CommentOptionsData {
+    fn from_text(text: &str) -> Self {
+        Self {
+            default_value: extract_comment_string_option(text, "defaultValue"),
+            namespace: extract_comment_string_option(text, "ns"),
+            context: extract_comment_string_option(text, "context"),
+            has_count: comment_option_exists(text, "count"),
+        }
+    }
+}
+
+fn extract_braced_block(text: &str, start_index: usize) -> Option<(String, usize)> {
+    let mut depth = 0usize;
+    let mut in_string: Option<char> = None;
+    let mut is_escaped = false;
+
+    for (offset, ch) in text[start_index..].char_indices() {
+        let abs_index = start_index + offset;
+
+        if let Some(quote) = in_string {
+            if is_escaped {
+                is_escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                is_escaped = true;
+                continue;
+            }
+            if ch == quote {
+                in_string = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' | '`' => {
+                in_string = Some(ch);
+            }
+            '{' => {
+                depth += 1;
+            }
+            '}' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let end = abs_index + ch.len_utf8();
+                    return Some((text[start_index..end].to_string(), end));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn extract_comment_string_option(text: &str, key: &str) -> Option<String> {
+    let base = format!(
+        r#"(?s)(?:^|[^a-zA-Z0-9_])["']?{}["']?\s*:\s*"#,
+        regex::escape(key)
+    );
+    let variants = [
+        ("'", "[^']+"),
+        ("\"", "[^\"]+"),
+        ("`", "[^`]+"),
+    ];
+
+    for (quote, inner) in &variants {
+        let pattern = format!("{}{}({}){}", base, quote, inner, quote);
+        if let Ok(re) = Regex::new(&pattern) {
+            if let Some(cap) = re.captures(text) {
+                return cap.get(1).map(|m| m.as_str().to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn comment_option_exists(text: &str, key: &str) -> bool {
+    let pattern = format!(
+        r#"(?s)(?:^|[^a-zA-Z0-9_])["']?{}["']?\s*:"#,
+        regex::escape(key)
+    );
+    Regex::new(&pattern)
+        .ok()
+        .and_then(|re| re.find(text))
+        .is_some()
 }
 use swc_common::comments::SingleThreadedComments;
 use swc_common::sync::Lrc;
@@ -850,13 +949,44 @@ impl TranslationVisitor {
         for cap in with_options_pattern.captures_iter(text) {
             if let Some(key_match) = cap.get(1) {
                 let key = key_match.as_str();
-                let default_value = cap.get(2).map(|m| m.as_str().to_string());
-                let (namespace, base_key) = self.parse_key_with_namespace(key);
-                self.keys.push(ExtractedKey {
-                    key: base_key,
-                    namespace,
-                    default_value,
-                });
+                if let Some(object_match) = cap.get(2) {
+                    if let Some((options_text, _)) = extract_braced_block(text, object_match.start()) {
+                        let CommentOptionsData {
+                            default_value,
+                            namespace: namespace_override,
+                            context,
+                            has_count,
+                        } = CommentOptionsData::from_text(&options_text);
+
+                        let (namespace_from_key, base_key) = self.parse_key_with_namespace(key);
+                        let namespace = namespace_override.or(namespace_from_key);
+
+                        if has_count {
+                            let plural_keys = self.generate_plural_keys(
+                                &base_key,
+                                context.as_deref(),
+                                namespace.clone(),
+                                default_value.clone(),
+                            );
+                            self.keys.extend(plural_keys);
+                            continue;
+                        }
+
+                        if let Some(ctx) = context {
+                            self.keys.push(ExtractedKey {
+                                key: format!("{}_{}", base_key, ctx),
+                                namespace,
+                                default_value,
+                            });
+                        } else {
+                            self.keys.push(ExtractedKey {
+                                key: base_key,
+                                namespace,
+                                default_value,
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -2043,6 +2173,50 @@ mod tests {
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "nav.home");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_comment_with_count_option() {
+        let source = r#"
+            // t('notification', { count: items.length })
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().any(|k| k.key == "notification_one"));
+        assert!(keys.iter().any(|k| k.key == "notification_other"));
+    }
+
+    #[test]
+    fn test_extract_from_comment_with_context_option() {
+        let source = r#"
+            // t('greeting', { context: 'formal' })
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "greeting_formal");
+    }
+
+    #[test]
+    fn test_extract_from_comment_with_ns_option() {
+        let source = r#"
+            // t('button.save', { ns: 'common' })
+            const x = 1;
+        "#;
+
+        let keys =
+            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "button.save");
         assert_eq!(keys[0].namespace, Some("common".to_string()));
     }
 
