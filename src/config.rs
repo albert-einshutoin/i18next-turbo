@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use glob::Pattern;
 use icu_locid::Locale;
 use icu_plurals::{PluralCategory, PluralRules};
 use serde::Deserialize;
@@ -16,6 +17,10 @@ pub struct Config {
     /// Output directory for translation files
     #[serde(default = "default_output")]
     pub output: String,
+
+    /// Output format for translation files (json, json5, ...)
+    #[serde(default)]
+    pub output_format: OutputFormat,
 
     /// List of language codes (e.g., ["en", "ja"])
     #[serde(default = "default_locales")]
@@ -64,9 +69,66 @@ pub struct Config {
     #[serde(default = "default_use_locale_plural_rules")]
     pub use_locale_plural_rules: bool,
 
+    /// Files/globs to ignore when extracting
+    #[serde(default)]
+    pub ignore: Vec<String>,
+
+    /// Glob patterns for keys that should always be preserved when pruning
+    #[serde(default)]
+    pub preserve_patterns: Vec<String>,
+
+    /// Whether to remove keys that were not found in source files (default: true)
+    #[serde(default = "default_remove_unused_keys")]
+    pub remove_unused_keys: bool,
+
+    /// Default value to use when no explicit defaultValue is provided
+    #[serde(default)]
+    pub default_value: Option<String>,
+
+    /// Names of Trans components to detect
+    #[serde(default = "default_trans_components")]
+    pub trans_components: Vec<String>,
+
+    /// HTML tags that should be preserved inside Trans components
+    #[serde(default = "default_trans_keep_nodes")]
+    pub trans_keep_basic_html_nodes_for: Vec<String>,
+
     /// Type generation configuration
     #[serde(default)]
     pub types: TypesConfig,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutputFormat {
+    Json,
+    Json5,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        OutputFormat::Json
+    }
+}
+
+impl OutputFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            OutputFormat::Json => "json",
+            OutputFormat::Json5 => "json5",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Result<Self> {
+        match value.to_lowercase().as_str() {
+            "json" => Ok(OutputFormat::Json),
+            "json5" => Ok(OutputFormat::Json5),
+            other => bail!(
+                "Configuration error: unsupported outputFormat '{}'. Supported: json, json5",
+                other
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +163,7 @@ use napi_derive::napi;
 pub struct NapiConfig {
     pub input: Option<Vec<String>>,
     pub output: Option<String>,
+    pub outputFormat: Option<String>,
     pub locales: Option<Vec<String>>,
     pub defaultNamespace: Option<String>,
     pub functions: Option<Vec<String>>,
@@ -111,6 +174,10 @@ pub struct NapiConfig {
     pub pluralSuffixes: Option<Vec<String>>,
     pub extractFromComments: Option<bool>,
     pub useLocalePluralRules: Option<bool>,
+    pub ignore: Option<Vec<String>>,
+    pub preservePatterns: Option<Vec<String>>,
+    pub removeUnusedKeys: Option<bool>,
+    pub defaultValue: Option<String>,
     pub types: Option<NapiTypesConfig>,
 }
 
@@ -162,6 +229,18 @@ fn default_use_locale_plural_rules() -> bool {
     true
 }
 
+fn default_remove_unused_keys() -> bool {
+    true
+}
+
+fn default_trans_components() -> Vec<String> {
+    vec!["Trans".to_string()]
+}
+
+fn default_trans_keep_nodes() -> Vec<String> {
+    vec!["br".to_string(), "strong".to_string(), "i".to_string()]
+}
+
 fn default_types_output() -> String {
     "src/@types/i18next.d.ts".to_string()
 }
@@ -171,6 +250,7 @@ impl Default for Config {
         Self {
             input: default_input(),
             output: default_output(),
+            output_format: OutputFormat::default(),
             locales: default_locales(),
             default_namespace: default_namespace(),
             functions: default_functions(),
@@ -181,7 +261,13 @@ impl Default for Config {
             plural_suffixes: default_plural_suffixes(),
             extract_from_comments: default_extract_from_comments(),
             use_locale_plural_rules: default_use_locale_plural_rules(),
+            ignore: Vec::new(),
+            preserve_patterns: Vec::new(),
+            remove_unused_keys: default_remove_unused_keys(),
+            default_value: None,
             types: TypesConfig::default(),
+            trans_components: default_trans_components(),
+            trans_keep_basic_html_nodes_for: default_trans_keep_nodes(),
         }
     }
 }
@@ -253,6 +339,42 @@ impl Config {
                     "Configuration error: invalid glob pattern '{}'.\n\
                      Glob error: {}\n\
                      Example of valid patterns: \"src/**/*.tsx\", \"lib/*.js\"",
+                    pattern,
+                    e
+                );
+            }
+        }
+
+        // Validate ignore patterns
+        for pattern in &self.ignore {
+            if pattern.trim().is_empty() {
+                bail!(
+                    "Configuration error: empty pattern found in 'ignore'.\n\
+                     Remove empty entries or provide a glob like \"**/*.test.tsx\"."
+                );
+            }
+            if let Err(e) = Pattern::new(pattern) {
+                bail!(
+                    "Configuration error: invalid glob in 'ignore': '{}'.\n\
+                     Glob error: {}",
+                    pattern,
+                    e
+                );
+            }
+        }
+
+        // Validate preservePatterns entries
+        for pattern in &self.preserve_patterns {
+            if pattern.trim().is_empty() {
+                bail!(
+                    "Configuration error: empty entry found in 'preservePatterns'.\n\
+                     Example: \"common:*\" or \"auth.login.*\""
+                );
+            }
+            if let Err(e) = Pattern::new(pattern) {
+                bail!(
+                    "Configuration error: invalid glob in 'preservePatterns': '{}'.\n\
+                     Glob error: {}",
                     pattern,
                     e
                 );
@@ -345,26 +467,54 @@ impl Config {
     pub fn from_napi(config: NapiConfig) -> Result<Self> {
         let defaults = Config::default();
         let config = Config {
-            input: config.input.unwrap_or(defaults.input),
-            output: config.output.unwrap_or(defaults.output),
-            locales: config.locales.unwrap_or(defaults.locales),
+            input: config.input.unwrap_or_else(|| defaults.input.clone()),
+            output: config.output.unwrap_or_else(|| defaults.output.clone()),
+            output_format: config
+                .outputFormat
+                .as_deref()
+                .map(OutputFormat::from_str)
+                .transpose()?
+                .unwrap_or(defaults.output_format),
+            locales: config.locales.unwrap_or_else(|| defaults.locales.clone()),
             default_namespace: config
                 .defaultNamespace
-                .unwrap_or(defaults.default_namespace),
-            functions: config.functions.unwrap_or(defaults.functions),
-            key_separator: config.keySeparator.unwrap_or(defaults.key_separator),
-            ns_separator: config.nsSeparator.unwrap_or(defaults.ns_separator),
+                .unwrap_or_else(|| defaults.default_namespace.clone()),
+            functions: config
+                .functions
+                .unwrap_or_else(|| defaults.functions.clone()),
+            key_separator: config
+                .keySeparator
+                .unwrap_or_else(|| defaults.key_separator.clone()),
+            ns_separator: config
+                .nsSeparator
+                .unwrap_or_else(|| defaults.ns_separator.clone()),
             context_separator: config
                 .contextSeparator
-                .unwrap_or(defaults.context_separator),
-            plural_separator: config.pluralSeparator.unwrap_or(defaults.plural_separator),
-            plural_suffixes: config.pluralSuffixes.unwrap_or(defaults.plural_suffixes),
+                .unwrap_or_else(|| defaults.context_separator.clone()),
+            plural_separator: config
+                .pluralSeparator
+                .unwrap_or_else(|| defaults.plural_separator.clone()),
+            plural_suffixes: config
+                .pluralSuffixes
+                .unwrap_or_else(|| defaults.plural_suffixes.clone()),
             extract_from_comments: config
                 .extractFromComments
                 .unwrap_or(defaults.extract_from_comments),
             use_locale_plural_rules: config
                 .useLocalePluralRules
                 .unwrap_or(default_use_locale_plural_rules()),
+            ignore: config.ignore.unwrap_or_else(|| defaults.ignore.clone()),
+            preserve_patterns: config
+                .preservePatterns
+                .unwrap_or_else(|| defaults.preserve_patterns.clone()),
+            remove_unused_keys: config
+                .removeUnusedKeys
+                .unwrap_or(default_remove_unused_keys()),
+            default_value: config
+                .defaultValue
+                .or_else(|| defaults.default_value.clone()),
+            trans_components: default_trans_components(),
+            trans_keep_basic_html_nodes_for: default_trans_keep_nodes(),
             types: config.types.map(TypesConfig::from).unwrap_or_default(),
         };
         config.validate()?;
@@ -373,6 +523,14 @@ impl Config {
 }
 
 impl Config {
+    pub fn output_format(&self) -> OutputFormat {
+        self.output_format
+    }
+
+    pub fn output_extension(&self) -> &'static str {
+        self.output_format.extension()
+    }
+
     pub fn types_output_path(&self) -> String {
         self.types
             .output

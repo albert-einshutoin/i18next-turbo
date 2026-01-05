@@ -133,6 +133,7 @@ pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<Ex
     // Extract keys from files
     let extraction = crate::extractor::extract_from_glob_with_options(
         &config.input,
+        &config.ignore,
         &config.functions,
         config.extract_from_comments,
         &plural_config,
@@ -346,6 +347,7 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
     let plural_config = config.plural_config();
     let extraction = crate::extractor::extract_from_glob_with_options(
         &config.input,
+        &config.ignore,
         &config.functions,
         config.extract_from_comments,
         &plural_config,

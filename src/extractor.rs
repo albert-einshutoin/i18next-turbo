@@ -1,10 +1,11 @@
 use crate::config::PluralConfig;
 use anyhow::{Context, Result};
+use glob::Pattern;
 use regex::Regex;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
 
 /// Normalize a string to NFC form for consistent key handling.
@@ -1376,21 +1377,25 @@ enum FileExtractionResult {
 /// - Optimized for large monorepos (millions of files)
 pub fn extract_from_glob(
     patterns: &[String],
+    ignore_patterns: &[String],
     functions: &[String],
     plural_config: &PluralConfig,
 ) -> Result<ExtractionResult> {
-    extract_from_glob_with_options(patterns, functions, true, plural_config)
+    extract_from_glob_with_options(patterns, ignore_patterns, functions, true, plural_config)
 }
 
 /// Extract keys from multiple files using glob patterns with configurable options.
 pub fn extract_from_glob_with_options(
     patterns: &[String],
+    ignore_patterns: &[String],
     functions: &[String],
     extract_from_comments: bool,
     plural_config: &PluralConfig,
 ) -> Result<ExtractionResult> {
     use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
+
+    let ignore_matchers = Arc::new(compile_ignore_patterns(ignore_patterns)?);
 
     // Create a streaming iterator that chains all glob patterns
     // This avoids collecting all file paths into memory upfront
@@ -1408,14 +1413,20 @@ pub fn extract_from_glob_with_options(
     let file_results: Vec<FileExtractionResult> = pattern_refs
         .into_iter()
         .flat_map(|pattern| {
+            let ignore_for_pattern = Arc::clone(&ignore_matchers);
             // Create iterator for this pattern (may error)
             match glob::glob(pattern) {
                 Ok(paths) => {
                     // Map each path result to GlobItem
                     paths
-                        .filter_map(|entry| match entry {
-                            Ok(path) if path.is_file() => Some(GlobItem::Path(path)),
-                            Ok(_) => None, // Skip directories
+                        .filter_map(move |entry| match entry {
+                            Ok(path)
+                                if path.is_file()
+                                    && !matches_ignore_path(&path, ignore_for_pattern.as_ref()) =>
+                            {
+                                Some(GlobItem::Path(path))
+                            }
+                            Ok(_) => None, // Skip directories and ignored files
                             Err(e) => Some(GlobItem::GlobError {
                                 pattern: pattern.to_string(),
                                 message: e.to_string(),
@@ -1511,15 +1522,23 @@ pub fn extract_from_glob_with_options(
 /// Returns a HashMap of unique keys instead of Vec, reducing O(N) to O(unique_keys).
 pub fn extract_from_glob_deduplicated(
     patterns: &[String],
+    ignore_patterns: &[String],
     functions: &[String],
     plural_config: &PluralConfig,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
-    extract_from_glob_deduplicated_with_options(patterns, functions, true, plural_config)
+    extract_from_glob_deduplicated_with_options(
+        patterns,
+        ignore_patterns,
+        functions,
+        true,
+        plural_config,
+    )
 }
 
 /// Extract keys with early deduplication and configurable comment extraction
 pub fn extract_from_glob_deduplicated_with_options(
     patterns: &[String],
+    ignore_patterns: &[String],
     functions: &[String],
     extract_from_comments: bool,
     plural_config: &PluralConfig,
@@ -1528,6 +1547,7 @@ pub fn extract_from_glob_deduplicated_with_options(
 
     let mut all_files: Vec<std::path::PathBuf> = Vec::new();
     let mut glob_errors: Vec<ExtractionError> = Vec::new();
+    let ignore_matchers = compile_ignore_patterns(ignore_patterns)?;
 
     for pattern in patterns {
         let matches =
@@ -1536,7 +1556,7 @@ pub fn extract_from_glob_deduplicated_with_options(
         for entry in matches {
             match entry {
                 Ok(path) => {
-                    if path.is_file() {
+                    if path.is_file() && !matches_ignore_path(&path, &ignore_matchers) {
                         all_files.push(path);
                     }
                 }
@@ -1598,9 +1618,22 @@ pub fn extract_from_glob_deduplicated_with_options(
 
     // Add glob errors
     errors.extend(glob_errors);
-    let total_warnings = warning_count + errors.len();
 
-    Ok((unique_keys, total_warnings, errors))
+    Ok((unique_keys, warning_count, errors))
+}
+
+fn matches_ignore_path(path: &Path, patterns: &[Pattern]) -> bool {
+    patterns.iter().any(|pattern| pattern.matches_path(path))
+}
+
+fn compile_ignore_patterns(patterns: &[String]) -> Result<Vec<Pattern>> {
+    let mut compiled = Vec::new();
+    for pattern in patterns {
+        let matcher = Pattern::new(pattern)
+            .with_context(|| format!("Invalid ignore glob pattern: {}", pattern))?;
+        compiled.push(matcher);
+    }
+    Ok(compiled)
 }
 
 #[cfg(test)]

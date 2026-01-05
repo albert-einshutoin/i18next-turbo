@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use glob::Pattern;
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
@@ -16,16 +17,23 @@ pub struct FileWatcher {
     debounce_duration: Duration,
     /// Cache of extracted keys per file for incremental updates
     file_cache: HashMap<PathBuf, Vec<ExtractedKey>>,
+    ignore_patterns: Vec<Pattern>,
 }
 
 impl FileWatcher {
     pub fn new(config: Config, output_dir: Option<String>) -> Self {
         let output = output_dir.unwrap_or_else(|| config.output.clone());
+        let ignore_patterns = config
+            .ignore
+            .iter()
+            .filter_map(|pattern| Pattern::new(pattern).ok())
+            .collect();
         Self {
             config,
             output_dir: output,
             debounce_duration: Duration::from_millis(300),
             file_cache: HashMap::new(),
+            ignore_patterns,
         }
     }
 
@@ -96,13 +104,23 @@ impl FileWatcher {
     }
 
     /// Check if a file should be processed based on its extension
-    fn should_process_file(&self, path: &std::path::Path) -> bool {
+    fn should_process_file(&self, path: &Path) -> bool {
         let valid_extensions = ["ts", "tsx", "js", "jsx"];
+
+        if self.is_ignored(path) {
+            return false;
+        }
 
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| valid_extensions.contains(&ext))
             .unwrap_or(false)
+    }
+
+    fn is_ignored(&self, path: &Path) -> bool {
+        self.ignore_patterns
+            .iter()
+            .any(|pattern| pattern.matches_path(path))
     }
 
     /// Perform initial full extraction of all files
@@ -112,6 +130,7 @@ impl FileWatcher {
         let plural_config = self.config.plural_config();
         let extraction = extractor::extract_from_glob_with_options(
             &self.config.input,
+            &self.config.ignore,
             &self.config.functions,
             self.config.extract_from_comments,
             &plural_config,
@@ -130,11 +149,15 @@ impl FileWatcher {
         // Report
         let total_keys: usize = self.file_cache.values().map(|v| v.len()).sum();
         let total_added: usize = sync_results.iter().map(|r| r.added_keys.len()).sum();
+        let total_removed: usize = sync_results.iter().map(|r| r.removed_keys.len()).sum();
 
         println!("  Files: {}", self.file_cache.len());
         println!("  Keys: {}", total_keys);
         if total_added > 0 {
             println!("  New keys added: {}", total_added);
+        }
+        if total_removed > 0 {
+            println!("  Keys removed: {}", total_removed);
         }
         if extraction.warning_count > 0 {
             println!("  Warnings: {}", extraction.warning_count);
@@ -227,8 +250,12 @@ impl FileWatcher {
         )?;
 
         let total_added: usize = sync_results.iter().map(|r| r.added_keys.len()).sum();
+        let total_removed: usize = sync_results.iter().map(|r| r.removed_keys.len()).sum();
         if total_added > 0 {
             println!("  Added {} new key(s)", total_added);
+        }
+        if total_removed > 0 {
+            println!("  Removed {} stale key(s)", total_removed);
         }
 
         println!("--- Sync complete ---\n");
@@ -244,6 +271,7 @@ impl FileWatcher {
         let plural_config = self.config.plural_config();
         let results: Vec<_> = changed_files
             .par_iter()
+            .filter(|path| !self.is_ignored(path))
             .filter_map(|path| {
                 match extractor::extract_from_file_with_options(
                     path,

@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 
-use crate::config::Config;
+use crate::config::{Config, OutputFormat};
 use crate::json_sync;
 
 pub fn run(
@@ -80,9 +80,13 @@ pub fn run(
     // Step 2: Rename in locale files
     println!("\nUpdating locale files...");
     let locales_path = std::path::Path::new(&config.output);
+    let extension = config.output_extension();
+    let format = config.output_format();
 
     for locale in &config.locales {
-        let ns_file = locales_path.join(locale).join(format!("{}.json", old_ns));
+        let ns_file = locales_path
+            .join(locale)
+            .join(format!("{}.{}", old_ns, extension));
 
         if !ns_file.exists() {
             continue;
@@ -93,7 +97,8 @@ pub fn run(
             continue;
         }
 
-        let mut json: Value = serde_json::from_str(&content)?;
+        let mut json = parse_locale_value(&content, format)
+            .with_context(|| format!("Failed to parse locale file: {}", ns_file.display()))?;
 
         // Get the value at old key path
         let old_value = get_nested_value(&json, &old_key_path);
@@ -108,21 +113,20 @@ pub fn run(
                 if !dry_run {
                     if let Some(obj) = json.as_object() {
                         let sorted = json_sync::sort_keys_alphabetically(obj);
-                        let output = serde_json::to_string_pretty(&sorted)?;
-                        std::fs::write(&ns_file, format!("{}\n", output))?;
+                        json_sync::write_locale_file(&ns_file, &sorted, format, None)?;
                     }
                 }
 
                 // Add to new namespace file
-                let new_ns_file = locales_path.join(locale).join(format!("{}.json", new_ns));
+                let new_ns_file = locales_path
+                    .join(locale)
+                    .join(format!("{}.{}", new_ns, extension));
 
                 let mut new_json = if new_ns_file.exists() {
                     let new_content = std::fs::read_to_string(&new_ns_file)?;
-                    if new_content.trim().is_empty() {
-                        Value::Object(Map::new())
-                    } else {
-                        serde_json::from_str(&new_content)?
-                    }
+                    parse_locale_value(&new_content, format).with_context(|| {
+                        format!("Failed to parse locale file: {}", new_ns_file.display())
+                    })?
                 } else {
                     Value::Object(Map::new())
                 };
@@ -132,12 +136,14 @@ pub fn run(
                 if !dry_run {
                     if let Some(obj) = new_json.as_object() {
                         let sorted = json_sync::sort_keys_alphabetically(obj);
-                        let output = serde_json::to_string_pretty(&sorted)?;
-                        std::fs::write(&new_ns_file, format!("{}\n", output))?;
+                        json_sync::write_locale_file(&new_ns_file, &sorted, format, None)?;
                     }
                 }
 
-                println!("  {}/{}.json -> {}/{}.json", locale, old_ns, locale, new_ns);
+                println!(
+                    "  {}/{}.{} -> {}/{}.{}",
+                    locale, old_ns, extension, locale, new_ns, extension
+                );
             } else {
                 // Same namespace, just rename key path
                 set_nested_value(&mut json, &new_key_path, value);
@@ -145,12 +151,11 @@ pub fn run(
                 if !dry_run {
                     if let Some(obj) = json.as_object() {
                         let sorted = json_sync::sort_keys_alphabetically(obj);
-                        let output = serde_json::to_string_pretty(&sorted)?;
-                        std::fs::write(&ns_file, format!("{}\n", output))?;
+                        json_sync::write_locale_file(&ns_file, &sorted, format, None)?;
                     }
                 }
 
-                println!("  {}/{}.json", locale, old_ns);
+                println!("  {}/{}.{}", locale, old_ns, extension);
             }
 
             locale_changes += 1;
@@ -201,6 +206,17 @@ fn get_nested_value(json: &Value, path: &str) -> Option<Value> {
     }
 
     Some(current.clone())
+}
+
+fn parse_locale_value(content: &str, format: OutputFormat) -> Result<Value> {
+    if content.trim().is_empty() {
+        return Ok(Value::Object(Map::new()));
+    }
+
+    match format {
+        OutputFormat::Json => Ok(serde_json::from_str(content)?),
+        OutputFormat::Json5 => Ok(json5::from_str(content)?),
+    }
 }
 
 /// Remove a nested key from JSON using dot notation

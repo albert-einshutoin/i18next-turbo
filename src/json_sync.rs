@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
+use glob::Pattern;
 use serde::Serialize;
 use serde_json::ser::{Formatter, Serializer};
 use serde_json::{Map, Value};
-use std::io::{BufWriter, Write};
+use std::collections::HashSet;
+use std::io::Write;
 use std::path::Path;
-use tempfile::NamedTempFile;
 
-use crate::config::Config;
+use crate::config::{Config, OutputFormat};
 use crate::extractor::ExtractedKey;
 use crate::fs::FileSystem;
 
@@ -248,6 +249,57 @@ pub struct SyncResult {
     pub existing_keys: usize,
     /// Keys that were skipped due to conflicts with existing data structures
     pub conflicts: Vec<KeyConflict>,
+    pub removed_keys: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PreserveMatcher {
+    key_patterns: Vec<Pattern>,
+    namespaced_patterns: Vec<Pattern>,
+    ns_separator: String,
+}
+
+impl PreserveMatcher {
+    fn new(patterns: &[String], ns_separator: &str) -> Result<Self> {
+        let mut key_patterns = Vec::new();
+        let mut namespaced_patterns = Vec::new();
+
+        for pattern in patterns {
+            let compiled = Pattern::new(pattern)
+                .with_context(|| format!("Invalid preserve pattern: {}", pattern))?;
+            if !ns_separator.is_empty() && pattern.contains(ns_separator) {
+                namespaced_patterns.push(compiled);
+            } else {
+                key_patterns.push(compiled);
+            }
+        }
+
+        Ok(Self {
+            key_patterns,
+            namespaced_patterns,
+            ns_separator: ns_separator.to_string(),
+        })
+    }
+
+    fn matches(&self, namespace: &str, key: &str) -> bool {
+        if self.key_patterns.iter().any(|pattern| pattern.matches(key)) {
+            return true;
+        }
+
+        if self.namespaced_patterns.is_empty() {
+            return false;
+        }
+
+        let namespaced_key = if self.ns_separator.is_empty() {
+            format!("{}{}", namespace, key)
+        } else {
+            format!("{}{}{}", namespace, self.ns_separator, key)
+        };
+
+        self.namespaced_patterns
+            .iter()
+            .any(|pattern| pattern.matches(&namespaced_key))
+    }
 }
 
 /// Read a JSON locale file, returning an empty map if it doesn't exist
@@ -385,36 +437,39 @@ fn sort_keys_with_depth(
 }
 
 /// Merge extracted keys into an existing translation map.
-/// - New keys are added with default_value if available, otherwise empty string
-/// - Existing keys are preserved (translations are kept)
-/// - If key_separator is empty, keys are stored flat (not nested)
-/// - Conflicts are reported in SyncResult.conflicts instead of silently skipping
-pub fn merge_keys(
+/// - New keys are added with default values (explicit or config-level fallback)
+/// - Existing keys are preserved unless removal is requested
+/// - preservePatterns keep dynamic keys even when removal is enabled
+pub(crate) fn merge_keys(
     existing: &mut Map<String, Value>,
     keys: &[ExtractedKey],
     target_namespace: &str,
-    default_namespace: &str,
-    key_separator: &str,
+    config: &Config,
+    preserve_matcher: &PreserveMatcher,
 ) -> SyncResult {
     let mut result = SyncResult::default();
+    let mut seen_paths: HashSet<String> = HashSet::new();
+    let default_namespace = &config.default_namespace;
+    let fallback_default = config.default_value.as_deref();
+    let key_separator = config.key_separator.as_str();
 
     for key in keys {
-        // Determine which namespace this key belongs to
         let key_namespace = key.namespace.as_deref().unwrap_or(default_namespace);
 
-        // Skip keys that don't belong to this namespace
         if key_namespace != target_namespace {
             continue;
         }
 
-        // Use default_value if available, otherwise empty string
-        let value = key.default_value.as_deref().unwrap_or("");
+        let value = key
+            .default_value
+            .as_deref()
+            .or(fallback_default)
+            .unwrap_or("");
 
-        // If key_separator is empty, use flat keys
+        seen_paths.insert(key.key.clone());
+
         if key_separator.is_empty() {
-            // Flat key mode: store as-is
             if let Some(existing_value) = existing.get(&key.key) {
-                // Check for type conflict (scalar vs object)
                 if existing_value.is_object() {
                     result.conflicts.push(KeyConflict::ObjectIsValue {
                         key_path: key.key.clone(),
@@ -427,9 +482,7 @@ pub fn merge_keys(
                 result.added_keys.push(key.key.clone());
             }
         } else {
-            // Handle nested keys: "button.submit" -> {"button": {"submit": ""}}
             let parts: Vec<&str> = key.key.split(key_separator).collect();
-
             match insert_nested_key(existing, &parts, value) {
                 InsertResult::Added => {
                     result.added_keys.push(key.key.clone());
@@ -444,71 +497,156 @@ pub fn merge_keys(
         }
     }
 
+    if config.remove_unused_keys {
+        let mut removed = Vec::new();
+        prune_unused_keys(
+            existing,
+            "",
+            key_separator,
+            target_namespace,
+            &seen_paths,
+            preserve_matcher,
+            &mut removed,
+        );
+        result.removed_keys = removed;
+    }
+
     result
 }
 
-/// Write JSON to file atomically using tempfile crate.
-/// - Creates temp file in same directory (avoids EXDEV errors on cross-mount rename)
-/// - Unique random filename (avoids race conditions)
-/// - Auto-cleanup on crash (no garbage files)
-/// - Preserves existing JSON formatting style (indentation, line endings)
-pub fn write_locale_file(path: &Path, content: &Map<String, Value>) -> Result<()> {
-    // Ensure parent directory exists
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+fn prune_unused_keys(
+    node: &mut Map<String, Value>,
+    parent_path: &str,
+    key_separator: &str,
+    namespace: &str,
+    seen_paths: &HashSet<String>,
+    preserve_matcher: &PreserveMatcher,
+    removed: &mut Vec<String>,
+) -> bool {
+    let mut keys_to_remove = Vec::new();
 
-    // Detect existing style if file exists
-    let style = if path.exists() {
-        let existing_content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read existing file: {}", path.display()))?;
-        detect_json_style(&existing_content)
-    } else {
-        JsonStyle::default()
-    };
+    for (key, value) in node.iter_mut() {
+        let current_path = if parent_path.is_empty() || key_separator.is_empty() {
+            key.clone()
+        } else {
+            format!("{}{}{}", parent_path, key_separator, key)
+        };
 
-    // Create temp file in same directory for safe atomic rename
-    let mut temp_file = NamedTempFile::new_in(parent)
-        .with_context(|| format!("Failed to create temp file in: {}", parent.display()))?;
+        let keep = seen_paths.contains(&current_path)
+            || preserve_matcher.matches(namespace, &current_path);
 
-    // Write with buffering, preserving style
-    {
-        let mut writer = BufWriter::new(&mut temp_file);
-        serialize_with_style(&mut writer, &Value::Object(content.clone()), &style)?;
-        if style.trailing_newline {
-            writer.write_all(if style.use_crlf { b"\r\n" } else { b"\n" })?;
+        if let Some(obj) = value.as_object_mut() {
+            let child_empty = prune_unused_keys(
+                obj,
+                &current_path,
+                key_separator,
+                namespace,
+                seen_paths,
+                preserve_matcher,
+                removed,
+            );
+            if child_empty && !keep {
+                keys_to_remove.push((key.clone(), current_path));
+            }
+        } else if !keep {
+            keys_to_remove.push((key.clone(), current_path));
         }
-        writer.flush()?;
     }
 
-    // Atomic persist
-    temp_file
-        .persist(path)
-        .with_context(|| format!("Failed to persist locale file: {}", path.display()))?;
+    for (key, path) in keys_to_remove {
+        node.remove(&key);
+        removed.push(path);
+    }
 
-    Ok(())
+    node.is_empty()
 }
 
-/// Write JSON to file using the provided FileSystem (for testing)
-pub fn write_locale_file_with_fs<F: FileSystem>(
+fn parse_locale_map(
+    content: &str,
+    format: OutputFormat,
+    path: &Path,
+) -> Result<Map<String, Value>> {
+    if content.trim().is_empty() {
+        return Ok(Map::new());
+    }
+
+    match format {
+        OutputFormat::Json => serde_json::from_str(content)
+            .with_context(|| format!("Failed to parse JSON in: {}", path.display())),
+        OutputFormat::Json5 => json5::from_str(content)
+            .with_context(|| format!("Failed to parse JSON5 in: {}", path.display())),
+    }
+}
+
+fn write_json_locale_with_fs<F: FileSystem>(
     path: &Path,
     content: &Map<String, Value>,
+    style: Option<&JsonStyle>,
     fs: &F,
 ) -> Result<()> {
-    // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         fs.create_dir_all(parent)
             .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
 
-    // For mock FileSystem, use simple write (no tempfile needed for in-memory)
-    let json = serde_json::to_string_pretty(content)?;
-    let json_with_newline = format!("{}\n", json);
+    let style = if let Some(style) = style.cloned() {
+        style
+    } else if fs.exists(path) {
+        let existing = fs
+            .read_to_string(path)
+            .with_context(|| format!("Failed to read existing file: {}", path.display()))?;
+        detect_json_style(&existing)
+    } else {
+        JsonStyle::default()
+    };
+    let mut buffer = Vec::new();
+    serialize_with_style(&mut buffer, &Value::Object(content.clone()), &style)?;
+    if style.trailing_newline {
+        buffer.extend_from_slice(if style.use_crlf { b"\r\n" } else { b"\n" });
+    }
 
-    fs.write(path, &json_with_newline)
-        .with_context(|| format!("Failed to write locale file: {}", path.display()))?;
+    fs.atomic_write(path, &buffer)
+        .with_context(|| format!("Failed to write locale file: {}", path.display()))
+}
 
-    Ok(())
+fn write_json5_locale_with_fs<F: FileSystem>(
+    path: &Path,
+    content: &Map<String, Value>,
+    fs: &F,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs.create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
+
+    let mut buffer = serde_json::to_string_pretty(content)?.into_bytes();
+    buffer.push(b'\n');
+    fs.atomic_write(path, &buffer)
+        .with_context(|| format!("Failed to write locale file: {}", path.display()))
+}
+
+/// Write translation data atomically using the configured format.
+pub fn write_locale_file(
+    path: &Path,
+    content: &Map<String, Value>,
+    format: OutputFormat,
+    style: Option<&JsonStyle>,
+) -> Result<()> {
+    write_locale_file_with_fs(path, content, format, style, &crate::fs::RealFileSystem)
+}
+
+/// Write translation data using the provided FileSystem (for testing)
+pub fn write_locale_file_with_fs<F: FileSystem>(
+    path: &Path,
+    content: &Map<String, Value>,
+    format: OutputFormat,
+    style: Option<&JsonStyle>,
+    fs: &F,
+) -> Result<()> {
+    match format {
+        OutputFormat::Json => write_json_locale_with_fs(path, content, style, fs),
+        OutputFormat::Json5 => write_json5_locale_with_fs(path, content, fs),
+    }
 }
 
 /// Atomically read, modify, and write a locale file with exclusive file locking.
@@ -516,31 +654,31 @@ pub fn write_locale_file_with_fs<F: FileSystem>(
 ///
 /// The lock is held for the entire read-modify-write cycle to ensure ACID-like
 /// transaction guarantees.
-pub fn sync_locale_file_locked(
+pub(crate) fn sync_locale_file_locked(
     path: &Path,
     keys: &[ExtractedKey],
     target_namespace: &str,
-    default_namespace: &str,
-    key_separator: &str,
+    config: &Config,
+    preserve_matcher: &PreserveMatcher,
 ) -> Result<SyncResult> {
     sync_locale_file_locked_with_fs(
         path,
         keys,
         target_namespace,
-        default_namespace,
-        key_separator,
+        config,
+        preserve_matcher,
         &crate::fs::RealFileSystem,
     )
 }
 
 /// Atomically read, modify, and write a locale file using the provided FileSystem.
 /// This version is testable with mock file systems.
-pub fn sync_locale_file_locked_with_fs<F: FileSystem>(
+pub(crate) fn sync_locale_file_locked_with_fs<F: FileSystem>(
     path: &Path,
     keys: &[ExtractedKey],
     target_namespace: &str,
-    default_namespace: &str,
-    key_separator: &str,
+    config: &Config,
+    preserve_matcher: &PreserveMatcher,
     fs: &F,
 ) -> Result<SyncResult> {
     // Ensure parent directory exists
@@ -557,45 +695,34 @@ pub fn sync_locale_file_locked_with_fs<F: FileSystem>(
         .content_string()
         .with_context(|| format!("Failed to read locale file: {}", path.display()))?;
 
-    // Detect existing JSON style before parsing
-    let style = if content_str.trim().is_empty() {
-        JsonStyle::default()
+    let format = config.output_format();
+    let trimmed_empty = content_str.trim().is_empty();
+    let style = if format == OutputFormat::Json {
+        if trimmed_empty {
+            Some(JsonStyle::default())
+        } else {
+            Some(detect_json_style(&content_str))
+        }
     } else {
-        detect_json_style(&content_str)
+        None
     };
 
-    let mut content: Map<String, Value> = if content_str.trim().is_empty() {
-        Map::new()
-    } else {
-        serde_json::from_str(&content_str)
-            .with_context(|| format!("Failed to parse JSON in: {}", path.display()))?
-    };
+    let mut content = parse_locale_map(&content_str, format, path)?;
 
     // Merge new keys
     let mut sync_result = merge_keys(
         &mut content,
         keys,
         target_namespace,
-        default_namespace,
-        key_separator,
+        config,
+        preserve_matcher,
     );
     sync_result.file_path = path.display().to_string();
 
     // Only write if there were changes
-    if !sync_result.added_keys.is_empty() {
-        // Sort keys alphabetically
+    if !sync_result.added_keys.is_empty() || !sync_result.removed_keys.is_empty() {
         let sorted = sort_keys_alphabetically(&content);
-
-        // Serialize with style preservation
-        let mut buffer = Vec::new();
-        serialize_with_style(&mut buffer, &Value::Object(sorted), &style)?;
-        // Add trailing newline if the original file had one (or new file)
-        if style.trailing_newline {
-            buffer.extend_from_slice(if style.use_crlf { b"\r\n" } else { b"\n" });
-        }
-
-        // Atomic write using FileSystem abstraction
-        fs.atomic_write(path, &buffer)
+        write_locale_file_with_fs(path, &sorted, format, style.as_ref(), fs)
             .with_context(|| format!("Failed to write locale file: {}", path.display()))?;
     }
 
@@ -631,23 +758,21 @@ pub fn sync_namespaces(
     output_dir: &str,
     namespaces: &std::collections::HashSet<String>,
 ) -> Result<Vec<SyncResult>> {
+    let preserve_matcher = PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator)?;
     let mut results = Vec::new();
 
     // Process only the specified namespace files
     for locale in &config.locales {
         for namespace in namespaces {
-            let file_path = Path::new(output_dir)
-                .join(locale)
-                .join(format!("{}.json", namespace));
+            let file_path = Path::new(output_dir).join(locale).join(format!(
+                "{}.{}",
+                namespace,
+                config.output_extension()
+            ));
 
             // Use locked sync for data integrity
-            let sync_result = sync_locale_file_locked(
-                &file_path,
-                keys,
-                namespace,
-                &config.default_namespace,
-                &config.key_separator,
-            )?;
+            let sync_result =
+                sync_locale_file_locked(&file_path, keys, namespace, config, &preserve_matcher)?;
 
             results.push(sync_result);
         }
@@ -781,7 +906,10 @@ mod tests {
             },
         ];
 
-        let result = merge_keys(&mut existing, &keys, "translation", "translation", ".");
+        let config = Config::default();
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
 
         assert_eq!(result.added_keys.len(), 1);
         assert_eq!(result.added_keys[0], "new.key");
@@ -810,7 +938,10 @@ mod tests {
             },
         ];
 
-        let result = merge_keys(&mut existing, &keys, "translation", "translation", ".");
+        let config = Config::default();
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
 
         assert_eq!(result.added_keys.len(), 2);
         // Key with default_value should use that value
@@ -843,7 +974,11 @@ mod tests {
         ];
 
         // Empty separator = flat key mode
-        let result = merge_keys(&mut existing, &keys, "translation", "translation", "");
+        let mut config = Config::default();
+        config.key_separator = String::new();
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
 
         assert_eq!(result.added_keys.len(), 2);
         // Keys should be stored as-is, not nested
@@ -980,12 +1115,16 @@ mod tests {
             },
         ];
 
+        let config = Config::default();
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+
         let result = sync_locale_file_locked_with_fs(
             Path::new("locales/en/translation.json"),
             &keys,
             "translation",
-            "translation",
-            ".",
+            &config,
+            &matcher,
             &fs,
         )
         .unwrap();
@@ -1041,12 +1180,17 @@ mod tests {
             },
         ];
 
+        let mut config = Config::default();
+        config.remove_unused_keys = false;
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+
         let result = sync_locale_file_locked_with_fs(
             Path::new("locales/en/translation.json"),
             &keys,
             "translation",
-            "translation",
-            ".",
+            &config,
+            &matcher,
             &fs,
         )
         .unwrap();
@@ -1072,5 +1216,113 @@ mod tests {
             parsed.get("new_key"),
             Some(&Value::String("New key value".to_string()))
         );
+    }
+    #[test]
+    fn test_remove_unused_keys_prunes_stale_entries() {
+        use crate::fs::mock::InMemoryFileSystem;
+        use std::path::Path;
+
+        let fs = InMemoryFileSystem::new();
+        fs.add_file("locales/en/translation.json", r#"{"stale": "keep"}"#);
+
+        let keys: Vec<ExtractedKey> = Vec::new();
+        let config = Config::default();
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+
+        let result = sync_locale_file_locked_with_fs(
+            Path::new("locales/en/translation.json"),
+            &keys,
+            "translation",
+            &config,
+            &matcher,
+            &fs,
+        )
+        .unwrap();
+
+        assert_eq!(result.added_keys.len(), 0);
+        assert_eq!(result.removed_keys, vec!["stale".to_string()]);
+
+        let files = fs.get_files();
+        let content = files
+            .get(Path::new("locales/en/translation.json"))
+            .expect("File should exist");
+        let parsed: Map<String, Value> = serde_json::from_str(content).unwrap();
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn test_preserve_patterns_keep_dynamic_keys() {
+        use crate::fs::mock::InMemoryFileSystem;
+        use std::path::Path;
+
+        let fs = InMemoryFileSystem::new();
+        fs.add_file("locales/en/translation.json", r#"{"dynamic": "value"}"#);
+
+        let keys: Vec<ExtractedKey> = Vec::new();
+        let mut config = Config::default();
+        config.preserve_patterns = vec!["translation:dynamic".to_string()];
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+
+        let result = sync_locale_file_locked_with_fs(
+            Path::new("locales/en/translation.json"),
+            &keys,
+            "translation",
+            &config,
+            &matcher,
+            &fs,
+        )
+        .unwrap();
+
+        assert!(result.removed_keys.is_empty());
+
+        let files = fs.get_files();
+        let content = files
+            .get(Path::new("locales/en/translation.json"))
+            .expect("File should exist");
+        let parsed: Map<String, Value> = serde_json::from_str(content).unwrap();
+        assert_eq!(
+            parsed.get("dynamic"),
+            Some(&Value::String("value".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_sync_locale_with_json5_format() {
+        use crate::fs::mock::InMemoryFileSystem;
+        use std::path::Path;
+
+        let fs = InMemoryFileSystem::new();
+        fs.add_file("locales/en/translation.json5", "{ greeting: 'Hello' }");
+
+        let keys = vec![ExtractedKey {
+            key: "farewell".to_string(),
+            namespace: None,
+            default_value: Some("Goodbye".to_string()),
+        }];
+
+        let mut config = Config::default();
+        config.output_format = OutputFormat::Json5;
+        let matcher = PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+
+        let result = sync_locale_file_locked_with_fs(
+            Path::new("locales/en/translation.json5"),
+            &keys,
+            "translation",
+            &config,
+            &matcher,
+            &fs,
+        )
+        .unwrap();
+
+        assert_eq!(result.added_keys, vec!["farewell".to_string()]);
+
+        let files = fs.get_files();
+        let content = files
+            .get(Path::new("locales/en/translation.json5"))
+            .expect("File should exist");
+        assert!(content.contains("\"farewell\""));
+        assert!(content.ends_with('\n'));
     }
 }

@@ -27,6 +27,7 @@ pub fn run(config: &Config, remove: bool, dry_run: bool, locale: Option<String>)
     let plural_config = config.plural_config();
     let extraction = extractor::extract_from_glob_with_options(
         &config.input,
+        &config.ignore,
         &config.functions,
         config.extract_from_comments,
         &plural_config,

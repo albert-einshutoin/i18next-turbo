@@ -30,6 +30,7 @@ pub fn run(
     // Extract keys from files
     let extraction = extractor::extract_from_glob_with_options(
         &config.input,
+        &config.ignore,
         &config.functions,
         config.extract_from_comments,
         &plural_config,
@@ -89,6 +90,7 @@ pub fn run(
 
     // Report sync results
     let mut total_added = 0;
+    let mut total_removed = 0;
     let mut total_conflicts = 0;
     let mut all_conflicts: Vec<(String, KeyConflict)> = Vec::new();
 
@@ -102,6 +104,15 @@ pub fn run(
             total_added += result.added_keys.len();
         }
 
+        if !result.removed_keys.is_empty() {
+            println!(
+                "  {} - removed {} stale key(s)",
+                result.file_path,
+                result.removed_keys.len()
+            );
+            total_removed += result.removed_keys.len();
+        }
+
         // Collect conflicts for reporting
         if !result.conflicts.is_empty() {
             total_conflicts += result.conflicts.len();
@@ -113,6 +124,9 @@ pub fn run(
 
     if total_added == 0 {
         println!("  No new keys added (all keys already exist).");
+    }
+    if total_removed > 0 {
+        println!("  Removed stale keys: {}", total_removed);
     }
 
     // Report conflicts with user-friendly messages

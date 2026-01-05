@@ -1,8 +1,8 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 use std::path::Path;
 
-use crate::config::Config;
+use crate::config::{Config, OutputFormat};
 use crate::json_sync;
 
 pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
@@ -26,6 +26,8 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
     println!();
 
     let locales_path = Path::new(&config.output);
+    let extension = config.output_extension();
+    let output_format = config.output_format();
 
     // Read all namespaces from primary locale
     let primary_dir = locales_path.join(primary_locale);
@@ -45,7 +47,12 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|ext| ext == extension)
+            .unwrap_or(false)
+        {
             let namespace = path
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -56,21 +63,23 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
                 continue;
             }
 
-            let primary_json: Value = serde_json::from_str(&primary_content)?;
+            let primary_json = parse_locale_value(&primary_content, output_format)
+                .with_context(|| format!("Failed to parse primary file: {}", path.display()))?;
 
             // Sync to each secondary locale
             for secondary_locale in &secondary_locales {
                 let secondary_path = locales_path
                     .join(secondary_locale)
-                    .join(format!("{}.json", namespace));
+                    .join(format!("{}.{}", namespace, extension));
 
                 let mut secondary_json = if secondary_path.exists() {
                     let content = std::fs::read_to_string(&secondary_path)?;
-                    if content.trim().is_empty() {
-                        Value::Object(Map::new())
-                    } else {
-                        serde_json::from_str(&content)?
-                    }
+                    parse_locale_value(&content, output_format).with_context(|| {
+                        format!(
+                            "Failed to parse secondary file: {}",
+                            secondary_path.display()
+                        )
+                    })?
                 } else {
                     Value::Object(Map::new())
                 };
@@ -81,8 +90,8 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
 
                 if added > 0 || removed > 0 {
                     println!(
-                        "  {}/{}.json: +{} added, -{} removed",
-                        secondary_locale, namespace, added, removed
+                        "  {}/{}.{}: +{} added, -{} removed",
+                        secondary_locale, namespace, extension, added, removed
                     );
 
                     if !dry_run {
@@ -93,8 +102,12 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
                         // Sort and write
                         if let Some(obj) = secondary_json.as_object() {
                             let sorted = json_sync::sort_keys_alphabetically(obj);
-                            let output = serde_json::to_string_pretty(&sorted)?;
-                            std::fs::write(&secondary_path, format!("{}\n", output))?;
+                            json_sync::write_locale_file(
+                                &secondary_path,
+                                &sorted,
+                                output_format,
+                                None,
+                            )?;
                         }
                     }
 
@@ -186,5 +199,16 @@ fn count_leaf_keys(value: &Value) -> usize {
         Value::Object(obj) => obj.values().map(count_leaf_keys).sum(),
         Value::String(_) => 1,
         _ => 0,
+    }
+}
+
+fn parse_locale_value(content: &str, format: OutputFormat) -> Result<Value> {
+    if content.trim().is_empty() {
+        return Ok(Value::Object(Map::new()));
+    }
+
+    match format {
+        OutputFormat::Json => Ok(serde_json::from_str(content)?),
+        OutputFormat::Json5 => Ok(json5::from_str(content)?),
     }
 }
