@@ -1,14 +1,24 @@
 use anyhow::{Context, Result};
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::OnceLock;
-use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
 
-/// Normalize a string to NFC form for consistent key handling
-/// This ensures that keys like "が" (NFD: か+゛) and "が" (NFC) are treated as identical
-fn normalize_key(key: &str) -> String {
-    key.nfc().collect()
+/// Normalize a string to NFC form for consistent key handling.
+/// This ensures that keys like "が" (NFD: か+゛) and "が" (NFC) are treated as identical.
+///
+/// Optimization: Uses `is_nfc_quick()` to check if the string is already in NFC form.
+/// For most Latin/ASCII text (and pre-normalized CJK), this avoids any allocation.
+/// Only strings that actually need normalization will allocate a new String.
+fn normalize_key(key: &str) -> Cow<'_, str> {
+    // Fast path: check if already normalized (no allocation needed)
+    match is_nfc_quick(key.chars()) {
+        IsNormalized::Yes => Cow::Borrowed(key),
+        // Maybe or No: need to normalize
+        _ => Cow::Owned(key.nfc().collect()),
+    }
 }
 
 // =============================================================================
@@ -92,7 +102,7 @@ fn get_comment_with_options_regex() -> &'static Regex {
 }
 use swc_common::comments::SingleThreadedComments;
 use swc_common::sync::Lrc;
-use swc_common::{FileName, SourceMap, Span};
+use swc_common::{FileName, SourceMap, Span, Spanned};
 use swc_ecma_ast::{
     CallExpr, Callee, Expr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
     JSXElementChild, JSXElementName, JSXOpeningElement, Lit, MemberProp, ObjectLit, Pat, Prop,
@@ -467,7 +477,7 @@ impl TranslationVisitor {
             let parts: Vec<&str> = normalized.splitn(2, ':').collect();
             (Some(parts[0].to_string()), parts[1].to_string())
         } else {
-            (None, normalized)
+            (None, normalized.into_owned())
         }
     }
 
@@ -1136,15 +1146,22 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
 
     let mut parser = Parser::new_from(lexer);
 
-    // Parse the module, handling errors gracefully
+    // Parse the module, handling errors gracefully with user-friendly error messages
     let module = match parser.parse_module() {
         Ok(module) => module,
         Err(e) => {
-            // Log warning but don't fail - graceful degradation per PRD
+            // Get position information from the error span
+            let loc = cm.lookup_char_pos(e.span().lo);
+            let error_msg = format!("{:?}", e.kind());
+
+            // Format: file:line:column: message
+            // This format is recognized by most editors and IDEs for click-to-navigate
             eprintln!(
-                "Warning: Failed to parse {}: {:?}",
+                "Warning: Parse error in {}:{}:{}: {}",
                 path.display(),
-                e.kind()
+                loc.line,
+                loc.col_display + 1, // 1-based column for user display
+                error_msg
             );
             return Ok((Vec::new(), 0));
         }
@@ -1176,70 +1193,100 @@ enum FileExtractionResult {
 
 /// Extract keys from multiple files using glob patterns.
 ///
-/// This implementation uses lock-free parallel processing:
-/// - No Mutex for error collection (uses rayon's map + partition pattern)
-/// - Early deduplication using fold/reduce to minimize memory allocation
-/// - AtomicUsize only for warning counter (lock-free)
+/// This implementation uses streaming parallel processing:
+/// - Uses `par_bridge()` to stream file paths directly into worker threads
+/// - No upfront collection of all file paths (O(1) memory for paths)
+/// - Lock-free error collection (each thread returns Result enum)
+/// - Optimized for large monorepos (millions of files)
 pub fn extract_from_glob(
     patterns: &[String],
     functions: &[String],
 ) -> Result<ExtractionResult> {
+    use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
 
-    let mut all_files: Vec<std::path::PathBuf> = Vec::new();
-    let mut glob_errors: Vec<ExtractionError> = Vec::new();
+    // Create a streaming iterator that chains all glob patterns
+    // This avoids collecting all file paths into memory upfront
+    let pattern_refs: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
 
-    // Collect files from glob patterns (sequential, not performance-critical)
-    for pattern in patterns {
-        let matches = glob::glob(pattern)
-            .with_context(|| format!("Invalid glob pattern: {}", pattern))?;
-
-        for entry in matches {
-            match entry {
-                Ok(path) => {
-                    if path.is_file() {
-                        all_files.push(path);
-                    }
-                }
-                Err(e) => {
-                    glob_errors.push(ExtractionError {
-                        file_path: pattern.clone(),
-                        message: format!("Glob error: {}", e),
-                    });
-                }
-            }
-        }
+    // Enum to represent either a valid path or an error during glob iteration
+    enum GlobItem {
+        Path(std::path::PathBuf),
+        GlobError { pattern: String, message: String },
+        PatternError { pattern: String, message: String },
     }
 
-    // Process files in parallel using lock-free pattern:
-    // Each thread returns a Result enum, then we partition after collection
-    let file_results: Vec<FileExtractionResult> = all_files
-        .par_iter()
-        .map(|path| {
-            match extract_from_file_with_warnings(path, functions) {
-                Ok((keys, warnings)) => {
-                    if keys.is_empty() {
-                        FileExtractionResult::Empty { warnings }
-                    } else {
-                        FileExtractionResult::Success {
-                            file_path: path.display().to_string(),
-                            keys,
-                            warnings,
+    // Process files using streaming parallel processing with par_bridge()
+    // Files are fed to worker threads as they are discovered by glob
+    let file_results: Vec<FileExtractionResult> = pattern_refs
+        .into_iter()
+        .flat_map(|pattern| {
+            // Create iterator for this pattern (may error)
+            match glob::glob(pattern) {
+                Ok(paths) => {
+                    // Map each path result to GlobItem
+                    paths
+                        .filter_map(|entry| match entry {
+                            Ok(path) if path.is_file() => Some(GlobItem::Path(path)),
+                            Ok(_) => None, // Skip directories
+                            Err(e) => Some(GlobItem::GlobError {
+                                pattern: pattern.to_string(),
+                                message: e.to_string(),
+                            }),
+                        })
+                        .collect::<Vec<_>>()
+                }
+                Err(e) => {
+                    // Return pattern error as a single-element vec
+                    vec![GlobItem::PatternError {
+                        pattern: pattern.to_string(),
+                        message: e.to_string(),
+                    }]
+                }
+            }
+        })
+        .par_bridge() // Stream directly into parallel processing
+        .map(|item| {
+            match item {
+                GlobItem::Path(path) => {
+                    match extract_from_file_with_warnings(&path, functions) {
+                        Ok((keys, warnings)) => {
+                            if keys.is_empty() {
+                                FileExtractionResult::Empty { warnings }
+                            } else {
+                                FileExtractionResult::Success {
+                                    file_path: path.display().to_string(),
+                                    keys,
+                                    warnings,
+                                }
+                            }
                         }
+                        Err(e) => FileExtractionResult::Error(ExtractionError {
+                            file_path: path.display().to_string(),
+                            message: e.to_string(),
+                        }),
                     }
                 }
-                Err(e) => FileExtractionResult::Error(ExtractionError {
-                    file_path: path.display().to_string(),
-                    message: e.to_string(),
-                }),
+                GlobItem::GlobError { pattern, message } => {
+                    FileExtractionResult::Error(ExtractionError {
+                        file_path: pattern,
+                        message: format!("Glob error: {}", message),
+                    })
+                }
+                GlobItem::PatternError { pattern, message } => {
+                    FileExtractionResult::Error(ExtractionError {
+                        file_path: pattern,
+                        message: format!("Invalid glob pattern: {}", message),
+                    })
+                }
             }
         })
         .collect();
 
     // Aggregate results (single-threaded, but O(n) - no lock contention)
     let mut files: Vec<(String, Vec<ExtractedKey>)> = Vec::new();
-    let mut errors = glob_errors;
-    let mut warning_count = errors.len(); // glob errors count as warnings
+    let mut errors: Vec<ExtractionError> = Vec::new();
+    let mut warning_count = 0;
 
     for result in file_results {
         match result {

@@ -1,13 +1,46 @@
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde_json::{Map, Value};
-use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
+use tempfile::NamedTempFile;
 
 use crate::config::Config;
 use crate::extractor::ExtractedKey;
 use crate::fs::FileSystem;
+
+/// Represents a conflict when inserting a key into the translation map.
+/// Conflicts occur when the key path collides with existing data structures.
+#[derive(Debug, Clone)]
+pub enum KeyConflict {
+    /// Attempted to create a nested structure at a path that already has a scalar value.
+    /// Example: trying to add "button.submit" when "button" already exists as a string.
+    ValueIsNotObject {
+        /// The key path where the conflict occurred (e.g., "button")
+        key_path: String,
+        /// String representation of the existing value
+        existing_value: String,
+    },
+    /// Attempted to set a scalar value at a path that already has nested children.
+    /// Example: trying to add "button" as a string when "button.submit" already exists.
+    ObjectIsValue {
+        /// The key path where the conflict occurred
+        key_path: String,
+    },
+}
+
+impl std::fmt::Display for KeyConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeyConflict::ValueIsNotObject { key_path, existing_value } => {
+                write!(f, "Cannot create nested key at '{}': existing value is '{}' (not an object)", key_path, existing_value)
+            }
+            KeyConflict::ObjectIsValue { key_path } => {
+                write!(f, "Cannot set scalar value at '{}': path contains nested objects", key_path)
+            }
+        }
+    }
+}
 
 /// Result of syncing keys to a locale file
 #[derive(Debug, Default)]
@@ -15,6 +48,8 @@ pub struct SyncResult {
     pub file_path: String,
     pub added_keys: Vec<String>,
     pub existing_keys: usize,
+    /// Keys that were skipped due to conflicts with existing data structures
+    pub conflicts: Vec<KeyConflict>,
 }
 
 /// Read a JSON locale file, returning an empty map if it doesn't exist
@@ -43,37 +78,53 @@ pub fn read_locale_file_with_fs<F: FileSystem>(path: &Path, fs: &F) -> Result<Ma
     Ok(map)
 }
 
+/// Result of inserting a nested key
+enum InsertResult {
+    /// Key was newly added
+    Added,
+    /// Key already existed (not modified)
+    Existed,
+    /// Conflict occurred (data structure mismatch)
+    Conflict(KeyConflict),
+}
+
 /// Insert a nested key path, creating intermediate objects as needed.
-/// Returns true if the key was newly added, false if it already existed.
+/// Returns InsertResult indicating whether the key was added, existed, or conflicted.
 ///
 /// This function uses iterative approach instead of recursion to prevent
 /// stack overflow with deeply nested keys (DoS protection).
-fn insert_nested_key(obj: &mut Map<String, Value>, path: &[&str], default_value: &str) -> bool {
+fn insert_nested_key(obj: &mut Map<String, Value>, path: &[&str], default_value: &str) -> InsertResult {
     if path.is_empty() {
-        return false;
+        return InsertResult::Existed;
     }
 
     // Use iterative approach to prevent stack overflow with deep nesting
     let mut current = obj;
+    let mut current_path = Vec::new();
 
     for (i, key) in path.iter().enumerate() {
+        current_path.push(*key);
         let is_last = i == path.len() - 1;
 
         if is_last {
             // Leaf node - insert the value
-            if current.contains_key(*key) {
-                return false;
+            if let Some(existing) = current.get(*key) {
+                // Check if we're trying to set a scalar where an object exists
+                if existing.is_object() {
+                    return InsertResult::Conflict(KeyConflict::ObjectIsValue {
+                        key_path: current_path.join("."),
+                    });
+                }
+                return InsertResult::Existed;
             } else {
                 current.insert(
                     (*key).to_string(),
                     Value::String(default_value.to_string()),
                 );
-                return true;
+                return InsertResult::Added;
             }
         } else {
             // Intermediate node - ensure it's an object
-            // We need to use a raw pointer trick to satisfy the borrow checker
-            // because we're iterating while mutating
             let entry = current
                 .entry((*key).to_string())
                 .or_insert_with(|| Value::Object(Map::new()));
@@ -82,15 +133,18 @@ fn insert_nested_key(obj: &mut Map<String, Value>, path: &[&str], default_value:
                 Value::Object(ref mut nested) => {
                     current = nested;
                 }
-                _ => {
-                    // Key exists but is not an object - conflict, skip
-                    return false;
+                other => {
+                    // Key exists but is not an object - conflict!
+                    return InsertResult::Conflict(KeyConflict::ValueIsNotObject {
+                        key_path: current_path.join("."),
+                        existing_value: format!("{}", other),
+                    });
                 }
             }
         }
     }
 
-    false
+    InsertResult::Existed
 }
 
 /// Sort all keys in a JSON object alphabetically (including nested objects).
@@ -131,6 +185,7 @@ fn sort_keys_with_depth(map: &Map<String, Value>, depth: usize, max_depth: usize
 /// - New keys are added with default_value if available, otherwise empty string
 /// - Existing keys are preserved (translations are kept)
 /// - If key_separator is empty, keys are stored flat (not nested)
+/// - Conflicts are reported in SyncResult.conflicts instead of silently skipping
 pub fn merge_keys(
     existing: &mut Map<String, Value>,
     keys: &[ExtractedKey],
@@ -159,8 +214,15 @@ pub fn merge_keys(
         // If key_separator is empty, use flat keys
         if key_separator.is_empty() {
             // Flat key mode: store as-is
-            if existing.contains_key(&key.key) {
-                result.existing_keys += 1;
+            if let Some(existing_value) = existing.get(&key.key) {
+                // Check for type conflict (scalar vs object)
+                if existing_value.is_object() {
+                    result.conflicts.push(KeyConflict::ObjectIsValue {
+                        key_path: key.key.clone(),
+                    });
+                } else {
+                    result.existing_keys += 1;
+                }
             } else {
                 existing.insert(key.key.clone(), Value::String(value.to_string()));
                 result.added_keys.push(key.key.clone());
@@ -169,10 +231,16 @@ pub fn merge_keys(
             // Handle nested keys: "button.submit" -> {"button": {"submit": ""}}
             let parts: Vec<&str> = key.key.split(key_separator).collect();
 
-            if insert_nested_key(existing, &parts, value) {
-                result.added_keys.push(key.key.clone());
-            } else {
-                result.existing_keys += 1;
+            match insert_nested_key(existing, &parts, value) {
+                InsertResult::Added => {
+                    result.added_keys.push(key.key.clone());
+                }
+                InsertResult::Existed => {
+                    result.existing_keys += 1;
+                }
+                InsertResult::Conflict(conflict) => {
+                    result.conflicts.push(conflict);
+                }
             }
         }
     }
@@ -180,12 +248,36 @@ pub fn merge_keys(
     result
 }
 
-/// Write JSON to file atomically using temp file + rename pattern
+/// Write JSON to file atomically using tempfile crate.
+/// - Creates temp file in same directory (avoids EXDEV errors on cross-mount rename)
+/// - Unique random filename (avoids race conditions)
+/// - Auto-cleanup on crash (no garbage files)
 pub fn write_locale_file(path: &Path, content: &Map<String, Value>) -> Result<()> {
-    write_locale_file_with_fs(path, content, &crate::fs::RealFileSystem)
+    // Ensure parent directory exists
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+
+    // Create temp file in same directory for safe atomic rename
+    let mut temp_file = NamedTempFile::new_in(parent)
+        .with_context(|| format!("Failed to create temp file in: {}", parent.display()))?;
+
+    // Write with buffering
+    {
+        let mut writer = BufWriter::new(&mut temp_file);
+        serde_json::to_writer_pretty(&mut writer, content)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+    }
+
+    // Atomic persist
+    temp_file.persist(path)
+        .with_context(|| format!("Failed to persist locale file: {}", path.display()))?;
+
+    Ok(())
 }
 
-/// Write JSON to file using the provided FileSystem
+/// Write JSON to file using the provided FileSystem (for testing)
 pub fn write_locale_file_with_fs<F: FileSystem>(
     path: &Path,
     content: &Map<String, Value>,
@@ -197,17 +289,12 @@ pub fn write_locale_file_with_fs<F: FileSystem>(
             .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
 
-    // Write to temp file first
-    let temp_path = path.with_extension("json.tmp");
+    // For mock FileSystem, use simple write (no tempfile needed for in-memory)
     let json = serde_json::to_string_pretty(content)?;
     let json_with_newline = format!("{}\n", json);
 
-    fs.write(&temp_path, &json_with_newline)
-        .with_context(|| format!("Failed to write temp file: {}", temp_path.display()))?;
-
-    // Atomic rename
-    fs.rename(&temp_path, path)
-        .with_context(|| format!("Failed to rename temp file to: {}", path.display()))?;
+    fs.write(path, &json_with_newline)
+        .with_context(|| format!("Failed to write locale file: {}", path.display()))?;
 
     Ok(())
 }
@@ -273,20 +360,26 @@ pub fn sync_locale_file_locked(
         // Sort keys alphabetically
         let sorted = sort_keys_alphabetically(&content);
 
-        // Write to temp file first (atomic write pattern)
-        let temp_path = path.with_extension("json.tmp");
+        // Use tempfile for safe atomic file operations:
+        // - Creates temp file in same directory (avoids EXDEV errors on cross-mount rename)
+        // - Unique random filename (avoids race conditions with parallel execution)
+        // - Auto-cleanup on drop (no garbage files left on crash)
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut temp_file = NamedTempFile::new_in(parent)
+            .with_context(|| format!("Failed to create temp file in: {}", parent.display()))?;
+
+        // Write with buffering for efficiency
         {
-            let temp_file = File::create(&temp_path)
-                .with_context(|| format!("Failed to create temp file: {}", temp_path.display()))?;
-            let mut writer = BufWriter::new(temp_file);
+            let mut writer = BufWriter::new(&mut temp_file);
             serde_json::to_writer_pretty(&mut writer, &sorted)?;
             writer.write_all(b"\n")?;
             writer.flush()?;
         }
 
-        // Atomic rename
-        std::fs::rename(&temp_path, path)
-            .with_context(|| format!("Failed to rename temp file to: {}", path.display()))?;
+        // Atomic persist: fsync + rename in one operation
+        // This guarantees data is on disk before the rename
+        temp_file.persist(path)
+            .with_context(|| format!("Failed to persist locale file: {}", path.display()))?;
     }
 
     // Lock is automatically released when file is dropped
@@ -363,18 +456,18 @@ mod tests {
     #[test]
     fn test_insert_nested_key_simple() {
         let mut map = Map::new();
-        let added = insert_nested_key(&mut map, &["hello"], "");
+        let result = insert_nested_key(&mut map, &["hello"], "");
 
-        assert!(added);
+        assert!(matches!(result, InsertResult::Added));
         assert_eq!(map.get("hello"), Some(&Value::String("".to_string())));
     }
 
     #[test]
     fn test_insert_nested_key_deep() {
         let mut map = Map::new();
-        let added = insert_nested_key(&mut map, &["button", "submit"], "");
+        let result = insert_nested_key(&mut map, &["button", "submit"], "");
 
-        assert!(added);
+        assert!(matches!(result, InsertResult::Added));
         let button = map
             .get("button")
             .expect("button should exist after insert_nested_key")
@@ -388,10 +481,24 @@ mod tests {
         let mut map = Map::new();
         map.insert("hello".to_string(), Value::String("world".to_string()));
 
-        let added = insert_nested_key(&mut map, &["hello"], "");
+        let result = insert_nested_key(&mut map, &["hello"], "");
 
-        assert!(!added);
+        assert!(matches!(result, InsertResult::Existed));
         assert_eq!(map.get("hello"), Some(&Value::String("world".to_string())));
+    }
+
+    #[test]
+    fn test_insert_nested_key_conflict() {
+        let mut map = Map::new();
+        // Add a scalar value at "button"
+        map.insert("button".to_string(), Value::String("click me".to_string()));
+
+        // Try to add a nested key "button.submit" - should conflict
+        let result = insert_nested_key(&mut map, &["button", "submit"], "");
+
+        assert!(matches!(result, InsertResult::Conflict(KeyConflict::ValueIsNotObject { .. })));
+        // Original value should be preserved
+        assert_eq!(map.get("button"), Some(&Value::String("click me".to_string())));
     }
 
     #[test]

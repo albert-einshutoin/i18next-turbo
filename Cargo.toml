@@ -23,6 +23,7 @@ glob = "0.3"
 walkdir = "2.4"
 notify-debouncer-mini = "0.4"  # For watch mode with debouncing
 fs2 = "0.4"  # Cross-platform file locking for data integrity
+tempfile = "3.10"  # Safe atomic file operations (avoids EXDEV errors on cross-mount)
 
 # Parallelism
 rayon = "1.8"
