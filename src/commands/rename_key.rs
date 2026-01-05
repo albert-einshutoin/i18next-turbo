@@ -96,9 +96,7 @@ pub fn run(
     let locales_path = std::path::Path::new(&config.output);
 
     for locale in &config.locales {
-        let ns_file = locales_path
-            .join(locale)
-            .join(format!("{}.json", old_ns));
+        let ns_file = locales_path.join(locale).join(format!("{}.json", old_ns));
 
         if !ns_file.exists() {
             continue;
@@ -130,9 +128,7 @@ pub fn run(
                 }
 
                 // Add to new namespace file
-                let new_ns_file = locales_path
-                    .join(locale)
-                    .join(format!("{}.json", new_ns));
+                let new_ns_file = locales_path.join(locale).join(format!("{}.json", new_ns));
 
                 let mut new_json = if new_ns_file.exists() {
                     let new_content = std::fs::read_to_string(&new_ns_file)?;

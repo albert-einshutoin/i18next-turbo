@@ -1,16 +1,12 @@
 use anyhow::Result;
+use std::io::{self, Write};
 use std::path::Path;
 
 use crate::cleanup;
 use crate::config::Config;
 use crate::extractor::{self, ExtractedKey};
 
-pub fn run(
-    config: &Config,
-    remove: bool,
-    dry_run: bool,
-    locale: Option<String>,
-) -> Result<()> {
+pub fn run(config: &Config, remove: bool, dry_run: bool, locale: Option<String>) -> Result<()> {
     println!("=== i18next-turbo check ===\n");
 
     // Determine locale to check
@@ -44,8 +40,12 @@ pub fn run(
     // Find dead keys
     println!("\nScanning for dead keys...");
     let locales_path = Path::new(&config.output);
-    let dead_keys =
-        cleanup::find_dead_keys(locales_path, &all_keys, &config.default_namespace, check_locale)?;
+    let dead_keys = cleanup::find_dead_keys(
+        locales_path,
+        &all_keys,
+        &config.default_namespace,
+        check_locale,
+    )?;
 
     if dead_keys.is_empty() {
         println!("\nNo dead keys found. All translation keys are in use!");
@@ -63,6 +63,10 @@ pub fn run(
 
     // Handle removal
     if remove && !dry_run {
+        if !confirm_removal(dead_keys.len()) {
+            println!("\nRemoval cancelled.");
+            return Ok(());
+        }
         println!("\nRemoving dead keys...");
         let removed = cleanup::purge_dead_keys(locales_path, &dead_keys)?;
         println!("  Removed {} key(s)", removed);
@@ -75,4 +79,20 @@ pub fn run(
     }
 
     Ok(())
+}
+
+fn confirm_removal(count: usize) -> bool {
+    println!(
+        "\nThis will permanently remove {} key(s) from your locale files.",
+        count
+    );
+    print!("Proceed? [y/N]: ");
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }

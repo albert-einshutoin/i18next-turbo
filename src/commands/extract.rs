@@ -115,14 +115,17 @@ pub fn run(
     // Report conflicts with user-friendly messages
     if !all_conflicts.is_empty() {
         eprintln!();
-        eprintln!("\x1b[33m⚠ Warning: {} key(s) were skipped due to conflicts:\x1b[0m", total_conflicts);
+        eprintln!(
+            "\x1b[33m⚠ Warning: {} key(s) were skipped due to conflicts:\x1b[0m",
+            total_conflicts
+        );
         for (file_path, conflict) in &all_conflicts {
             match conflict {
-                KeyConflict::ValueIsNotObject { key_path, existing_value } => {
-                    eprintln!(
-                        "  \x1b[31m✗\x1b[0m {} in {}",
-                        key_path, file_path
-                    );
+                KeyConflict::ValueIsNotObject {
+                    key_path,
+                    existing_value,
+                } => {
+                    eprintln!("  \x1b[31m✗\x1b[0m {} in {}", key_path, file_path);
                     eprintln!(
                         "    Cannot create nested key: '{}' already exists as scalar value: {}",
                         key_path.split('.').next().unwrap_or(key_path),
@@ -130,10 +133,7 @@ pub fn run(
                     );
                 }
                 KeyConflict::ObjectIsValue { key_path } => {
-                    eprintln!(
-                        "  \x1b[31m✗\x1b[0m {} in {}",
-                        key_path, file_path
-                    );
+                    eprintln!("  \x1b[31m✗\x1b[0m {} in {}", key_path, file_path);
                     eprintln!(
                         "    Cannot set scalar value: '{}' already exists as an object with nested keys",
                         key_path
@@ -142,17 +142,25 @@ pub fn run(
             }
         }
         eprintln!();
-        eprintln!("  \x1b[90mTo fix: manually update the conflicting keys in your locale files,\x1b[0m");
+        eprintln!(
+            "  \x1b[90mTo fix: manually update the conflicting keys in your locale files,\x1b[0m"
+        );
         eprintln!("  \x1b[90mor rename the keys in your source code to avoid collision.\x1b[0m");
     }
 
     // Generate TypeScript types if requested
     if generate_types {
         println!("\nGenerating TypeScript types...");
-        let locales_dir = std::path::Path::new(output_dir);
+        let locales_dir_override = config
+            .types_locales_dir()
+            .unwrap_or_else(|| output_dir.to_string());
+        let locales_dir_path = std::path::Path::new(&locales_dir_override);
         let types_path = std::path::Path::new(types_output);
-        let default_locale = config.locales.first().map(|s| s.as_str()).unwrap_or("en");
-        typegen::generate_types(locales_dir, types_path, default_locale)?;
+        let default_locale_owned = config
+            .types_default_locale()
+            .or_else(|| config.locales.first().cloned())
+            .unwrap_or_else(|| "en".to_string());
+        typegen::generate_types(locales_dir_path, types_path, &default_locale_owned)?;
         println!("  Generated: {}", types_output);
     }
 

@@ -68,7 +68,14 @@ pub fn find_dead_keys(
 
             if let Value::Object(obj) = json {
                 let file_path = path.display().to_string();
-                find_dead_keys_in_object(&obj, &namespace, "", &extracted_set, &file_path, &mut dead_keys);
+                find_dead_keys_in_object(
+                    &obj,
+                    &namespace,
+                    "",
+                    &extracted_set,
+                    &file_path,
+                    &mut dead_keys,
+                );
             }
         }
     }
@@ -95,7 +102,14 @@ fn find_dead_keys_in_object(
         match value {
             Value::Object(nested) => {
                 // Recurse into nested objects
-                find_dead_keys_in_object(nested, namespace, &key_path, extracted_set, file_path, dead_keys);
+                find_dead_keys_in_object(
+                    nested,
+                    namespace,
+                    &key_path,
+                    extracted_set,
+                    file_path,
+                    dead_keys,
+                );
             }
             Value::String(_) => {
                 // Check if this leaf key exists in extracted keys
@@ -114,10 +128,7 @@ fn find_dead_keys_in_object(
 }
 
 /// Remove dead keys from locale files (purge mode)
-pub fn purge_dead_keys(
-    _locales_dir: &Path,
-    dead_keys: &[DeadKey],
-) -> Result<usize> {
+pub fn purge_dead_keys(_locales_dir: &Path, dead_keys: &[DeadKey]) -> Result<usize> {
     use std::collections::HashMap;
 
     // Group dead keys by file

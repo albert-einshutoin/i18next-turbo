@@ -171,11 +171,7 @@ fn extract_comment_string_option(text: &str, key: &str) -> Option<String> {
         r#"(?s)(?:^|[^a-zA-Z0-9_])["']?{}["']?\s*:\s*"#,
         regex::escape(key)
     );
-    let variants = [
-        ("'", "[^']+"),
-        ("\"", "[^\"]+"),
-        ("`", "[^`]+"),
-    ];
+    let variants = [("'", "[^']+"), ("\"", "[^\"]+"), ("`", "[^`]+")];
 
     for (quote, inner) in &variants {
         let pattern = format!("{}{}({}){}", base, quote, inner, quote);
@@ -555,7 +551,10 @@ impl TranslationVisitor {
                 let key = key_match.as_str();
                 let (namespace, base_key) = self.parse_key_with_namespace(key);
                 // Avoid duplicates
-                if !keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                if !keys
+                    .iter()
+                    .any(|k| k.key == base_key && k.namespace == namespace)
+                {
                     keys.push(ExtractedKey {
                         key: base_key,
                         namespace,
@@ -950,7 +949,9 @@ impl TranslationVisitor {
             if let Some(key_match) = cap.get(1) {
                 let key = key_match.as_str();
                 if let Some(object_match) = cap.get(2) {
-                    if let Some((options_text, _)) = extract_braced_block(text, object_match.start()) {
+                    if let Some((options_text, _)) =
+                        extract_braced_block(text, object_match.start())
+                    {
                         let CommentOptionsData {
                             default_value,
                             namespace: namespace_override,
@@ -996,7 +997,11 @@ impl TranslationVisitor {
                 let key = key_match.as_str();
                 // Check if already captured by options pattern
                 let (namespace, base_key) = self.parse_key_with_namespace(key);
-                if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                if !self
+                    .keys
+                    .iter()
+                    .any(|k| k.key == base_key && k.namespace == namespace)
+                {
                     let default_value = cap.get(2).map(|m| m.as_str().to_string());
                     self.keys.push(ExtractedKey {
                         key: base_key,
@@ -1013,7 +1018,11 @@ impl TranslationVisitor {
                 let key = key_match.as_str();
                 let (namespace, base_key) = self.parse_key_with_namespace(key);
                 // Check if already captured
-                if !self.keys.iter().any(|k| k.key == base_key && k.namespace == namespace) {
+                if !self
+                    .keys
+                    .iter()
+                    .any(|k| k.key == base_key && k.namespace == namespace)
+                {
                     self.keys.push(ExtractedKey {
                         key: base_key,
                         namespace,
@@ -1263,12 +1272,8 @@ pub fn extract_from_source_with_options<P: AsRef<Path>>(
     functions: &[String],
     extract_from_comments: bool,
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) = extract_from_source_with_warnings(
-        source,
-        path,
-        functions,
-        extract_from_comments,
-    )?;
+    let (keys, _) =
+        extract_from_source_with_warnings(source, path, functions, extract_from_comments)?;
     Ok(keys)
 }
 
@@ -1281,7 +1286,10 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
 
-    let fm = cm.new_source_file(FileName::Real(path.to_path_buf()).into(), source.to_string());
+    let fm = cm.new_source_file(
+        FileName::Real(path.to_path_buf()).into(),
+        source.to_string(),
+    );
 
     // Determine syntax based on file extension
     let is_tsx = path
@@ -1361,10 +1369,7 @@ enum FileExtractionResult {
 /// - No upfront collection of all file paths (O(1) memory for paths)
 /// - Lock-free error collection (each thread returns Result enum)
 /// - Optimized for large monorepos (millions of files)
-pub fn extract_from_glob(
-    patterns: &[String],
-    functions: &[String],
-) -> Result<ExtractionResult> {
+pub fn extract_from_glob(patterns: &[String], functions: &[String]) -> Result<ExtractionResult> {
     extract_from_glob_with_options(patterns, functions, true)
 }
 
@@ -1418,39 +1423,37 @@ pub fn extract_from_glob_with_options(
             }
         })
         .par_bridge() // Stream directly into parallel processing
-        .map(|item| {
-            match item {
-                GlobItem::Path(path) => {
-                    match extract_from_file_with_warnings(&path, functions, extract_from_comments) {
-                        Ok((keys, warnings)) => {
-                            if keys.is_empty() {
-                                FileExtractionResult::Empty { warnings }
-                            } else {
-                                FileExtractionResult::Success {
-                                    file_path: path.display().to_string(),
-                                    keys,
-                                    warnings,
-                                }
+        .map(|item| match item {
+            GlobItem::Path(path) => {
+                match extract_from_file_with_warnings(&path, functions, extract_from_comments) {
+                    Ok((keys, warnings)) => {
+                        if keys.is_empty() {
+                            FileExtractionResult::Empty { warnings }
+                        } else {
+                            FileExtractionResult::Success {
+                                file_path: path.display().to_string(),
+                                keys,
+                                warnings,
                             }
                         }
-                        Err(e) => FileExtractionResult::Error(ExtractionError {
-                            file_path: path.display().to_string(),
-                            message: e.to_string(),
-                        }),
                     }
+                    Err(e) => FileExtractionResult::Error(ExtractionError {
+                        file_path: path.display().to_string(),
+                        message: e.to_string(),
+                    }),
                 }
-                GlobItem::GlobError { pattern, message } => {
-                    FileExtractionResult::Error(ExtractionError {
-                        file_path: pattern,
-                        message: format!("Glob error: {}", message),
-                    })
-                }
-                GlobItem::PatternError { pattern, message } => {
-                    FileExtractionResult::Error(ExtractionError {
-                        file_path: pattern,
-                        message: format!("Invalid glob pattern: {}", message),
-                    })
-                }
+            }
+            GlobItem::GlobError { pattern, message } => {
+                FileExtractionResult::Error(ExtractionError {
+                    file_path: pattern,
+                    message: format!("Glob error: {}", message),
+                })
+            }
+            GlobItem::PatternError { pattern, message } => {
+                FileExtractionResult::Error(ExtractionError {
+                    file_path: pattern,
+                    message: format!("Invalid glob pattern: {}", message),
+                })
             }
         })
         .collect();
@@ -1510,8 +1513,8 @@ pub fn extract_from_glob_deduplicated_with_options(
     let mut glob_errors: Vec<ExtractionError> = Vec::new();
 
     for pattern in patterns {
-        let matches = glob::glob(pattern)
-            .with_context(|| format!("Invalid glob pattern: {}", pattern))?;
+        let matches =
+            glob::glob(pattern).with_context(|| format!("Invalid glob pattern: {}", pattern))?;
 
         for entry in matches {
             match entry {
@@ -1588,8 +1591,7 @@ mod tests {
             const text = t('hello.world');
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "hello.world");
@@ -1602,8 +1604,7 @@ mod tests {
             const text = i18n.t('greeting');
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["i18n.t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["i18n.t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
@@ -1615,8 +1616,7 @@ mod tests {
             const text = t('common:button.submit');
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "button.submit");
@@ -1631,12 +1631,8 @@ mod tests {
             const c = i18n.t('key3');
         "#;
 
-        let keys = extract_from_source(
-            source,
-            "test.ts",
-            &["t".to_string(), "i18n.t".to_string()],
-        )
-        .unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string(), "i18n.t".to_string()])
+            .unwrap();
 
         assert_eq!(keys.len(), 3);
     }
@@ -1649,8 +1645,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "jsx.key");
@@ -1664,8 +1659,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "hello");
@@ -1679,8 +1673,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
@@ -1695,8 +1688,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "welcome");
@@ -1709,8 +1701,7 @@ mod tests {
             const text = t('apple', { count: 5 });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "apple_one"));
@@ -1724,8 +1715,7 @@ mod tests {
             const text = t('item', { count });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "item_one"));
@@ -1738,8 +1728,7 @@ mod tests {
             const text = t('friend', { context: 'male' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "friend_male");
@@ -1751,8 +1740,7 @@ mod tests {
             const text = t('friend', { count: 2, context: 'female' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "friend_female_one"));
@@ -1765,8 +1753,7 @@ mod tests {
             const text = t(`hello.world`);
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "hello.world");
@@ -1778,8 +1765,7 @@ mod tests {
             const text = t(`common:button.save`);
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "button.save");
@@ -1793,8 +1779,7 @@ mod tests {
             const text = t(`hello.${key}`);
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         // Template literals with interpolations should be skipped
         assert_eq!(keys.len(), 0);
@@ -1807,14 +1792,13 @@ mod tests {
             const text = t(`key_${id}`);
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         // Dynamic template literals should be skipped (no keys extracted)
         assert_eq!(keys.len(), 0);
-        
+
         // Note: The warning is printed to stderr via eprintln! in warn_dynamic_template_literal.
-        // The warning format is: "Warning: Dynamic template literal found at test.ts:3:XX. 
+        // The warning format is: "Warning: Dynamic template literal found at test.ts:3:XX.
         // Translation key extraction skipped. Consider using i18next-extract-disable-line if intentional."
         // This is verified by manual testing and code review.
     }
@@ -1827,8 +1811,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "Hello World");
@@ -1843,8 +1826,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert!(keys[0].key.contains("Hello"));
@@ -1859,8 +1841,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
@@ -1875,8 +1856,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "item_one"));
@@ -1891,12 +1871,15 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
-        assert!(keys.iter().any(|k| k.key == "product_one" && k.namespace == Some("shop".to_string())));
-        assert!(keys.iter().any(|k| k.key == "product_other" && k.namespace == Some("shop".to_string())));
+        assert!(keys
+            .iter()
+            .any(|k| k.key == "product_one" && k.namespace == Some("shop".to_string())));
+        assert!(keys
+            .iter()
+            .any(|k| k.key == "product_other" && k.namespace == Some("shop".to_string())));
     }
 
     #[test]
@@ -1907,8 +1890,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "friend_male");
@@ -1922,8 +1904,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "friend_female_one"));
@@ -1938,8 +1919,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "user_admin");
@@ -1955,8 +1935,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
@@ -1972,8 +1951,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "user.name");
@@ -1989,8 +1967,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "settings.theme");
@@ -2005,8 +1982,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "hello");
@@ -2022,8 +1998,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["translate".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["translate".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "world");
@@ -2037,8 +2012,7 @@ mod tests {
             const text = t('greeting');
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
@@ -2052,8 +2026,7 @@ mod tests {
             const text = t('name');
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "user.profile.name");
@@ -2066,8 +2039,7 @@ mod tests {
             const text = t('greeting', { defaultValue: 'Hello World!' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
@@ -2080,8 +2052,7 @@ mod tests {
             const text = t('common:welcome', { defaultValue: 'Welcome back!' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "welcome");
@@ -2095,12 +2066,17 @@ mod tests {
             const text = t('item', { count: 5, defaultValue: '{{count}} items' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
-        assert!(keys.iter().any(|k| k.key == "item_one" && k.default_value == Some("{{count}} items".to_string())));
-        assert!(keys.iter().any(|k| k.key == "item_other" && k.default_value == Some("{{count}} items".to_string())));
+        assert!(
+            keys.iter()
+                .any(|k| k.key == "item_one"
+                    && k.default_value == Some("{{count}} items".to_string()))
+        );
+        assert!(keys.iter().any(
+            |k| k.key == "item_other" && k.default_value == Some("{{count}} items".to_string())
+        ));
     }
 
     #[test]
@@ -2110,8 +2086,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "comment.key");
@@ -2124,8 +2099,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "block.key");
@@ -2138,8 +2112,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
@@ -2153,8 +2126,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "message");
@@ -2168,8 +2140,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "nav.home");
@@ -2183,8 +2154,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "notification_one"));
@@ -2198,8 +2168,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting_formal");
@@ -2212,8 +2181,7 @@ mod tests {
             const x = 1;
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "button.save");
@@ -2226,8 +2194,7 @@ mod tests {
             const text = t('greeting', { defaultValue: 'Hello $t(world)!' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "greeting"));
@@ -2240,12 +2207,13 @@ mod tests {
             const text = t('message', { defaultValue: 'See $t(common:link)' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "message"));
-        assert!(keys.iter().any(|k| k.key == "link" && k.namespace == Some("common".to_string())));
+        assert!(keys
+            .iter()
+            .any(|k| k.key == "link" && k.namespace == Some("common".to_string())));
     }
 
     #[test]
@@ -2254,8 +2222,7 @@ mod tests {
             const text = t('full', { defaultValue: '$t(hello), $t(world)!' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 3);
         assert!(keys.iter().any(|k| k.key == "full"));
@@ -2269,8 +2236,7 @@ mod tests {
             const text = t('count_msg', { defaultValue: 'You have $t(item, { count: {{count}} })' });
         "#;
 
-        let keys =
-            extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "count_msg"));
@@ -2285,8 +2251,7 @@ mod tests {
             }
         "#;
 
-        let keys =
-            extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
 
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "greeting"));
@@ -2323,6 +2288,7 @@ mod tests {
         assert!(get_comment_with_default_regex().is_match("t(\"key\", \"default\")"));
 
         assert!(get_comment_with_options_regex().is_match("t('key', { defaultValue: 'value' })"));
-        assert!(get_comment_with_options_regex().is_match("t('key', { other: 1, defaultValue: 'value' })"));
+        assert!(get_comment_with_options_regex()
+            .is_match("t('key', { other: 1, defaultValue: 'value' })"));
     }
 }

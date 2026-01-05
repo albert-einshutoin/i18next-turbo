@@ -4,8 +4,8 @@ use std::path::Path;
 use swc_common::sync::Lrc;
 use swc_common::{FileName, SourceMap, Span};
 use swc_ecma_ast::{
-    JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild,
-    JSXElementName, JSXText,
+    JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement, JSXElementChild, JSXElementName,
+    JSXText,
 };
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{Visit, VisitWith};
@@ -100,8 +100,16 @@ impl LintVisitor {
 
         // Skip common non-translatable patterns
         let skip_patterns = [
-            "className", "onClick", "onChange", "onSubmit",
-            "px", "em", "rem", "%", "vh", "vw",
+            "className",
+            "onClick",
+            "onChange",
+            "onSubmit",
+            "px",
+            "em",
+            "rem",
+            "%",
+            "vh",
+            "vw",
         ];
         if skip_patterns.iter().any(|p| trimmed == *p) {
             return false;
@@ -122,7 +130,8 @@ impl Visit for LintVisitor {
 
         // Check if this is an ignored tag
         let is_ignored = if let JSXElementName::Ident(ident) = &elem.opening.name {
-            self.ignored_tags.contains(&ident.sym.to_string().to_lowercase())
+            self.ignored_tags
+                .contains(&ident.sym.to_string().to_lowercase())
         } else {
             false
         };
@@ -212,7 +221,10 @@ pub fn lint_source<P: AsRef<Path>>(source: &str, path: P) -> Result<Vec<LintIssu
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
 
-    let fm = cm.new_source_file(FileName::Real(path.to_path_buf()).into(), source.to_string());
+    let fm = cm.new_source_file(
+        FileName::Real(path.to_path_buf()).into(),
+        source.to_string(),
+    );
 
     // Determine syntax based on file extension
     let is_tsx = path
@@ -258,8 +270,8 @@ pub fn lint_from_glob(patterns: &[String]) -> Result<LintResult> {
     let mut result = LintResult::default();
 
     for pattern in patterns {
-        let matches = glob::glob(pattern)
-            .with_context(|| format!("Invalid glob pattern: {}", pattern))?;
+        let matches =
+            glob::glob(pattern).with_context(|| format!("Invalid glob pattern: {}", pattern))?;
 
         for entry in matches {
             match entry {

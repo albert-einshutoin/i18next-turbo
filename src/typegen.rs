@@ -5,11 +5,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 /// Generate TypeScript type definitions from translation JSON files
-pub fn generate_types(
-    locales_dir: &Path,
-    output_path: &Path,
-    default_locale: &str,
-) -> Result<()> {
+pub fn generate_types(locales_dir: &Path, output_path: &Path, default_locale: &str) -> Result<()> {
     let mut resources: Map<String, Value> = Map::new();
 
     // Read the default locale's translation files

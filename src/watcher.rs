@@ -34,8 +34,8 @@ impl FileWatcher {
         let (tx, rx) = channel();
 
         // Create debouncer
-        let mut debouncer = new_debouncer(self.debounce_duration, tx)
-            .context("Failed to create file watcher")?;
+        let mut debouncer =
+            new_debouncer(self.debounce_duration, tx).context("Failed to create file watcher")?;
 
         // Compute directories to watch from glob patterns
         let watch_dirs = self.compute_watch_dirs();

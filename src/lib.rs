@@ -104,10 +104,7 @@ pub struct DeadKeyInfo {
 /// Returns extraction results directly as a JavaScript object (zero-copy)
 #[napi]
 #[cfg(feature = "napi")]
-pub fn extract(
-    config: NapiConfig,
-    options: Option<ExtractOptions>,
-) -> Result<ExtractResult> {
+pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<ExtractResult> {
     let config: Config = Config::from_napi(config)
         .map_err(|e| napi::Error::from_reason(format!("Config validation failed: {}", e)))?;
 
@@ -124,8 +121,9 @@ pub fn extract(
     let types_output = options
         .as_ref()
         .and_then(|o| o.types_output.as_ref())
-        .map(|s| s.as_str())
-        .unwrap_or("src/@types/i18next.d.ts");
+        .map(|s| s.to_string())
+        .or_else(|| config.types.output.clone())
+        .unwrap_or_else(|| Config::default_types_output());
 
     // Determine output directory
     let output_dir = output.unwrap_or(&config.output);
@@ -136,7 +134,7 @@ pub fn extract(
         &config.functions,
         config.extract_from_comments,
     )
-        .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
+    .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
     if extraction.files.is_empty() {
         if fail_on_warnings && extraction.warning_count > 0 {
@@ -187,9 +185,15 @@ pub fn extract(
 
     // Generate TypeScript types if requested
     if generate_types {
-        let locales_dir = std::path::Path::new(output_dir);
-        let types_path = std::path::Path::new(types_output);
-        let default_locale = config.locales.first().map(|s| s.as_str()).unwrap_or("en");
+        let locales_dir = config.types.locales_dir.as_deref().unwrap_or(output_dir);
+        let locales_dir = std::path::Path::new(locales_dir);
+        let types_path = std::path::Path::new(&types_output);
+        let default_locale = config
+            .types
+            .default_locale
+            .as_deref()
+            .or_else(|| config.locales.first().map(|s| s.as_str()))
+            .unwrap_or("en");
         crate::typegen::generate_types(locales_dir, types_path, default_locale)
             .map_err(|e| napi::Error::from_reason(format!("Type generation failed: {}", e)))?;
     }
@@ -233,9 +237,10 @@ pub fn watch(config: NapiConfig, options: Option<WatchOptions>) -> Result<()> {
 
     // Create watcher
     let mut watcher = crate::watcher::FileWatcher::new(config, output.cloned());
-    
+
     // Run watcher (this blocks)
-    watcher.run()
+    watcher
+        .run()
         .map_err(|e| napi::Error::from_reason(format!("Watch failed: {}", e)))?;
 
     Ok(())
@@ -340,7 +345,7 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
         &config.functions,
         config.extract_from_comments,
     )
-        .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
+    .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
     let mut all_keys: Vec<ExtractedKey> = Vec::new();
     for (_file_path, keys) in &extraction.files {
@@ -348,13 +353,9 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
     }
 
     let locales_path = std::path::Path::new(&config.output);
-    let dead_keys = cleanup_mod::find_dead_keys(
-        locales_path,
-        &all_keys,
-        &config.default_namespace,
-        locale,
-    )
-    .map_err(|e| napi::Error::from_reason(format!("Check failed: {}", e)))?;
+    let dead_keys =
+        cleanup_mod::find_dead_keys(locales_path, &all_keys, &config.default_namespace, locale)
+            .map_err(|e| napi::Error::from_reason(format!("Check failed: {}", e)))?;
 
     let mut removed_count = 0usize;
     if remove && !dry_run && !dead_keys.is_empty() {

@@ -56,6 +56,18 @@ pub struct Config {
     /// Default: true
     #[serde(default = "default_extract_from_comments")]
     pub extract_from_comments: bool,
+
+    /// Type generation configuration
+    #[serde(default)]
+    pub types: TypesConfig,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TypesConfig {
+    pub output: Option<String>,
+    pub default_locale: Option<String>,
+    pub locales_dir: Option<String>,
 }
 
 #[cfg(feature = "napi")]
@@ -76,6 +88,7 @@ pub struct NapiConfig {
     pub pluralSeparator: Option<String>,
     pub pluralSuffixes: Option<Vec<String>>,
     pub extractFromComments: Option<bool>,
+    pub types: Option<NapiTypesConfig>,
 }
 
 fn default_input() -> Vec<String> {
@@ -122,6 +135,10 @@ fn default_extract_from_comments() -> bool {
     true
 }
 
+fn default_types_output() -> String {
+    "src/@types/i18next.d.ts".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -136,6 +153,7 @@ impl Default for Config {
             plural_separator: default_plural_separator(),
             plural_suffixes: default_plural_suffixes(),
             extract_from_comments: default_extract_from_comments(),
+            types: TypesConfig::default(),
         }
     }
 }
@@ -226,6 +244,12 @@ impl Config {
             );
         }
 
+        if let Some(output) = &self.types.output {
+            if output.trim().is_empty() {
+                bail!("Configuration error: 'types.output' must be a non-empty string when specified.");
+            }
+        }
+
         Ok(())
     }
 
@@ -244,8 +268,8 @@ impl Config {
 
     /// Load configuration from a JSON string
     pub fn from_json_string(json_str: &str) -> Result<Self> {
-        let config: Config = serde_json::from_str(json_str)
-            .with_context(|| "Failed to parse config JSON string")?;
+        let config: Config =
+            serde_json::from_str(json_str).with_context(|| "Failed to parse config JSON string")?;
         config.validate()?;
         Ok(config)
     }
@@ -282,17 +306,72 @@ impl Config {
             context_separator: config
                 .contextSeparator
                 .unwrap_or(defaults.context_separator),
-            plural_separator: config
-                .pluralSeparator
-                .unwrap_or(defaults.plural_separator),
-            plural_suffixes: config
-                .pluralSuffixes
-                .unwrap_or(defaults.plural_suffixes),
+            plural_separator: config.pluralSeparator.unwrap_or(defaults.plural_separator),
+            plural_suffixes: config.pluralSuffixes.unwrap_or(defaults.plural_suffixes),
             extract_from_comments: config
                 .extractFromComments
                 .unwrap_or(defaults.extract_from_comments),
+            types: config.types.map(TypesConfig::from).unwrap_or_default(),
         };
         config.validate()?;
         Ok(config)
+    }
+}
+
+impl Config {
+    pub fn types_output_path(&self) -> String {
+        self.types
+            .output
+            .clone()
+            .unwrap_or_else(default_types_output)
+    }
+
+    pub fn types_default_locale(&self) -> Option<String> {
+        self.types.default_locale.clone()
+    }
+
+    pub fn types_locales_dir(&self) -> Option<String> {
+        self.types.locales_dir.clone()
+    }
+
+    pub fn default_types_output() -> String {
+        default_types_output()
+    }
+}
+
+#[cfg(feature = "napi")]
+#[napi(object)]
+pub struct NapiTypesConfig {
+    pub output: Option<String>,
+    pub defaultLocale: Option<String>,
+    pub localesDir: Option<String>,
+}
+
+#[cfg(feature = "napi")]
+impl From<NapiTypesConfig> for TypesConfig {
+    fn from(value: NapiTypesConfig) -> Self {
+        Self {
+            output: value.output,
+            default_locale: value.defaultLocale,
+            locales_dir: value.localesDir,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn types_output_defaults_to_standard_path() {
+        let config = Config::default();
+        assert_eq!(config.types_output_path(), Config::default_types_output());
+    }
+
+    #[test]
+    fn types_output_can_be_overridden_via_json() {
+        let json = r#"{ "types": { "output": "generated/types.d.ts" } }"#;
+        let config = Config::from_json_string(json).unwrap();
+        assert_eq!(config.types_output_path(), "generated/types.d.ts");
     }
 }

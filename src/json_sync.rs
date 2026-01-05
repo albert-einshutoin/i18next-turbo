@@ -78,7 +78,11 @@ impl StylePreservingFormatter {
     fn new(style: &JsonStyle) -> Self {
         Self {
             indent: style.indent.as_bytes().to_vec(),
-            newline: if style.use_crlf { b"\r\n".to_vec() } else { b"\n".to_vec() },
+            newline: if style.use_crlf {
+                b"\r\n".to_vec()
+            } else {
+                b"\n".to_vec()
+            },
             current_indent: 0,
         }
     }
@@ -217,11 +221,22 @@ pub enum KeyConflict {
 impl std::fmt::Display for KeyConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            KeyConflict::ValueIsNotObject { key_path, existing_value } => {
-                write!(f, "Cannot create nested key at '{}': existing value is '{}' (not an object)", key_path, existing_value)
+            KeyConflict::ValueIsNotObject {
+                key_path,
+                existing_value,
+            } => {
+                write!(
+                    f,
+                    "Cannot create nested key at '{}': existing value is '{}' (not an object)",
+                    key_path, existing_value
+                )
             }
             KeyConflict::ObjectIsValue { key_path } => {
-                write!(f, "Cannot set scalar value at '{}': path contains nested objects", key_path)
+                write!(
+                    f,
+                    "Cannot set scalar value at '{}': path contains nested objects",
+                    key_path
+                )
             }
         }
     }
@@ -278,7 +293,11 @@ enum InsertResult {
 ///
 /// This function uses iterative approach instead of recursion to prevent
 /// stack overflow with deeply nested keys (DoS protection).
-fn insert_nested_key(obj: &mut Map<String, Value>, path: &[&str], default_value: &str) -> InsertResult {
+fn insert_nested_key(
+    obj: &mut Map<String, Value>,
+    path: &[&str],
+    default_value: &str,
+) -> InsertResult {
     if path.is_empty() {
         return InsertResult::Existed;
     }
@@ -302,10 +321,7 @@ fn insert_nested_key(obj: &mut Map<String, Value>, path: &[&str], default_value:
                 }
                 return InsertResult::Existed;
             } else {
-                current.insert(
-                    (*key).to_string(),
-                    Value::String(default_value.to_string()),
-                );
+                current.insert((*key).to_string(), Value::String(default_value.to_string()));
                 return InsertResult::Added;
             }
         } else {
@@ -342,7 +358,11 @@ pub fn sort_keys_alphabetically(map: &Map<String, Value>) -> Map<String, Value> 
 }
 
 /// Internal function with depth tracking to prevent stack overflow
-fn sort_keys_with_depth(map: &Map<String, Value>, depth: usize, max_depth: usize) -> Map<String, Value> {
+fn sort_keys_with_depth(
+    map: &Map<String, Value>,
+    depth: usize,
+    max_depth: usize,
+) -> Map<String, Value> {
     let mut sorted = Map::new();
     let mut keys: Vec<_> = map.keys().collect();
     keys.sort();
@@ -468,7 +488,8 @@ pub fn write_locale_file(path: &Path, content: &Map<String, Value>) -> Result<()
     }
 
     // Atomic persist
-    temp_file.persist(path)
+    temp_file
+        .persist(path)
         .with_context(|| format!("Failed to persist locale file: {}", path.display()))?;
 
     Ok(())
@@ -538,7 +559,8 @@ pub fn sync_locale_file_locked_with_fs<F: FileSystem>(
     let mut locked_file = fs.open_locked(path)?;
 
     // Read existing content
-    let content_str = locked_file.content_string()
+    let content_str = locked_file
+        .content_string()
         .with_context(|| format!("Failed to read locale file: {}", path.display()))?;
 
     // Detect existing JSON style before parsing
@@ -588,7 +610,10 @@ pub fn sync_locale_file_locked_with_fs<F: FileSystem>(
 }
 
 /// Collect unique namespaces from a set of extracted keys
-pub fn collect_namespaces(keys: &[ExtractedKey], default_namespace: &str) -> std::collections::HashSet<String> {
+pub fn collect_namespaces(
+    keys: &[ExtractedKey],
+    default_namespace: &str,
+) -> std::collections::HashSet<String> {
     let mut namespaces = std::collections::HashSet::new();
     namespaces.insert(default_namespace.to_string());
 
@@ -697,9 +722,15 @@ mod tests {
         // Try to add a nested key "button.submit" - should conflict
         let result = insert_nested_key(&mut map, &["button", "submit"], "");
 
-        assert!(matches!(result, InsertResult::Conflict(KeyConflict::ValueIsNotObject { .. })));
+        assert!(matches!(
+            result,
+            InsertResult::Conflict(KeyConflict::ValueIsNotObject { .. })
+        ));
         // Original value should be preserved
-        assert_eq!(map.get("button"), Some(&Value::String("click me".to_string())));
+        assert_eq!(
+            map.get("button"),
+            Some(&Value::String("click me".to_string()))
+        );
     }
 
     #[test]

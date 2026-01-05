@@ -118,10 +118,7 @@ pub fn run(
 
     let total_keys = source_keys.len();
     let completed = total_keys.saturating_sub(missing_count);
-    println!(
-        "  Progress: {}",
-        format_progress_bar(completed, total_keys)
-    );
+    println!("  Progress: {}", format_progress_bar(completed, total_keys));
 
     // Summary
     println!("\n{}", "=".repeat(40));
@@ -193,10 +190,6 @@ fn format_progress_bar(completed: usize, total: usize) -> String {
 
     let ratio = completed as f64 / total as f64;
     let filled = ((ratio * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
-    let bar = format!(
-        "[{}{}]",
-        "#".repeat(filled),
-        "-".repeat(BAR_WIDTH - filled)
-    );
+    let bar = format!("[{}{}]", "#".repeat(filled), "-".repeat(BAR_WIDTH - filled));
     format!("{} {:>5.1}% ({}/{})", bar, ratio * 100.0, completed, total)
 }

@@ -43,8 +43,8 @@ enum Commands {
         generate_types: bool,
 
         /// TypeScript output path (only used with --generate-types)
-        #[arg(long, default_value = "src/@types/i18next.d.ts")]
-        types_output: String,
+        #[arg(long)]
+        types_output: Option<String>,
     },
 
     /// Watch for file changes and extract keys automatically
@@ -57,8 +57,8 @@ enum Commands {
     /// Generate TypeScript type definitions from existing locale files
     Typegen {
         /// TypeScript output path
-        #[arg(short, long, default_value = "src/@types/i18next.d.ts")]
-        output: String,
+        #[arg(short, long)]
+        output: Option<String>,
 
         /// Default locale to use for type generation
         #[arg(short, long)]
@@ -189,7 +189,14 @@ fn main() -> Result<()> {
             generate_types,
             types_output,
         } => {
-            commands::extract::run(&config, output, fail_on_warnings, generate_types, &types_output)?;
+            let resolved_types_output = types_output.unwrap_or_else(|| config.types_output_path());
+            commands::extract::run(
+                &config,
+                output,
+                fail_on_warnings,
+                generate_types,
+                &resolved_types_output,
+            )?;
         }
         Commands::Watch { output } => {
             println!("=== i18next-turbo watch ===\n");
@@ -201,7 +208,15 @@ fn main() -> Result<()> {
             default_locale,
             locales_dir,
         } => {
-            commands::typegen::run(&config, &output, default_locale, locales_dir)?;
+            let resolved_output = output.unwrap_or_else(|| config.types_output_path());
+            let resolved_default_locale = default_locale.or_else(|| config.types_default_locale());
+            let resolved_locales_dir = locales_dir.or_else(|| config.types_locales_dir());
+            commands::typegen::run(
+                &config,
+                &resolved_output,
+                resolved_default_locale,
+                resolved_locales_dir,
+            )?;
         }
         Commands::Check {
             remove,

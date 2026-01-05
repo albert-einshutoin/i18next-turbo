@@ -111,7 +111,12 @@ Create `i18next-turbo.json` in your project root:
   "output": "locales/$LOCALE/$NAMESPACE.json",
   "locales": ["en", "ja", "de"],
   "defaultNamespace": "translation",
-  "functions": ["t", "i18n.t"]
+  "functions": ["t", "i18n.t"],
+  "types": {
+    "output": "src/@types/i18next.d.ts",
+    "defaultLocale": "en",
+    "localesDir": "locales"
+  }
 }
 ```
 
@@ -124,6 +129,11 @@ Create `i18next-turbo.json` in your project root:
 | `locales` | List of target languages | `["en"]` |
 | `defaultNamespace` | Default namespace | `"translation"` |
 | `functions` | Function names to extract | `["t"]` |
+| `types.output` | Path for generated TypeScript definitions | `"src/@types/i18next.d.ts"` |
+| `types.defaultLocale` | Default locale for type generation | First entry in `locales` |
+| `types.localesDir` | Directory read when generating types | Same as `output` |
+
+Use the optional `types` block to control where type definitions are written and which locale files `i18next-turbo typegen` or `i18next-turbo extract --generate-types` should use.
 
 ### 2. Extract Keys
 
@@ -361,8 +371,11 @@ t(dynamicKey);  // This line won't be extracted
 ### TypeScript Type Generation
 
 ```bash
-# Generate type definitions (currently via Rust API)
-# Will be available as i18next-turbo types command in the future
+# Generate once based on your config (honors the optional `types` block)
+i18next-turbo typegen
+
+# Or run extraction and type generation together
+i18next-turbo extract --generate-types
 ```
 
 Example generated type definitions:
@@ -591,7 +604,12 @@ cargo build --release
   "output": "locales/$LOCALE/$NAMESPACE.json",
   "locales": ["en", "ja", "de"],
   "defaultNamespace": "translation",
-  "functions": ["t", "i18n.t"]
+  "functions": ["t", "i18n.t"],
+  "types": {
+    "output": "src/@types/i18next.d.ts",
+    "defaultLocale": "en",
+    "localesDir": "locales"
+  }
 }
 ```
 
@@ -604,6 +622,11 @@ cargo build --release
 | `locales` | 対象言語のリスト | `["en"]` |
 | `defaultNamespace` | デフォルトの名前空間 | `"translation"` |
 | `functions` | 抽出対象の関数名 | `["t"]` |
+| `types.output` | 型定義ファイルの出力パス | `"src/@types/i18next.d.ts"` |
+| `types.defaultLocale` | 型生成時に使用するデフォルトロケール | `locales` の先頭 | 
+| `types.localesDir` | 型生成時に読むロケールディレクトリ | `output` と同じ |
+
+`types` ブロックを設定すると、`i18next-turbo typegen` や `i18next-turbo extract --generate-types` が参照する出力パスやロケールを制御できます。
 
 ### 2. キーの抽出
 
@@ -826,8 +849,11 @@ t(dynamicKey);  // この行は抽出されません
 ### TypeScript 型定義の生成
 
 ```bash
-# 型定義を生成（現在は Rust API 経由）
-# 将来的には i18next-turbo types コマンドで利用可能
+# `types` 設定に基づいて一度だけ型定義を生成
+i18next-turbo typegen
+
+# もしくは抽出と同時に生成
+i18next-turbo extract --generate-types
 ```
 
 生成される型定義例：
