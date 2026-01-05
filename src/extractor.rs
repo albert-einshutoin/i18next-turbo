@@ -1,3 +1,4 @@
+use crate::config::PluralConfig;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::borrow::Cow;
@@ -270,22 +271,7 @@ impl TranslationVisitor {
         functions: Vec<String>,
         source_map: Lrc<SourceMap>,
         comments: Option<SingleThreadedComments>,
-    ) -> Self {
-        Self::with_plural_config(
-            functions,
-            source_map,
-            comments,
-            "_".to_string(),
-            vec!["one".to_string(), "other".to_string()],
-        )
-    }
-
-    pub fn with_plural_config(
-        functions: Vec<String>,
-        source_map: Lrc<SourceMap>,
-        comments: Option<SingleThreadedComments>,
-        plural_separator: String,
-        plural_suffixes: Vec<String>,
+        plural_config: PluralConfig,
     ) -> Self {
         let mut trans_components = HashSet::new();
         trans_components.insert("Trans".to_string());
@@ -303,8 +289,8 @@ impl TranslationVisitor {
             scope_bindings: HashMap::new(),
             file_path: None,
             warning_count: 0,
-            plural_separator,
-            plural_suffixes,
+            plural_separator: plural_config.separator,
+            plural_suffixes: plural_config.suffixes,
         }
     }
 
@@ -1226,8 +1212,9 @@ impl Visit for TranslationVisitor {
 pub fn extract_from_file<P: AsRef<Path>>(
     path: P,
     functions: &[String],
+    plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) = extract_from_file_with_warnings(path, functions, true)?;
+    let (keys, _) = extract_from_file_with_warnings(path, functions, true, plural_config)?;
     Ok(keys)
 }
 
@@ -1236,8 +1223,10 @@ pub fn extract_from_file_with_options<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     extract_from_comments: bool,
+    plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) = extract_from_file_with_warnings(path, functions, extract_from_comments)?;
+    let (keys, _) =
+        extract_from_file_with_warnings(path, functions, extract_from_comments, plural_config)?;
     Ok(keys)
 }
 
@@ -1245,12 +1234,19 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     extract_from_comments: bool,
+    plural_config: &PluralConfig,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let source_code = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
-    extract_from_source_with_warnings(&source_code, path, functions, extract_from_comments)
+    extract_from_source_with_warnings(
+        &source_code,
+        path,
+        functions,
+        extract_from_comments,
+        plural_config,
+    )
 }
 
 /// Extract translation keys from source code string
@@ -1261,7 +1257,9 @@ pub fn extract_from_source<P: AsRef<Path>>(
     path: P,
     functions: &[String],
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) = extract_from_source_with_warnings(source, path, functions, true)?;
+    let plural_config = PluralConfig::default();
+    let (keys, _) =
+        extract_from_source_with_warnings(source, path, functions, true, &plural_config)?;
     Ok(keys)
 }
 
@@ -1271,9 +1269,15 @@ pub fn extract_from_source_with_options<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     extract_from_comments: bool,
+    plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) =
-        extract_from_source_with_warnings(source, path, functions, extract_from_comments)?;
+    let (keys, _) = extract_from_source_with_warnings(
+        source,
+        path,
+        functions,
+        extract_from_comments,
+        plural_config,
+    )?;
     Ok(keys)
 }
 
@@ -1282,6 +1286,7 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     should_extract_from_comments: bool,
+    plural_config: &PluralConfig,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
@@ -1337,7 +1342,12 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     };
 
     // Visit the AST and extract keys
-    let mut visitor = TranslationVisitor::new(functions.to_vec(), cm, Some(comments));
+    let mut visitor = TranslationVisitor::new(
+        functions.to_vec(),
+        cm,
+        Some(comments),
+        plural_config.clone(),
+    );
     visitor.file_path = Some(path.display().to_string());
     module.visit_with(&mut visitor);
 
@@ -1369,8 +1379,12 @@ enum FileExtractionResult {
 /// - No upfront collection of all file paths (O(1) memory for paths)
 /// - Lock-free error collection (each thread returns Result enum)
 /// - Optimized for large monorepos (millions of files)
-pub fn extract_from_glob(patterns: &[String], functions: &[String]) -> Result<ExtractionResult> {
-    extract_from_glob_with_options(patterns, functions, true)
+pub fn extract_from_glob(
+    patterns: &[String],
+    functions: &[String],
+    plural_config: &PluralConfig,
+) -> Result<ExtractionResult> {
+    extract_from_glob_with_options(patterns, functions, true, plural_config)
 }
 
 /// Extract keys from multiple files using glob patterns with configurable options.
@@ -1378,6 +1392,7 @@ pub fn extract_from_glob_with_options(
     patterns: &[String],
     functions: &[String],
     extract_from_comments: bool,
+    plural_config: &PluralConfig,
 ) -> Result<ExtractionResult> {
     use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
@@ -1425,7 +1440,12 @@ pub fn extract_from_glob_with_options(
         .par_bridge() // Stream directly into parallel processing
         .map(|item| match item {
             GlobItem::Path(path) => {
-                match extract_from_file_with_warnings(&path, functions, extract_from_comments) {
+                match extract_from_file_with_warnings(
+                    &path,
+                    functions,
+                    extract_from_comments,
+                    plural_config,
+                ) {
                     Ok((keys, warnings)) => {
                         if keys.is_empty() {
                             FileExtractionResult::Empty { warnings }
@@ -1497,8 +1517,9 @@ pub fn extract_from_glob_with_options(
 pub fn extract_from_glob_deduplicated(
     patterns: &[String],
     functions: &[String],
+    plural_config: &PluralConfig,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
-    extract_from_glob_deduplicated_with_options(patterns, functions, true)
+    extract_from_glob_deduplicated_with_options(patterns, functions, true, plural_config)
 }
 
 /// Extract keys with early deduplication and configurable comment extraction
@@ -1506,6 +1527,7 @@ pub fn extract_from_glob_deduplicated_with_options(
     patterns: &[String],
     functions: &[String],
     extract_from_comments: bool,
+    plural_config: &PluralConfig,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
     use rayon::prelude::*;
 
@@ -1544,7 +1566,12 @@ pub fn extract_from_glob_deduplicated_with_options(
         .fold(
             || initial.clone(),
             |mut acc, path| {
-                match extract_from_file_with_warnings(path, functions, extract_from_comments) {
+                match extract_from_file_with_warnings(
+                    path,
+                    functions,
+                    extract_from_comments,
+                    plural_config,
+                ) {
                     Ok((keys, warnings)) => {
                         acc.1 += warnings;
                         // Insert into HashSet for deduplication

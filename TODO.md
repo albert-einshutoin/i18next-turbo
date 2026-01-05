@@ -159,12 +159,12 @@
 ### Task 2.2: 複数形 (Plurals) と Context の完全対応
 
 #### 2.2.1: 言語別複数形カテゴリの生成
-- [ ] Rust で `Intl.PluralRules` 相当の機能を実装
+- [x] Rust で `Intl.PluralRules` 相当の機能を実装
   - `icu_plurals` クレートまたは `intl_pluralrules` クレートを使用
   - または独自実装（CLDR データベースを使用）
-- [ ] 設定された全言語の複数形カテゴリを取得
+- [x] 設定された全言語の複数形カテゴリを取得
   - `zero`, `one`, `two`, `few`, `many`, `other`
-- [ ] 各言語のカテゴリに基づいてキーを生成
+- [x] 各言語のカテゴリに基づいてキーを生成
 - [ ] 単一カテゴリ（`other` のみ）の言語ではベースキーを使用
 
 #### 2.2.2: Ordinal 複数形の対応
@@ -177,11 +177,10 @@
 - [x] `key_context_one`, `key_context_other` の生成
 - [ ] ベース複数形キーの生成制御（`generateBasePluralForms` オプション）
 
-#### 達成基準
 - [x] `t('apple', { count: 5 })` で基本的な複数形キー（`_one`, `_other`）が生成される
-- [ ] `t('apple', { count: 5 })` で言語に応じた複数形カテゴリが生成される（言語別カテゴリは未実装）
+- [x] `t('apple', { count: 5 })` で言語に応じた複数形カテゴリが生成される（ICU ルールに基づく）
 - [ ] 日本語（`other` のみ）では `apple` のみが生成される（言語別カテゴリは未実装）
-- [ ] ロシア語では `apple_one`, `apple_few`, `apple_many`, `apple_other` が生成される（言語別カテゴリは未実装）
+- [x] ロシア語では `apple_one`, `apple_few`, `apple_many`, `apple_other` が生成される
 
 ---
 
@@ -254,24 +253,25 @@
 ### Task 2.4: 設定ファイルの JS/TS 対応 (Interop)
 
 #### 2.4.1: Node.js ラッパーでの設定読み込み
-- [ ] `bin/cli.js` で設定ファイルを検出
+- [x] `bin/cli.js` で設定ファイルを検出
   - `i18next-turbo.json`
   - `i18next-parser.config.js`
+  - `i18next-parser.config.ts`
   - `i18next.config.ts`
   - `i18next.config.js`
-- [ ] `require()` または `jiti` で JS/TS ファイルを読み込み
-- [ ] 設定オブジェクトを JSON 文字列に変換
-- [ ] Rust バイナリに JSON 文字列を引数として渡す
+- [x] `require()` または `jiti` で JS/TS ファイルを読み込み
+- [x] 設定オブジェクトを JSON 文字列に変換
+- [x] Rust バイナリに JSON 文字列を引数として渡す
 
 #### 2.4.2: Rust 側での JSON パース
-- [ ] JSON 文字列を受け取る CLI 引数を追加
-- [ ] `serde_json` で JSON をパース
-- [ ] 既存の `Config` 構造体に変換
+- [x] JSON 文字列を受け取る CLI 引数を追加
+- [x] `serde_json` で JSON をパース
+- [x] 既存の `Config` 構造体に変換
 
 #### 2.4.3: 設定の互換性
-- [ ] `i18next-parser.config.js` の形式に対応
-- [ ] プロパティ名のマッピング（`$LOCALE` → `{{language}}` など）
-- [ ] デフォルト値の設定
+- [x] `i18next-parser.config.js` の形式に対応
+- [x] プロパティ名のマッピング（`$LOCALE` → `{{language}}` など）
+- [x] デフォルト値の設定
 
 #### 2.4.4: ヒューリスティック設定検出
 - [ ] プロジェクト構造の自動検出機能
@@ -280,9 +280,9 @@
 - [ ] `status` や `lint` コマンドで設定ファイルなしでも動作
 
 #### 達成基準
-- [ ] ユーザーが既存の JS 設定ファイルをそのまま使える
-- [ ] TypeScript 設定ファイルも読み込める
-- [ ] 設定の検証とエラーメッセージ
+- [x] ユーザーが既存の JS 設定ファイルをそのまま使える
+- [x] TypeScript 設定ファイルも読み込める
+- [x] 設定の検証とエラーメッセージ
 - [ ] 設定ファイルなしで `status` コマンドが動作する
 
 ---

@@ -1,5 +1,8 @@
 use anyhow::{bail, Context, Result};
+use icu_locid::Locale;
+use icu_plurals::{PluralCategory, PluralRules};
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Configuration for i18next-turbo
@@ -57,9 +60,28 @@ pub struct Config {
     #[serde(default = "default_extract_from_comments")]
     pub extract_from_comments: bool,
 
+    /// Whether to auto-detect plural categories from locale rules
+    #[serde(default = "default_use_locale_plural_rules")]
+    pub use_locale_plural_rules: bool,
+
     /// Type generation configuration
     #[serde(default)]
     pub types: TypesConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluralConfig {
+    pub separator: String,
+    pub suffixes: Vec<String>,
+}
+
+impl Default for PluralConfig {
+    fn default() -> Self {
+        Self {
+            separator: "_".to_string(),
+            suffixes: vec!["one".to_string(), "other".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -88,6 +110,7 @@ pub struct NapiConfig {
     pub pluralSeparator: Option<String>,
     pub pluralSuffixes: Option<Vec<String>>,
     pub extractFromComments: Option<bool>,
+    pub useLocalePluralRules: Option<bool>,
     pub types: Option<NapiTypesConfig>,
 }
 
@@ -135,6 +158,10 @@ fn default_extract_from_comments() -> bool {
     true
 }
 
+fn default_use_locale_plural_rules() -> bool {
+    true
+}
+
 fn default_types_output() -> String {
     "src/@types/i18next.d.ts".to_string()
 }
@@ -153,12 +180,36 @@ impl Default for Config {
             plural_separator: default_plural_separator(),
             plural_suffixes: default_plural_suffixes(),
             extract_from_comments: default_extract_from_comments(),
+            use_locale_plural_rules: default_use_locale_plural_rules(),
             types: TypesConfig::default(),
         }
     }
 }
 
 impl Config {
+    pub fn plural_config(&self) -> PluralConfig {
+        let suffixes = if self.use_locale_plural_rules {
+            compute_plural_suffixes_from_locales(&self.locales)
+        } else {
+            self.plural_suffixes.clone()
+        };
+
+        let mut final_suffixes = if suffixes.is_empty() {
+            vec!["one".to_string(), "other".to_string()]
+        } else {
+            suffixes
+        };
+
+        if !final_suffixes.iter().any(|s| s == "other") {
+            final_suffixes.push("other".to_string());
+        }
+
+        PluralConfig {
+            separator: self.plural_separator.clone(),
+            suffixes: final_suffixes,
+        }
+    }
+
     /// Validate configuration values
     pub fn validate(&self) -> Result<()> {
         // Check locales is not empty
@@ -311,6 +362,9 @@ impl Config {
             extract_from_comments: config
                 .extractFromComments
                 .unwrap_or(defaults.extract_from_comments),
+            use_locale_plural_rules: config
+                .useLocalePluralRules
+                .unwrap_or(default_use_locale_plural_rules()),
             types: config.types.map(TypesConfig::from).unwrap_or_default(),
         };
         config.validate()?;
@@ -373,5 +427,89 @@ mod tests {
         let json = r#"{ "types": { "output": "generated/types.d.ts" } }"#;
         let config = Config::from_json_string(json).unwrap();
         assert_eq!(config.types_output_path(), "generated/types.d.ts");
+    }
+
+    #[test]
+    fn plural_config_uses_locale_rules_when_enabled() {
+        let mut config = Config::default();
+        config.locales = vec!["ru".to_string()];
+        config.use_locale_plural_rules = true;
+        let plural = config.plural_config();
+        assert!(plural.suffixes.contains(&"few".to_string()));
+        assert!(plural.suffixes.contains(&"many".to_string()));
+        assert!(plural.suffixes.contains(&"one".to_string()));
+        assert!(plural.suffixes.contains(&"other".to_string()));
+    }
+
+    #[test]
+    fn plural_config_uses_explicit_suffixes_when_disabled() {
+        let mut config = Config::default();
+        config.use_locale_plural_rules = false;
+        config.plural_suffixes = vec!["zero".to_string(), "other".to_string()];
+        let plural = config.plural_config();
+        assert_eq!(
+            plural.suffixes,
+            vec!["zero".to_string(), "other".to_string()]
+        );
+    }
+}
+
+fn compute_plural_suffixes_from_locales(locales: &[String]) -> Vec<String> {
+    let mut categories = BTreeSet::new();
+
+    for locale in locales {
+        if let Some(locale_categories) = categories_for_locale(locale) {
+            for cat in locale_categories {
+                categories.insert(cat);
+            }
+        }
+    }
+
+    if categories.is_empty() {
+        return vec!["one".to_string(), "other".to_string()];
+    }
+
+    if !categories.contains("other") {
+        categories.insert("other".to_string());
+    }
+
+    categories.into_iter().collect()
+}
+
+fn categories_for_locale(locale: &str) -> Option<Vec<String>> {
+    let trimmed = locale.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let parsed: Locale = trimmed.parse().ok()?;
+    let data_locale = parsed.into();
+    let rules = PluralRules::try_new_cardinal(&data_locale).ok()?;
+    let supported: Vec<PluralCategory> = rules.categories().collect();
+
+    let mut result = Vec::new();
+    for category in [
+        PluralCategory::Zero,
+        PluralCategory::One,
+        PluralCategory::Two,
+        PluralCategory::Few,
+        PluralCategory::Many,
+        PluralCategory::Other,
+    ] {
+        if supported.contains(&category) {
+            result.push(plural_category_to_str(category).to_string());
+        }
+    }
+    Some(result)
+}
+
+fn plural_category_to_str(category: PluralCategory) -> &'static str {
+    match category {
+        PluralCategory::Zero => "zero",
+        PluralCategory::One => "one",
+        PluralCategory::Two => "two",
+        PluralCategory::Few => "few",
+        PluralCategory::Many => "many",
+        PluralCategory::Other => "other",
     }
 }

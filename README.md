@@ -68,6 +68,8 @@ t('friend', { context: 'male' })  // → friend_male
 t('friend', { count: 2, context: 'female' })  // → friend_female_one, friend_female_other
 ```
 
+ICU ベースの複数形ルールに従って、`locales` に列挙した言語ごとに必要なカテゴリ（`zero`/`one`/`few`/`many` など）を自動生成します。例えばロシア語を指定すると `friend_one`/`friend_few`/`friend_many`/`friend_other` が同時に追加されます。
+
 ### Other Features
 
 - ✅ **Magic Comments**: `// i18next-extract-disable-line`
@@ -134,6 +136,8 @@ Create `i18next-turbo.json` in your project root:
 | `types.localesDir` | Directory read when generating types | Same as `output` |
 
 Use the optional `types` block to control where type definitions are written and which locale files `i18next-turbo typegen` or `i18next-turbo extract --generate-types` should use.
+
+> The CLI automatically searches for `i18next-turbo.json`, `i18next-parser.config.(js|ts)`, and `i18next.config.(js|ts)` (CommonJS, ESM, or TypeScript via `jiti`). You can also pass `--config path/to/i18next.config.ts` directly.
 
 ### 2. Extract Keys
 
@@ -628,6 +632,8 @@ cargo build --release
 
 `types` ブロックを設定すると、`i18next-turbo typegen` や `i18next-turbo extract --generate-types` が参照する出力パスやロケールを制御できます。
 
+> CLI は `i18next-turbo.json` や `i18next-parser.config.(js|ts)`, `i18next.config.(js|ts)` を自動的に読み込みます（CommonJS/ESM/TypeScript は `jiti` 経由でサポート）。`--config ./i18next.config.ts` のように直接指定することも可能です。
+
 ### 2. キーの抽出
 
 一度だけ実行する場合（CI/CD など）：
@@ -752,6 +758,8 @@ function Welcome() {
 const count = 5;
 t('apple', { count });  // → apple_one, apple_other が生成される
 ```
+
+`locales` に含めた言語ごとに ICU の複数形ルールを参照し、必要なカテゴリ（`few`, `many`, など）を自動生成します。例えば `locales: ["en", "ru"]` の場合、`ru` 向けに `_one/_few/_many/_other` が同時に追加されます。
 
 生成される JSON:
 

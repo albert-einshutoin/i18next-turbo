@@ -35,10 +35,12 @@ pub fn run(
 
     // Extract keys from source
     println!("Scanning source files...");
+    let plural_config = config.plural_config();
     let extraction = extractor::extract_from_glob_with_options(
         &config.input,
         &config.functions,
         config.extract_from_comments,
+        &plural_config,
     )?;
 
     let mut source_keys: HashSet<String> = HashSet::new();

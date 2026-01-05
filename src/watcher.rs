@@ -117,10 +117,12 @@ impl FileWatcher {
     fn full_extract(&mut self) -> Result<()> {
         println!("--- Initial extraction ---");
 
+        let plural_config = self.config.plural_config();
         let extraction = extractor::extract_from_glob_with_options(
             &self.config.input,
             &self.config.functions,
             self.config.extract_from_comments,
+            &plural_config,
         )?;
 
         // Populate cache
@@ -247,6 +249,7 @@ impl FileWatcher {
     fn incremental_extract(&mut self, changed_files: &[PathBuf]) -> Result<Vec<ExtractedKey>> {
         use rayon::prelude::*;
 
+        let plural_config = self.config.plural_config();
         let results: Vec<_> = changed_files
             .par_iter()
             .filter_map(|path| {
@@ -254,6 +257,7 @@ impl FileWatcher {
                     path,
                     &self.config.functions,
                     self.config.extract_from_comments,
+                    &plural_config,
                 ) {
                     Ok(keys) => Some((path.clone(), keys)),
                     Err(e) => {

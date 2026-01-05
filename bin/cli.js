@@ -15,6 +15,8 @@ const os = require('os');
 const { cosmiconfig, defaultLoaders } = require('cosmiconfig');
 const { pathToFileURL } = require('url');
 
+const JS_TS_CONFIG_EXTENSIONS = new Set(['.js', '.cjs', '.mjs', '.ts']);
+
 // Detect platform and architecture
 const platform = os.platform();
 const arch = os.arch();
@@ -60,13 +62,12 @@ if (!binaryPath || !fs.existsSync(binaryPath)) {
 }
 
 async function main() {
-  // Load configuration file if it exists
-  let configJson = null;
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  const { args, inlineConfigJson, configProvided } = await resolveConfigArgs(rawArgs);
 
-  // Check if --config is already specified
-  const configIndex = args.findIndex(arg => arg === '--config' || arg === '-c');
-  if (configIndex === -1) {
+  let configJson = inlineConfigJson;
+
+  if (!configJson && !configProvided) {
     try {
       const config = await loadConfigFromDisk();
       const normalized = normalizeConfig(config);
@@ -75,17 +76,13 @@ async function main() {
       }
     } catch (error) {
       console.warn(`Warning: Failed to load config file: ${error.message}`);
-      // Continue without config - Rust binary will use defaults
     }
   }
 
-  // Build arguments for Rust binary
   const rustArgs = [];
   if (configJson) {
-    // Use stdin to pass config (avoids ARG_MAX limits and hides from process list)
     rustArgs.push('--config-stdin');
   }
-  // Add all other arguments (including --config if specified)
   rustArgs.push(...args);
 
   // Spawn the Rust binary
@@ -115,18 +112,82 @@ main().catch((error) => {
   process.exit(1);
 });
 
+async function resolveConfigArgs(argv) {
+  const processedArgs = [];
+  let inlineConfigJson = null;
+  let configProvided = false;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+
+    if (arg === '--config' || arg === '-c') {
+      configProvided = true;
+      const value = argv[i + 1];
+      if (!value) {
+        processedArgs.push(arg);
+        continue;
+      }
+
+      if (shouldLoadWithNode(value)) {
+        const config = await loadConfigFromFile(value);
+        const normalized = normalizeConfig(config);
+        if (normalized) {
+          inlineConfigJson = JSON.stringify(normalized);
+        }
+        i += 1;
+        continue;
+      }
+
+      processedArgs.push(arg, value);
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--config=')) {
+      configProvided = true;
+      const value = arg.split('=')[1];
+      if (shouldLoadWithNode(value)) {
+        const config = await loadConfigFromFile(value);
+        const normalized = normalizeConfig(config);
+        if (normalized) {
+          inlineConfigJson = JSON.stringify(normalized);
+        }
+        continue;
+      }
+    }
+
+    processedArgs.push(arg);
+  }
+
+  return { args: processedArgs, inlineConfigJson, configProvided };
+}
+
 /**
  * Find and load configuration file in current directory
  * Priority: i18next-turbo.json > i18next-parser.config.(js|json) > i18next.config.(ts|js)
  */
 async function loadConfigFromDisk() {
-  const explorer = cosmiconfig('i18next-turbo', {
+  const explorer = createExplorer();
+  const result = await explorer.search();
+  return unwrapExplorerResult(result);
+}
+
+async function loadConfigFromFile(filepath) {
+  const explorer = createExplorer();
+  const absolute = path.resolve(process.cwd(), filepath);
+  const result = await explorer.load(absolute);
+  return unwrapExplorerResult(result);
+}
+
+function createExplorer() {
+  return cosmiconfig('i18next-turbo', {
     searchPlaces: [
       'i18next-turbo.json',
       'i18next-parser.config.json',
       'i18next-parser.config.js',
       'i18next-parser.config.cjs',
       'i18next-parser.config.mjs',
+      'i18next-parser.config.ts',
       'i18next.config.ts',
       'i18next.config.js',
       'i18next.config.cjs',
@@ -140,13 +201,18 @@ async function loadConfigFromDisk() {
       '.ts': loadTypeScriptConfig
     }
   });
+}
 
-  const result = await explorer.search();
+function unwrapExplorerResult(result) {
   if (!result) {
     return null;
   }
-
   return result.config && result.config.default ? result.config.default : result.config;
+}
+
+function shouldLoadWithNode(filepath) {
+  const ext = path.extname(filepath).toLowerCase();
+  return JS_TS_CONFIG_EXTENSIONS.has(ext);
 }
 
 function loadTypeScriptConfig(filepath) {

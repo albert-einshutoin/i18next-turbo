@@ -25,11 +25,14 @@ pub fn run(
     println!("  Functions: {:?}", config.functions);
     println!();
 
+    let plural_config = config.plural_config();
+
     // Extract keys from files
     let extraction = extractor::extract_from_glob_with_options(
         &config.input,
         &config.functions,
         config.extract_from_comments,
+        &plural_config,
     )?;
 
     // Report any errors encountered during extraction

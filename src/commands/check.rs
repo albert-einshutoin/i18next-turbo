@@ -24,10 +24,12 @@ pub fn run(config: &Config, remove: bool, dry_run: bool, locale: Option<String>)
 
     // First, extract keys from source
     println!("Extracting keys from source files...");
+    let plural_config = config.plural_config();
     let extraction = extractor::extract_from_glob_with_options(
         &config.input,
         &config.functions,
         config.extract_from_comments,
+        &plural_config,
     )?;
 
     let mut all_keys: Vec<ExtractedKey> = Vec::new();

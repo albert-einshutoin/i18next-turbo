@@ -40,6 +40,10 @@ regex = "1.10"
 # Unicode normalization for consistent key handling
 unicode-normalization = "0.1"
 
+# ICU plural rules for language-aware plural category detection
+icu_locid = { version = "1", features = ["serde"] }
+icu_plurals = { version = "1", features = ["compiled_data"] }
+
 # NAPI (Node-API) for Node.js integration
 napi = { version = "2", optional = true, features = ["napi4", "napi5", "napi6", "napi7", "napi8"] }
 napi-derive = { version = "2", optional = true }

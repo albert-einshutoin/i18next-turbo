@@ -128,11 +128,14 @@ pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<Ex
     // Determine output directory
     let output_dir = output.unwrap_or(&config.output);
 
+    let plural_config = config.plural_config();
+
     // Extract keys from files
     let extraction = crate::extractor::extract_from_glob_with_options(
         &config.input,
         &config.functions,
         config.extract_from_comments,
+        &plural_config,
     )
     .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
@@ -340,10 +343,12 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
         .or(config.locales.first().map(|s| s.as_str()))
         .unwrap_or("en");
 
+    let plural_config = config.plural_config();
     let extraction = crate::extractor::extract_from_glob_with_options(
         &config.input,
         &config.functions,
         config.extract_from_comments,
+        &plural_config,
     )
     .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
