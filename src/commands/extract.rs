@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use crate::config::Config;
 use crate::extractor::{self, ExtractedKey};
-use crate::json_sync;
+use crate::json_sync::{self, KeyConflict};
 use crate::typegen;
 
 pub fn run(
@@ -82,6 +82,9 @@ pub fn run(
 
     // Report sync results
     let mut total_added = 0;
+    let mut total_conflicts = 0;
+    let mut all_conflicts: Vec<(String, KeyConflict)> = Vec::new();
+
     for result in &sync_results {
         if !result.added_keys.is_empty() {
             println!(
@@ -91,10 +94,52 @@ pub fn run(
             );
             total_added += result.added_keys.len();
         }
+
+        // Collect conflicts for reporting
+        if !result.conflicts.is_empty() {
+            total_conflicts += result.conflicts.len();
+            for conflict in &result.conflicts {
+                all_conflicts.push((result.file_path.clone(), conflict.clone()));
+            }
+        }
     }
 
     if total_added == 0 {
         println!("  No new keys added (all keys already exist).");
+    }
+
+    // Report conflicts with user-friendly messages
+    if !all_conflicts.is_empty() {
+        eprintln!();
+        eprintln!("\x1b[33m⚠ Warning: {} key(s) were skipped due to conflicts:\x1b[0m", total_conflicts);
+        for (file_path, conflict) in &all_conflicts {
+            match conflict {
+                KeyConflict::ValueIsNotObject { key_path, existing_value } => {
+                    eprintln!(
+                        "  \x1b[31m✗\x1b[0m {} in {}",
+                        key_path, file_path
+                    );
+                    eprintln!(
+                        "    Cannot create nested key: '{}' already exists as scalar value: {}",
+                        key_path.split('.').next().unwrap_or(key_path),
+                        existing_value
+                    );
+                }
+                KeyConflict::ObjectIsValue { key_path } => {
+                    eprintln!(
+                        "  \x1b[31m✗\x1b[0m {} in {}",
+                        key_path, file_path
+                    );
+                    eprintln!(
+                        "    Cannot set scalar value: '{}' already exists as an object with nested keys",
+                        key_path
+                    );
+                }
+            }
+        }
+        eprintln!();
+        eprintln!("  \x1b[90mTo fix: manually update the conflicting keys in your locale files,\x1b[0m");
+        eprintln!("  \x1b[90mor rename the keys in your source code to avoid collision.\x1b[0m");
     }
 
     // Generate TypeScript types if requested
@@ -109,11 +154,14 @@ pub fn run(
 
     println!("\nDone!");
 
-    // Check fail-on-warnings
-    if fail_on_warnings && extraction.warning_count > 0 {
+    // Check fail-on-warnings (includes extraction warnings and key conflicts)
+    let total_warnings = extraction.warning_count + total_conflicts;
+    if fail_on_warnings && total_warnings > 0 {
         bail!(
-            "{} warning(s) encountered (--fail-on-warnings enabled)",
-            extraction.warning_count
+            "{} warning(s) encountered (--fail-on-warnings enabled): {} extraction warnings, {} key conflicts",
+            total_warnings,
+            extraction.warning_count,
+            total_conflicts
         );
     }
 

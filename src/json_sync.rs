@@ -1,13 +1,198 @@
 use anyhow::{Context, Result};
-use fs2::FileExt;
+use serde::Serialize;
+use serde_json::ser::{Formatter, Serializer};
 use serde_json::{Map, Value};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use tempfile::NamedTempFile;
 
 use crate::config::Config;
 use crate::extractor::ExtractedKey;
 use crate::fs::FileSystem;
+
+// =============================================================================
+// JSON Style Detection and Custom Formatting
+// =============================================================================
+
+/// Detected JSON formatting style from existing file
+#[derive(Debug, Clone)]
+pub struct JsonStyle {
+    /// Indentation string (e.g., "  ", "    ", "\t")
+    pub indent: String,
+    /// Whether the file uses CRLF line endings
+    pub use_crlf: bool,
+    /// Whether the file ends with a trailing newline
+    pub trailing_newline: bool,
+}
+
+impl Default for JsonStyle {
+    fn default() -> Self {
+        Self {
+            indent: "  ".to_string(), // 2 spaces is serde_json default
+            use_crlf: false,
+            trailing_newline: true,
+        }
+    }
+}
+
+/// Detect JSON formatting style from file content
+pub fn detect_json_style(content: &str) -> JsonStyle {
+    let mut style = JsonStyle::default();
+
+    // Detect line endings
+    style.use_crlf = content.contains("\r\n");
+
+    // Detect trailing newline
+    style.trailing_newline = content.ends_with('\n') || content.ends_with("\r\n");
+
+    // Detect indentation by looking at the first indented line
+    // JSON objects start with "{" and the first key is indented
+    for line in content.lines() {
+        // Skip empty lines and the opening brace
+        if line.trim().is_empty() || line.trim() == "{" || line.trim() == "[" {
+            continue;
+        }
+
+        // Count leading whitespace
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('"') || trimmed.starts_with('}') || trimmed.starts_with(']') {
+            let indent_len = line.len() - trimmed.len();
+            if indent_len > 0 {
+                style.indent = line[..indent_len].to_string();
+                break;
+            }
+        }
+    }
+
+    style
+}
+
+/// Custom JSON formatter that respects detected style
+struct StylePreservingFormatter {
+    indent: Vec<u8>,
+    newline: Vec<u8>,
+    current_indent: usize,
+}
+
+impl StylePreservingFormatter {
+    fn new(style: &JsonStyle) -> Self {
+        Self {
+            indent: style.indent.as_bytes().to_vec(),
+            newline: if style.use_crlf { b"\r\n".to_vec() } else { b"\n".to_vec() },
+            current_indent: 0,
+        }
+    }
+}
+
+impl Formatter for StylePreservingFormatter {
+    fn begin_array<W>(&mut self, writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        self.current_indent += 1;
+        writer.write_all(b"[")
+    }
+
+    fn end_array<W>(&mut self, writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        self.current_indent -= 1;
+        writer.write_all(&self.newline)?;
+        for _ in 0..self.current_indent {
+            writer.write_all(&self.indent)?;
+        }
+        writer.write_all(b"]")
+    }
+
+    fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        if first {
+            writer.write_all(&self.newline)?;
+        } else {
+            writer.write_all(b",")?;
+            writer.write_all(&self.newline)?;
+        }
+        for _ in 0..self.current_indent {
+            writer.write_all(&self.indent)?;
+        }
+        Ok(())
+    }
+
+    fn end_array_value<W>(&mut self, _writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        Ok(())
+    }
+
+    fn begin_object<W>(&mut self, writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        self.current_indent += 1;
+        writer.write_all(b"{")
+    }
+
+    fn end_object<W>(&mut self, writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        self.current_indent -= 1;
+        writer.write_all(&self.newline)?;
+        for _ in 0..self.current_indent {
+            writer.write_all(&self.indent)?;
+        }
+        writer.write_all(b"}")
+    }
+
+    fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        if first {
+            writer.write_all(&self.newline)?;
+        } else {
+            writer.write_all(b",")?;
+            writer.write_all(&self.newline)?;
+        }
+        for _ in 0..self.current_indent {
+            writer.write_all(&self.indent)?;
+        }
+        Ok(())
+    }
+
+    fn end_object_key<W>(&mut self, _writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        Ok(())
+    }
+
+    fn begin_object_value<W>(&mut self, writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        writer.write_all(b": ")
+    }
+
+    fn end_object_value<W>(&mut self, _writer: &mut W) -> std::io::Result<()>
+    where
+        W: ?Sized + Write,
+    {
+        Ok(())
+    }
+}
+
+/// Serialize JSON with style preservation
+fn serialize_with_style<W: Write>(writer: W, value: &Value, style: &JsonStyle) -> Result<()> {
+    let formatter = StylePreservingFormatter::new(style);
+    let mut serializer = Serializer::with_formatter(writer, formatter);
+    value.serialize(&mut serializer)?;
+    Ok(())
+}
 
 /// Represents a conflict when inserting a key into the translation map.
 /// Conflicts occur when the key path collides with existing data structures.
@@ -252,21 +437,33 @@ pub fn merge_keys(
 /// - Creates temp file in same directory (avoids EXDEV errors on cross-mount rename)
 /// - Unique random filename (avoids race conditions)
 /// - Auto-cleanup on crash (no garbage files)
+/// - Preserves existing JSON formatting style (indentation, line endings)
 pub fn write_locale_file(path: &Path, content: &Map<String, Value>) -> Result<()> {
     // Ensure parent directory exists
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)
         .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
 
+    // Detect existing style if file exists
+    let style = if path.exists() {
+        let existing_content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read existing file: {}", path.display()))?;
+        detect_json_style(&existing_content)
+    } else {
+        JsonStyle::default()
+    };
+
     // Create temp file in same directory for safe atomic rename
     let mut temp_file = NamedTempFile::new_in(parent)
         .with_context(|| format!("Failed to create temp file in: {}", parent.display()))?;
 
-    // Write with buffering
+    // Write with buffering, preserving style
     {
         let mut writer = BufWriter::new(&mut temp_file);
-        serde_json::to_writer_pretty(&mut writer, content)?;
-        writer.write_all(b"\n")?;
+        serialize_with_style(&mut writer, &Value::Object(content.clone()), &style)?;
+        if style.trailing_newline {
+            writer.write_all(if style.use_crlf { b"\r\n" } else { b"\n" })?;
+        }
         writer.flush()?;
     }
 
@@ -311,38 +508,51 @@ pub fn sync_locale_file_locked(
     default_namespace: &str,
     key_separator: &str,
 ) -> Result<SyncResult> {
+    sync_locale_file_locked_with_fs(
+        path,
+        keys,
+        target_namespace,
+        default_namespace,
+        key_separator,
+        &crate::fs::RealFileSystem,
+    )
+}
+
+/// Atomically read, modify, and write a locale file using the provided FileSystem.
+/// This version is testable with mock file systems.
+pub fn sync_locale_file_locked_with_fs<F: FileSystem>(
+    path: &Path,
+    keys: &[ExtractedKey],
+    target_namespace: &str,
+    default_namespace: &str,
+    key_separator: &str,
+    fs: &F,
+) -> Result<SyncResult> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        fs.create_dir_all(parent)
             .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
 
-    // Create or open the file for reading and writing
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-        .with_context(|| format!("Failed to open locale file: {}", path.display()))?;
+    // Open file with exclusive lock using FileSystem abstraction
+    let mut locked_file = fs.open_locked(path)?;
 
-    // Acquire exclusive lock (blocks until available)
-    file.lock_exclusive()
-        .with_context(|| format!("Failed to acquire lock on: {}", path.display()))?;
+    // Read existing content
+    let content_str = locked_file.content_string()
+        .with_context(|| format!("Failed to read locale file: {}", path.display()))?;
 
-    // Read existing content with BufReader for efficiency
-    let mut content = {
-        let mut reader = BufReader::new(&file);
-        let mut content_str = String::new();
-        reader.read_to_string(&mut content_str)
-            .with_context(|| format!("Failed to read locale file: {}", path.display()))?;
+    // Detect existing JSON style before parsing
+    let style = if content_str.trim().is_empty() {
+        JsonStyle::default()
+    } else {
+        detect_json_style(&content_str)
+    };
 
-        if content_str.trim().is_empty() {
-            Map::new()
-        } else {
-            serde_json::from_str(&content_str)
-                .with_context(|| format!("Failed to parse JSON in: {}", path.display()))?
-        }
+    let mut content: Map<String, Value> = if content_str.trim().is_empty() {
+        Map::new()
+    } else {
+        serde_json::from_str(&content_str)
+            .with_context(|| format!("Failed to parse JSON in: {}", path.display()))?
     };
 
     // Merge new keys
@@ -360,26 +570,17 @@ pub fn sync_locale_file_locked(
         // Sort keys alphabetically
         let sorted = sort_keys_alphabetically(&content);
 
-        // Use tempfile for safe atomic file operations:
-        // - Creates temp file in same directory (avoids EXDEV errors on cross-mount rename)
-        // - Unique random filename (avoids race conditions with parallel execution)
-        // - Auto-cleanup on drop (no garbage files left on crash)
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let mut temp_file = NamedTempFile::new_in(parent)
-            .with_context(|| format!("Failed to create temp file in: {}", parent.display()))?;
-
-        // Write with buffering for efficiency
-        {
-            let mut writer = BufWriter::new(&mut temp_file);
-            serde_json::to_writer_pretty(&mut writer, &sorted)?;
-            writer.write_all(b"\n")?;
-            writer.flush()?;
+        // Serialize with style preservation
+        let mut buffer = Vec::new();
+        serialize_with_style(&mut buffer, &Value::Object(sorted), &style)?;
+        // Add trailing newline if the original file had one (or new file)
+        if style.trailing_newline {
+            buffer.extend_from_slice(if style.use_crlf { b"\r\n" } else { b"\n" });
         }
 
-        // Atomic persist: fsync + rename in one operation
-        // This guarantees data is on disk before the rename
-        temp_file.persist(path)
-            .with_context(|| format!("Failed to persist locale file: {}", path.display()))?;
+        // Atomic write using FileSystem abstraction
+        fs.atomic_write(path, &buffer)
+            .with_context(|| format!("Failed to write locale file: {}", path.display()))?;
     }
 
     // Lock is automatically released when file is dropped
@@ -632,5 +833,219 @@ mod tests {
         // Should NOT have nested structure
         assert!(existing.get("button").is_none());
         assert!(existing.get("form").is_none());
+    }
+
+    #[test]
+    fn test_detect_json_style_default() {
+        let style = JsonStyle::default();
+        assert_eq!(style.indent, "  ");
+        assert!(!style.use_crlf);
+        assert!(style.trailing_newline);
+    }
+
+    #[test]
+    fn test_detect_json_style_two_spaces() {
+        let json = r#"{
+  "key": "value"
+}
+"#;
+        let style = detect_json_style(json);
+        assert_eq!(style.indent, "  ");
+        assert!(!style.use_crlf);
+        assert!(style.trailing_newline);
+    }
+
+    #[test]
+    fn test_detect_json_style_four_spaces() {
+        let json = r#"{
+    "key": "value"
+}
+"#;
+        let style = detect_json_style(json);
+        assert_eq!(style.indent, "    ");
+        assert!(!style.use_crlf);
+        assert!(style.trailing_newline);
+    }
+
+    #[test]
+    fn test_detect_json_style_tabs() {
+        let json = "{\n\t\"key\": \"value\"\n}\n";
+        let style = detect_json_style(json);
+        assert_eq!(style.indent, "\t");
+        assert!(!style.use_crlf);
+        assert!(style.trailing_newline);
+    }
+
+    #[test]
+    fn test_detect_json_style_crlf() {
+        let json = "{\r\n  \"key\": \"value\"\r\n}\r\n";
+        let style = detect_json_style(json);
+        assert_eq!(style.indent, "  ");
+        assert!(style.use_crlf);
+        assert!(style.trailing_newline);
+    }
+
+    #[test]
+    fn test_detect_json_style_no_trailing_newline() {
+        let json = r#"{
+  "key": "value"
+}"#;
+        let style = detect_json_style(json);
+        assert_eq!(style.indent, "  ");
+        assert!(!style.use_crlf);
+        assert!(!style.trailing_newline);
+    }
+
+    #[test]
+    fn test_serialize_with_style_four_spaces() {
+        let mut map = Map::new();
+        map.insert("hello".to_string(), Value::String("world".to_string()));
+
+        let style = JsonStyle {
+            indent: "    ".to_string(),
+            use_crlf: false,
+            trailing_newline: true,
+        };
+
+        let mut output = Vec::new();
+        serialize_with_style(&mut output, &Value::Object(map), &style).unwrap();
+        let result = String::from_utf8(output).unwrap();
+
+        assert!(result.contains("    \"hello\""));
+    }
+
+    #[test]
+    fn test_serialize_with_style_tabs() {
+        let mut map = Map::new();
+        map.insert("key".to_string(), Value::String("value".to_string()));
+
+        let style = JsonStyle {
+            indent: "\t".to_string(),
+            use_crlf: false,
+            trailing_newline: true,
+        };
+
+        let mut output = Vec::new();
+        serialize_with_style(&mut output, &Value::Object(map), &style).unwrap();
+        let result = String::from_utf8(output).unwrap();
+
+        assert!(result.contains("\t\"key\""));
+    }
+
+    #[test]
+    fn test_sync_locale_file_locked_with_mock_fs() {
+        use crate::fs::mock::InMemoryFileSystem;
+        use std::path::Path;
+
+        let fs = InMemoryFileSystem::new();
+
+        // Create an empty file to start with
+        fs.add_file("locales/en/translation.json", "{}");
+
+        let keys = vec![
+            ExtractedKey {
+                key: "hello".to_string(),
+                namespace: None,
+                default_value: Some("Hello World".to_string()),
+            },
+            ExtractedKey {
+                key: "button.submit".to_string(),
+                namespace: None,
+                default_value: Some("Submit".to_string()),
+            },
+        ];
+
+        let result = sync_locale_file_locked_with_fs(
+            Path::new("locales/en/translation.json"),
+            &keys,
+            "translation",
+            "translation",
+            ".",
+            &fs,
+        )
+        .unwrap();
+
+        assert_eq!(result.added_keys.len(), 2);
+        assert!(result.added_keys.contains(&"hello".to_string()));
+        assert!(result.added_keys.contains(&"button.submit".to_string()));
+
+        // Verify file was written
+        let files = fs.get_files();
+        let content = files
+            .get(Path::new("locales/en/translation.json"))
+            .expect("File should exist");
+
+        // Verify JSON structure
+        let parsed: Map<String, Value> = serde_json::from_str(content).unwrap();
+        assert_eq!(
+            parsed.get("hello"),
+            Some(&Value::String("Hello World".to_string()))
+        );
+
+        // Verify nested key
+        let button = parsed.get("button").unwrap().as_object().unwrap();
+        assert_eq!(
+            button.get("submit"),
+            Some(&Value::String("Submit".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_sync_locale_file_preserves_existing_keys() {
+        use crate::fs::mock::InMemoryFileSystem;
+        use std::path::Path;
+
+        let fs = InMemoryFileSystem::new();
+
+        // Create a file with existing translations
+        fs.add_file(
+            "locales/en/translation.json",
+            r#"{"existing": "Already translated"}"#,
+        );
+
+        let keys = vec![
+            ExtractedKey {
+                key: "existing".to_string(),
+                namespace: None,
+                default_value: Some("New value".to_string()), // Different value
+            },
+            ExtractedKey {
+                key: "new_key".to_string(),
+                namespace: None,
+                default_value: Some("New key value".to_string()),
+            },
+        ];
+
+        let result = sync_locale_file_locked_with_fs(
+            Path::new("locales/en/translation.json"),
+            &keys,
+            "translation",
+            "translation",
+            ".",
+            &fs,
+        )
+        .unwrap();
+
+        // Only new key should be added
+        assert_eq!(result.added_keys.len(), 1);
+        assert_eq!(result.added_keys[0], "new_key");
+        assert_eq!(result.existing_keys, 1);
+
+        // Verify existing translation was preserved
+        let files = fs.get_files();
+        let content = files
+            .get(Path::new("locales/en/translation.json"))
+            .expect("File should exist");
+        let parsed: Map<String, Value> = serde_json::from_str(content).unwrap();
+
+        // Original value should be preserved, not overwritten
+        assert_eq!(
+            parsed.get("existing"),
+            Some(&Value::String("Already translated".to_string()))
+        );
+        assert_eq!(
+            parsed.get("new_key"),
+            Some(&Value::String("New key value".to_string()))
+        );
     }
 }
