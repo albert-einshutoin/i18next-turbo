@@ -98,17 +98,12 @@ pub struct Config {
     pub types: TypesConfig,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum OutputFormat {
+    #[default]
     Json,
     Json5,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Json
-    }
 }
 
 impl OutputFormat {
@@ -119,7 +114,7 @@ impl OutputFormat {
         }
     }
 
-    pub fn from_str(value: &str) -> Result<Self> {
+    pub fn parse_str(value: &str) -> Result<Self> {
         match value.to_lowercase().as_str() {
             "json" => Ok(OutputFormat::Json),
             "json5" => Ok(OutputFormat::Json5),

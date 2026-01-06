@@ -637,6 +637,7 @@ impl TranslationVisitor {
         dedup_strings(values)
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn resolve_possible_string_values(&self, expr: &Expr) -> Vec<String> {
         match expr {
             Expr::Lit(Lit::Str(s)) => s
