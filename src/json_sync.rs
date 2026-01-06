@@ -1304,7 +1304,8 @@ mod tests {
 
         let mut config = Config::default();
         config.output_format = OutputFormat::Json5;
-        let matcher = PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
 
         let result = sync_locale_file_locked_with_fs(
             Path::new("locales/en/translation.json5"),

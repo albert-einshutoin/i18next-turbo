@@ -197,13 +197,25 @@ fn comment_option_exists(text: &str, key: &str) -> bool {
         .and_then(|re| re.find(text))
         .is_some()
 }
+
+fn dedup_strings(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for value in values {
+        if seen.insert(value.clone()) {
+            result.push(value);
+        }
+    }
+    result
+}
+
 use swc_common::comments::SingleThreadedComments;
 use swc_common::sync::Lrc;
 use swc_common::{FileName, SourceMap, Span, Spanned};
 use swc_ecma_ast::{
-    CallExpr, Callee, Expr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue, JSXElement,
-    JSXElementChild, JSXElementName, JSXOpeningElement, Lit, MemberProp, ObjectLit, Pat, Prop,
-    PropName, PropOrSpread, Tpl, VarDeclarator,
+    BinaryOp, CallExpr, Callee, CondExpr, Expr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue,
+    JSXElement, JSXElementChild, JSXElementName, JSXExpr, JSXOpeningElement, Lit, MemberProp,
+    ObjectLit, ParenExpr, Pat, Prop, PropName, PropOrSpread, Tpl, VarDeclarator,
 };
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_visit::{Visit, VisitWith};
@@ -238,6 +250,12 @@ pub struct ScopeInfo {
     pub namespace: Option<String>,
     /// Key prefix from useTranslation({ keyPrefix: 'prefix' })
     pub key_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ContextInfo {
+    values: Vec<String>,
+    is_dynamic: bool,
 }
 
 /// Visitor that traverses the AST and extracts translation keys
@@ -433,6 +451,39 @@ impl TranslationVisitor {
             .collect()
     }
 
+    fn generate_plural_keys_with_context(
+        &mut self,
+        base_key: &str,
+        namespace: Option<String>,
+        default_value: Option<String>,
+        context_info: Option<&ContextInfo>,
+    ) {
+        match context_info {
+            Some(info) if !info.values.is_empty() => {
+                for ctx in &info.values {
+                    let plural_keys = self.generate_plural_keys(
+                        base_key,
+                        Some(ctx.as_str()),
+                        namespace.clone(),
+                        default_value.clone(),
+                    );
+                    self.keys.extend(plural_keys);
+                }
+
+                if info.is_dynamic {
+                    let plural_keys =
+                        self.generate_plural_keys(base_key, None, namespace, default_value);
+                    self.keys.extend(plural_keys);
+                }
+            }
+            _ => {
+                let plural_keys =
+                    self.generate_plural_keys(base_key, None, namespace, default_value);
+                self.keys.extend(plural_keys);
+            }
+        }
+    }
+
     /// Check if call has context option
     fn get_context_option(&self, call: &CallExpr) -> Option<String> {
         self.get_option_value(call, "context")
@@ -580,6 +631,60 @@ impl TranslationVisitor {
         }
     }
 
+    fn resolve_possible_context_values(&self, expr: &Expr) -> Vec<String> {
+        let mut values = self.resolve_possible_string_values(expr);
+        values.retain(|v| !v.is_empty());
+        dedup_strings(values)
+    }
+
+    fn resolve_possible_string_values(&self, expr: &Expr) -> Vec<String> {
+        match expr {
+            Expr::Lit(Lit::Str(s)) => s
+                .value
+                .as_str()
+                .map(|s| s.to_string())
+                .into_iter()
+                .collect(),
+            Expr::Tpl(tpl) => {
+                if tpl.exprs.is_empty() {
+                    let mut text = String::new();
+                    for quasi in &tpl.quasis {
+                        if let Some(cooked) = &quasi.cooked {
+                            text.push_str(&cooked.to_string_lossy());
+                        }
+                    }
+                    if text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![text]
+                    }
+                } else {
+                    Vec::new()
+                }
+            }
+            Expr::Paren(ParenExpr { expr, .. }) => {
+                self.resolve_possible_string_values(expr.as_ref())
+            }
+            Expr::Cond(CondExpr { cons, alt, .. }) => {
+                let mut values = self.resolve_possible_string_values(cons.as_ref());
+                values.extend(self.resolve_possible_string_values(alt.as_ref()));
+                values
+            }
+            Expr::Bin(bin) if matches!(bin.op, BinaryOp::Add) => {
+                let left = self.resolve_possible_string_values(bin.left.as_ref());
+                let right = self.resolve_possible_string_values(bin.right.as_ref());
+                let mut combined = Vec::new();
+                for l in &left {
+                    for r in &right {
+                        combined.push(format!("{}{}", l, r));
+                    }
+                }
+                combined
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Extract i18nKey from Trans component attributes
     fn extract_trans_key(&self, elem: &JSXOpeningElement) -> Option<String> {
         for attr in &elem.attrs {
@@ -626,14 +731,32 @@ impl TranslationVisitor {
         false
     }
 
-    /// Extract context attribute from Trans component
-    fn extract_trans_context(&self, elem: &JSXOpeningElement) -> Option<String> {
+    /// Extract context attribute info from Trans component (supports dynamic expressions)
+    fn extract_trans_context_info(&self, elem: &JSXOpeningElement) -> Option<ContextInfo> {
         for attr in &elem.attrs {
             if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
                 if let JSXAttrName::Ident(name) = &jsx_attr.name {
                     if name.sym.as_ref() == "context" {
                         if let Some(value) = &jsx_attr.value {
-                            return self.extract_jsx_attr_string(value);
+                            if let Some(literal) = self.extract_jsx_attr_string(value) {
+                                if literal.is_empty() {
+                                    return None;
+                                }
+                                return Some(ContextInfo {
+                                    values: vec![literal],
+                                    is_dynamic: false,
+                                });
+                            }
+
+                            if let JSXAttrValue::JSXExprContainer(container) = value {
+                                if let JSXExpr::Expr(expr) = &container.expr {
+                                    let values = self.resolve_possible_context_values(expr);
+                                    return Some(ContextInfo {
+                                        values,
+                                        is_dynamic: true,
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -1138,8 +1261,8 @@ impl Visit for TranslationVisitor {
                 // Check for count attribute (plurals)
                 let has_count = self.trans_has_count(&elem.opening);
 
-                // Check for context attribute
-                let context = self.extract_trans_context(&elem.opening);
+                // Check for context attribute (supports dynamic expressions)
+                let context_info = self.extract_trans_context_info(&elem.opening);
 
                 // Determine the key and default value
                 let (key, default_value) = if let Some(key) = i18n_key {
@@ -1172,21 +1295,35 @@ impl Visit for TranslationVisitor {
 
                 // Generate keys based on count and context attributes
                 if has_count {
-                    // Generate plural keys based on configuration
-                    let plural_keys = self.generate_plural_keys(
+                    self.generate_plural_keys_with_context(
                         &base_key,
-                        context.as_deref(),
-                        namespace,
-                        default_value,
+                        namespace.clone(),
+                        default_value.clone(),
+                        context_info.as_ref(),
                     );
-                    self.keys.extend(plural_keys);
-                } else if let Some(ctx) = context {
-                    // Context only: key_context
-                    self.keys.push(ExtractedKey {
-                        key: format!("{}_{}", base_key, ctx),
-                        namespace,
-                        default_value,
-                    });
+                } else if let Some(info) = context_info {
+                    if info.values.is_empty() {
+                        self.keys.push(ExtractedKey {
+                            key: base_key,
+                            namespace,
+                            default_value,
+                        });
+                    } else {
+                        for ctx in &info.values {
+                            self.keys.push(ExtractedKey {
+                                key: format!("{}_{}", base_key, ctx),
+                                namespace: namespace.clone(),
+                                default_value: default_value.clone(),
+                            });
+                        }
+                        if info.is_dynamic {
+                            self.keys.push(ExtractedKey {
+                                key: base_key,
+                                namespace,
+                                default_value,
+                            });
+                        }
+                    }
                 } else {
                     // No modifiers: base key
                     self.keys.push(ExtractedKey {
@@ -1979,6 +2116,41 @@ mod tests {
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "user_admin");
         assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_trans_dynamic_context_ternary() {
+        let source = r#"
+            function Component({ isMale }) {
+                return <Trans i18nKey="friend" context={isMale ? 'male' : 'female'}>Friend</Trans>;
+            }
+        "#;
+
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        assert!(keys.iter().any(|k| k.key == "friend_male"));
+        assert!(keys.iter().any(|k| k.key == "friend_female"));
+        assert!(keys.iter().any(|k| k.key == "friend"));
+    }
+
+    #[test]
+    fn test_trans_dynamic_context_with_count() {
+        let source = r#"
+            function Component({ count, variant }) {
+                return (
+                    <Trans i18nKey="fruit" count={count} context={variant ? 'ripe' : 'fresh'}>
+                        Fruit
+                    </Trans>
+                );
+            }
+        "#;
+
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        assert!(keys.iter().any(|k| k.key == "fruit_ripe_one"));
+        assert!(keys.iter().any(|k| k.key == "fruit_ripe_other"));
+        assert!(keys.iter().any(|k| k.key == "fruit_fresh_one"));
+        assert!(keys.iter().any(|k| k.key == "fruit_fresh_other"));
+        assert!(keys.iter().any(|k| k.key == "fruit_one"));
+        assert!(keys.iter().any(|k| k.key == "fruit_other"));
     }
 
     #[test]
