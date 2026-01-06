@@ -42,6 +42,7 @@ pub fn run(
         &config.functions,
         config.extract_from_comments,
         &plural_config,
+        &config.trans_components,
     )?;
 
     let mut source_keys: HashSet<String> = HashSet::new();

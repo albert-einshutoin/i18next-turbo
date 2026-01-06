@@ -134,6 +134,7 @@ impl FileWatcher {
             &self.config.functions,
             self.config.extract_from_comments,
             &plural_config,
+            &self.config.trans_components,
         )?;
 
         // Populate cache

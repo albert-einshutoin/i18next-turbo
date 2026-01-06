@@ -60,6 +60,12 @@ pub struct Config {
     #[serde(default = "default_plural_suffixes")]
     pub plural_suffixes: Vec<String>,
 
+    /// Whether to completely disable plural key generation
+    /// When true, keys with `count` will not generate `_one`, `_other` etc.
+    /// Default: false
+    #[serde(default)]
+    pub disable_plurals: bool,
+
     /// Whether to extract keys from comments (e.g., // t('key'))
     /// Default: true
     #[serde(default = "default_extract_from_comments")]
@@ -104,6 +110,10 @@ pub enum OutputFormat {
     #[default]
     Json,
     Json5,
+    #[serde(alias = "js")]
+    JsEsm,
+    JsCjs,
+    Ts,
 }
 
 impl OutputFormat {
@@ -111,6 +121,8 @@ impl OutputFormat {
         match self {
             OutputFormat::Json => "json",
             OutputFormat::Json5 => "json5",
+            OutputFormat::JsEsm | OutputFormat::JsCjs => "js",
+            OutputFormat::Ts => "ts",
         }
     }
 
@@ -118,8 +130,11 @@ impl OutputFormat {
         match value.to_lowercase().as_str() {
             "json" => Ok(OutputFormat::Json),
             "json5" => Ok(OutputFormat::Json5),
+            "js" | "js-esm" => Ok(OutputFormat::JsEsm),
+            "js-cjs" => Ok(OutputFormat::JsCjs),
+            "ts" => Ok(OutputFormat::Ts),
             other => bail!(
-                "Configuration error: unsupported outputFormat '{}'. Supported: json, json5",
+                "Configuration error: unsupported outputFormat '{}'. Supported: json, json5, js, js-esm, js-cjs, ts",
                 other
             ),
         }
@@ -167,6 +182,7 @@ pub struct NapiConfig {
     pub contextSeparator: Option<String>,
     pub pluralSeparator: Option<String>,
     pub pluralSuffixes: Option<Vec<String>>,
+    pub disablePlurals: Option<bool>,
     pub extractFromComments: Option<bool>,
     pub useLocalePluralRules: Option<bool>,
     pub ignore: Option<Vec<String>>,
@@ -254,6 +270,7 @@ impl Default for Config {
             context_separator: default_context_separator(),
             plural_separator: default_plural_separator(),
             plural_suffixes: default_plural_suffixes(),
+            disable_plurals: false,
             extract_from_comments: default_extract_from_comments(),
             use_locale_plural_rules: default_use_locale_plural_rules(),
             ignore: Vec::new(),
@@ -269,6 +286,14 @@ impl Default for Config {
 
 impl Config {
     pub fn plural_config(&self) -> PluralConfig {
+        // If plurals are disabled, return empty suffixes
+        if self.disable_plurals {
+            return PluralConfig {
+                separator: self.plural_separator.clone(),
+                suffixes: Vec::new(),
+            };
+        }
+
         let suffixes = if self.use_locale_plural_rules {
             compute_plural_suffixes_from_locales(&self.locales)
         } else {
@@ -492,6 +517,7 @@ impl Config {
             plural_suffixes: config
                 .pluralSuffixes
                 .unwrap_or_else(|| defaults.plural_suffixes.clone()),
+            disable_plurals: config.disablePlurals.unwrap_or(false),
             extract_from_comments: config
                 .extractFromComments
                 .unwrap_or(defaults.extract_from_comments),
@@ -604,6 +630,14 @@ mod tests {
             plural.suffixes,
             vec!["zero".to_string(), "other".to_string()]
         );
+    }
+
+    #[test]
+    fn plural_config_returns_empty_when_disable_plurals_is_true() {
+        let mut config = Config::default();
+        config.disable_plurals = true;
+        let plural = config.plural_config();
+        assert!(plural.suffixes.is_empty());
     }
 }
 

@@ -118,7 +118,7 @@
 - [x] `i18next-turbo typegen` コマンドが動作する
 - [x] `i18next-turbo check` コマンドが動作する
 - [x] `i18next-turbo extract --generate-types` で抽出と型生成が同時に実行される
-- [ ] READMEに記載されている機能が実際に使える状態になる
+- [x] READMEに記載されている機能が実際に使える状態になる
 
 ---
 
@@ -406,15 +406,15 @@
 - [ ] 末尾カンマの保持
 - [ ] 数値形式の保持
 
-#### 3.3.2: TypeScript ファイル出力
-- [ ] `outputFormat: 'ts'` オプション
-- [ ] `export default { ... } as const` 形式の生成
-- [ ] 型安全性の確保
+#### 3.3.2: TypeScript ファイル出力 ✅
+- [x] `outputFormat: 'ts'` オプション
+- [x] `export default { ... } as const` 形式の生成
+- [x] 型安全性の確保
 
-#### 3.3.3: JavaScript ファイル出力
-- [ ] `outputFormat: 'js'` または `'js-esm'`: ES Module 形式（`export default`）
-- [ ] `outputFormat: 'js-cjs'`: CommonJS 形式（`module.exports`）
-- [ ] プロジェクトのモジュールシステムに応じた自動選択
+#### 3.3.3: JavaScript ファイル出力 ✅
+- [x] `outputFormat: 'js'` または `'js-esm'`: ES Module 形式（`export default`）
+- [x] `outputFormat: 'js-cjs'`: CommonJS 形式（`module.exports`）
+- [x] プロジェクトのモジュールシステムに応じた自動選択
 
 #### 3.3.4: 名前空間のマージ
 - [ ] `mergeNamespaces: true` オプション

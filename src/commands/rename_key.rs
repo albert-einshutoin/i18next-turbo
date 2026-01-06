@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 
-use crate::config::{Config, OutputFormat};
+use crate::config::Config;
 use crate::json_sync;
 
 pub fn run(
@@ -97,7 +97,7 @@ pub fn run(
             continue;
         }
 
-        let mut json = parse_locale_value(&content, format)
+        let mut json = json_sync::parse_locale_value_str(&content, format, &ns_file)
             .with_context(|| format!("Failed to parse locale file: {}", ns_file.display()))?;
 
         // Get the value at old key path
@@ -124,9 +124,10 @@ pub fn run(
 
                 let mut new_json = if new_ns_file.exists() {
                     let new_content = std::fs::read_to_string(&new_ns_file)?;
-                    parse_locale_value(&new_content, format).with_context(|| {
-                        format!("Failed to parse locale file: {}", new_ns_file.display())
-                    })?
+                    json_sync::parse_locale_value_str(&new_content, format, &new_ns_file)
+                        .with_context(|| {
+                            format!("Failed to parse locale file: {}", new_ns_file.display())
+                        })?
                 } else {
                     Value::Object(Map::new())
                 };
@@ -183,6 +184,69 @@ pub fn run(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    fn test_config(root: &std::path::Path) -> Config {
+        let mut config = Config::default();
+        config.output = root.join("locales").to_string_lossy().to_string();
+        config.locales = vec!["en".to_string()];
+        config.input = vec![];
+        config
+    }
+
+    #[test]
+    fn rename_key_updates_same_namespace() {
+        let tmp = tempdir().unwrap();
+        let config = test_config(tmp.path());
+        let locale_dir = Path::new(&config.output).join("en");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        std::fs::write(
+            locale_dir.join("translation.json"),
+            r#"{"greeting":{"old":"hi"}}"#,
+        )
+        .unwrap();
+
+        run(&config, "greeting.old", "greeting.new", false, true).unwrap();
+
+        let updated = std::fs::read_to_string(locale_dir.join("translation.json")).unwrap();
+        assert!(updated.contains("\"greeting\""));
+        assert!(updated.contains("\"new\""));
+        assert!(!updated.contains("old"));
+    }
+
+    #[test]
+    fn rename_key_moves_between_namespaces() {
+        let tmp = tempdir().unwrap();
+        let config = test_config(tmp.path());
+        let locale_dir = Path::new(&config.output).join("en");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        std::fs::write(
+            locale_dir.join("translation.json"),
+            r#"{"users":{"admin":"Admin"}}"#,
+        )
+        .unwrap();
+        std::fs::write(locale_dir.join("common.json"), "{}\n").unwrap();
+
+        run(
+            &config,
+            "translation:users.admin",
+            "common:people.superAdmin",
+            false,
+            true,
+        )
+        .unwrap();
+
+        let old_ns = std::fs::read_to_string(locale_dir.join("translation.json")).unwrap();
+        assert!(!old_ns.contains("admin"));
+        let new_ns = std::fs::read_to_string(locale_dir.join("common.json")).unwrap();
+        assert!(new_ns.contains("superAdmin"));
+    }
+}
+
 /// Parse a key that may contain namespace (ns:key.path)
 fn parse_key_with_ns(key: &str, default_ns: &str) -> (String, String) {
     if key.contains(':') {
@@ -206,17 +270,6 @@ fn get_nested_value(json: &Value, path: &str) -> Option<Value> {
     }
 
     Some(current.clone())
-}
-
-fn parse_locale_value(content: &str, format: OutputFormat) -> Result<Value> {
-    if content.trim().is_empty() {
-        return Ok(Value::Object(Map::new()));
-    }
-
-    match format {
-        OutputFormat::Json => Ok(serde_json::from_str(content)?),
-        OutputFormat::Json5 => Ok(json5::from_str(content)?),
-    }
 }
 
 /// Remove a nested key from JSON using dot notation

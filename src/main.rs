@@ -22,6 +22,10 @@ struct Cli {
     #[arg(long, global = true, hide = true)]
     config_stdin: bool,
 
+    /// Enable verbose output for detailed logging
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -208,6 +212,7 @@ fn main() -> Result<()> {
                 &resolved_types_output,
                 dry_run,
                 ci,
+                cli.verbose,
             )?;
         }
         Commands::Watch { output } => {

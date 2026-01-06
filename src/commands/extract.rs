@@ -14,6 +14,7 @@ pub fn run(
     types_output: &str,
     dry_run: bool,
     ci: bool,
+    verbose: bool,
 ) -> Result<()> {
     if dry_run {
         println!("=== i18next-turbo extract (dry-run) ===\n");
@@ -29,6 +30,20 @@ pub fn run(
     println!("  Output: {}", output_dir);
     println!("  Locales: {:?}", config.locales);
     println!("  Functions: {:?}", config.functions);
+    if verbose {
+        println!("  Key separator: {:?}", config.key_separator);
+        println!("  NS separator: {:?}", config.ns_separator);
+        println!("  Plural separator: {:?}", config.plural_separator);
+        println!("  Context separator: {:?}", config.context_separator);
+        println!("  Remove unused keys: {}", config.remove_unused_keys);
+        println!("  Disable plurals: {}", config.disable_plurals);
+        if !config.ignore.is_empty() {
+            println!("  Ignore patterns: {:?}", config.ignore);
+        }
+        if !config.preserve_patterns.is_empty() {
+            println!("  Preserve patterns: {:?}", config.preserve_patterns);
+        }
+    }
     println!();
 
     let plural_config = config.plural_config();
@@ -40,6 +55,7 @@ pub fn run(
         &config.functions,
         config.extract_from_comments,
         &plural_config,
+        &config.trans_components,
     )?;
 
     // Report any errors encountered during extraction
@@ -114,6 +130,11 @@ pub fn run(
                 if dry_run { "would add" } else { "added" },
                 result.added_keys.len()
             );
+            if verbose {
+                for key in &result.added_keys {
+                    println!("    + {}", key);
+                }
+            }
             total_added += result.added_keys.len();
         }
 
@@ -124,6 +145,11 @@ pub fn run(
                 if dry_run { "would remove" } else { "removed" },
                 result.removed_keys.len()
             );
+            if verbose {
+                for key in &result.removed_keys {
+                    println!("    - {}", key);
+                }
+            }
             total_removed += result.removed_keys.len();
         }
 

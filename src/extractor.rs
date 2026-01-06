@@ -288,19 +288,17 @@ pub struct TranslationVisitor {
 impl TranslationVisitor {
     pub fn new(
         functions: Vec<String>,
+        trans_components: Vec<String>,
         source_map: Lrc<SourceMap>,
         comments: Option<SingleThreadedComments>,
         plural_config: PluralConfig,
     ) -> Self {
-        let mut trans_components = HashSet::new();
-        trans_components.insert("Trans".to_string());
-
         // Parse magic comments to find disabled lines
         let disabled_lines = Self::parse_disabled_lines(&comments);
 
         Self {
             functions: functions.into_iter().collect(),
-            trans_components,
+            trans_components: trans_components.into_iter().collect(),
             keys: Vec::new(),
             source_map,
             comments,
@@ -1348,7 +1346,14 @@ pub fn extract_from_file<P: AsRef<Path>>(
     functions: &[String],
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) = extract_from_file_with_warnings(path, functions, true, plural_config)?;
+    let default_trans_components = vec!["Trans".to_string()];
+    let (keys, _) = extract_from_file_with_warnings(
+        path,
+        functions,
+        &default_trans_components,
+        true,
+        plural_config,
+    )?;
     Ok(keys)
 }
 
@@ -1359,14 +1364,21 @@ pub fn extract_from_file_with_options<P: AsRef<Path>>(
     extract_from_comments: bool,
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
-    let (keys, _) =
-        extract_from_file_with_warnings(path, functions, extract_from_comments, plural_config)?;
+    let default_trans_components = vec!["Trans".to_string()];
+    let (keys, _) = extract_from_file_with_warnings(
+        path,
+        functions,
+        &default_trans_components,
+        extract_from_comments,
+        plural_config,
+    )?;
     Ok(keys)
 }
 
 fn extract_from_file_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
+    trans_components: &[String],
     extract_from_comments: bool,
     plural_config: &PluralConfig,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
@@ -1378,6 +1390,7 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
         &source_code,
         path,
         functions,
+        trans_components,
         extract_from_comments,
         plural_config,
     )
@@ -1392,8 +1405,15 @@ pub fn extract_from_source<P: AsRef<Path>>(
     functions: &[String],
 ) -> Result<Vec<ExtractedKey>> {
     let plural_config = PluralConfig::default();
-    let (keys, _) =
-        extract_from_source_with_warnings(source, path, functions, true, &plural_config)?;
+    let default_trans_components = vec!["Trans".to_string()];
+    let (keys, _) = extract_from_source_with_warnings(
+        source,
+        path,
+        functions,
+        &default_trans_components,
+        true,
+        &plural_config,
+    )?;
     Ok(keys)
 }
 
@@ -1405,10 +1425,12 @@ pub fn extract_from_source_with_options<P: AsRef<Path>>(
     extract_from_comments: bool,
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
+    let default_trans_components = vec!["Trans".to_string()];
     let (keys, _) = extract_from_source_with_warnings(
         source,
         path,
         functions,
+        &default_trans_components,
         extract_from_comments,
         plural_config,
     )?;
@@ -1419,6 +1441,7 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     source: &str,
     path: P,
     functions: &[String],
+    trans_components: &[String],
     should_extract_from_comments: bool,
     plural_config: &PluralConfig,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
@@ -1478,6 +1501,7 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     // Visit the AST and extract keys
     let mut visitor = TranslationVisitor::new(
         functions.to_vec(),
+        trans_components.to_vec(),
         cm,
         Some(comments),
         plural_config.clone(),
@@ -1519,7 +1543,15 @@ pub fn extract_from_glob(
     functions: &[String],
     plural_config: &PluralConfig,
 ) -> Result<ExtractionResult> {
-    extract_from_glob_with_options(patterns, ignore_patterns, functions, true, plural_config)
+    let default_trans_components = vec!["Trans".to_string()];
+    extract_from_glob_with_options(
+        patterns,
+        ignore_patterns,
+        functions,
+        true,
+        plural_config,
+        &default_trans_components,
+    )
 }
 
 /// Extract keys from multiple files using glob patterns with configurable options.
@@ -1529,11 +1561,13 @@ pub fn extract_from_glob_with_options(
     functions: &[String],
     extract_from_comments: bool,
     plural_config: &PluralConfig,
+    trans_components: &[String],
 ) -> Result<ExtractionResult> {
     use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
 
     let ignore_matchers = Arc::new(compile_ignore_patterns(ignore_patterns)?);
+    let trans_components = Arc::new(trans_components.to_vec());
 
     // Create a streaming iterator that chains all glob patterns
     // This avoids collecting all file paths into memory upfront
@@ -1582,42 +1616,46 @@ pub fn extract_from_glob_with_options(
             }
         })
         .par_bridge() // Stream directly into parallel processing
-        .map(|item| match item {
-            GlobItem::Path(path) => {
-                match extract_from_file_with_warnings(
-                    &path,
-                    functions,
-                    extract_from_comments,
-                    plural_config,
-                ) {
-                    Ok((keys, warnings)) => {
-                        if keys.is_empty() {
-                            FileExtractionResult::Empty { warnings }
-                        } else {
-                            FileExtractionResult::Success {
-                                file_path: path.display().to_string(),
-                                keys,
-                                warnings,
+        .map({
+            let trans_components = Arc::clone(&trans_components);
+            move |item| match item {
+                GlobItem::Path(path) => {
+                    match extract_from_file_with_warnings(
+                        &path,
+                        functions,
+                        &trans_components,
+                        extract_from_comments,
+                        plural_config,
+                    ) {
+                        Ok((keys, warnings)) => {
+                            if keys.is_empty() {
+                                FileExtractionResult::Empty { warnings }
+                            } else {
+                                FileExtractionResult::Success {
+                                    file_path: path.display().to_string(),
+                                    keys,
+                                    warnings,
+                                }
                             }
                         }
+                        Err(e) => FileExtractionResult::Error(ExtractionError {
+                            file_path: path.display().to_string(),
+                            message: e.to_string(),
+                        }),
                     }
-                    Err(e) => FileExtractionResult::Error(ExtractionError {
-                        file_path: path.display().to_string(),
-                        message: e.to_string(),
-                    }),
                 }
-            }
-            GlobItem::GlobError { pattern, message } => {
-                FileExtractionResult::Error(ExtractionError {
-                    file_path: pattern,
-                    message: format!("Glob error: {}", message),
-                })
-            }
-            GlobItem::PatternError { pattern, message } => {
-                FileExtractionResult::Error(ExtractionError {
-                    file_path: pattern,
-                    message: format!("Invalid glob pattern: {}", message),
-                })
+                GlobItem::GlobError { pattern, message } => {
+                    FileExtractionResult::Error(ExtractionError {
+                        file_path: pattern,
+                        message: format!("Glob error: {}", message),
+                    })
+                }
+                GlobItem::PatternError { pattern, message } => {
+                    FileExtractionResult::Error(ExtractionError {
+                        file_path: pattern,
+                        message: format!("Invalid glob pattern: {}", message),
+                    })
+                }
             }
         })
         .collect();
@@ -1664,12 +1702,14 @@ pub fn extract_from_glob_deduplicated(
     functions: &[String],
     plural_config: &PluralConfig,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
+    let default_trans_components = vec!["Trans".to_string()];
     extract_from_glob_deduplicated_with_options(
         patterns,
         ignore_patterns,
         functions,
         true,
         plural_config,
+        &default_trans_components,
     )
 }
 
@@ -1680,6 +1720,7 @@ pub fn extract_from_glob_deduplicated_with_options(
     functions: &[String],
     extract_from_comments: bool,
     plural_config: &PluralConfig,
+    trans_components: &[String],
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
     use rayon::prelude::*;
 
@@ -1713,15 +1754,17 @@ pub fn extract_from_glob_deduplicated_with_options(
     type AccumulatorType = (HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>);
 
     let initial: AccumulatorType = (HashMap::new(), 0, Vec::new());
+    let trans_components = Arc::new(trans_components.to_vec());
 
     let (unique_keys, warning_count, mut errors) = all_files
         .par_iter()
-        .fold(
-            || initial.clone(),
-            |mut acc, path| {
+        .fold(|| initial.clone(), {
+            let trans_components = Arc::clone(&trans_components);
+            move |mut acc: AccumulatorType, path: &std::path::PathBuf| {
                 match extract_from_file_with_warnings(
                     path,
                     functions,
+                    &trans_components,
                     extract_from_comments,
                     plural_config,
                 ) {
@@ -1741,8 +1784,8 @@ pub fn extract_from_glob_deduplicated_with_options(
                     }
                 }
                 acc
-            },
-        )
+            }
+        })
         .reduce(
             || initial.clone(),
             |mut a, b| {

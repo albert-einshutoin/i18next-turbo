@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use glob::Pattern;
 use serde::Serialize;
 use serde_json::ser::{Formatter, Serializer};
@@ -561,6 +561,11 @@ fn prune_unused_keys(
     node.is_empty()
 }
 
+pub fn parse_locale_value_str(content: &str, format: OutputFormat, path: &Path) -> Result<Value> {
+    let map = parse_locale_map(content, format, path)?;
+    Ok(Value::Object(map))
+}
+
 fn parse_locale_map(
     content: &str,
     format: OutputFormat,
@@ -570,12 +575,21 @@ fn parse_locale_map(
         return Ok(Map::new());
     }
 
-    match format {
+    let map: Map<String, Value> = match format {
         OutputFormat::Json => serde_json::from_str(content)
-            .with_context(|| format!("Failed to parse JSON in: {}", path.display())),
+            .with_context(|| format!("Failed to parse JSON in: {}", path.display()))?,
         OutputFormat::Json5 => json5::from_str(content)
-            .with_context(|| format!("Failed to parse JSON5 in: {}", path.display())),
-    }
+            .with_context(|| format!("Failed to parse JSON5 in: {}", path.display()))?,
+        OutputFormat::JsEsm | OutputFormat::JsCjs | OutputFormat::Ts => {
+            let fragment = extract_json_fragment(content)
+                .with_context(|| format!("Failed to locate JSON object in: {}", path.display()))?;
+            serde_json::from_str(&fragment).with_context(|| {
+                format!("Failed to parse JSON in JS/TS module: {}", path.display())
+            })?
+        }
+    };
+
+    Ok(map)
 }
 
 fn write_json_locale_with_fs<F: FileSystem>(
@@ -625,6 +639,96 @@ fn write_json5_locale_with_fs<F: FileSystem>(
         .with_context(|| format!("Failed to write locale file: {}", path.display()))
 }
 
+enum JsVariant {
+    Esm,
+    Cjs,
+}
+
+fn write_js_locale_with_fs<F: FileSystem>(
+    path: &Path,
+    content: &Map<String, Value>,
+    fs: &F,
+    variant: JsVariant,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs.create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
+
+    let json_body = serde_json::to_string_pretty(content)?;
+    let (prefix, suffix) = match variant {
+        JsVariant::Esm => ("export default ", ";\n"),
+        JsVariant::Cjs => ("module.exports = ", ";\n"),
+    };
+    let mut output = String::new();
+    output.push_str(prefix);
+    output.push_str(&json_body);
+    output.push_str(suffix);
+
+    fs.atomic_write(path, output.as_bytes())
+        .with_context(|| format!("Failed to write locale file: {}", path.display()))
+}
+
+fn write_ts_locale_with_fs<F: FileSystem>(
+    path: &Path,
+    content: &Map<String, Value>,
+    fs: &F,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs.create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
+
+    let json_body = serde_json::to_string_pretty(content)?;
+    let output = format!("export default {} as const;\n", json_body);
+    fs.atomic_write(path, output.as_bytes())
+        .with_context(|| format!("Failed to write locale file: {}", path.display()))
+}
+
+fn extract_json_fragment(content: &str) -> Result<String> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+    let mut start_idx = None;
+
+    for (idx, ch) in content.char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start_idx = Some(idx);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth == 0 {
+                    bail!("Unmatched closing brace in module output");
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let start = start_idx
+                        .ok_or_else(|| anyhow::anyhow!("Could not locate JSON object in module"))?;
+                    return Ok(content[start..=idx].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    bail!("Could not locate JSON object in module output")
+}
+
 /// Write translation data atomically using the configured format.
 pub fn write_locale_file(
     path: &Path,
@@ -646,6 +750,9 @@ pub fn write_locale_file_with_fs<F: FileSystem>(
     match format {
         OutputFormat::Json => write_json_locale_with_fs(path, content, style, fs),
         OutputFormat::Json5 => write_json5_locale_with_fs(path, content, fs),
+        OutputFormat::JsEsm => write_js_locale_with_fs(path, content, fs, JsVariant::Esm),
+        OutputFormat::JsCjs => write_js_locale_with_fs(path, content, fs, JsVariant::Cjs),
+        OutputFormat::Ts => write_ts_locale_with_fs(path, content, fs),
     }
 }
 
@@ -1353,5 +1460,38 @@ mod tests {
             .expect("File should exist");
         assert!(content.contains("\"farewell\""));
         assert!(content.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_parse_js_module_locale() {
+        let module = "export default { \"hello\": \"world\" };";
+        let value = parse_locale_value_str(module, OutputFormat::JsEsm, Path::new("test.js"))
+            .expect("should parse");
+        assert_eq!(value["hello"], "world");
+    }
+
+    #[test]
+    fn test_write_js_locale_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut map = Map::new();
+        map.insert("foo".to_string(), Value::String("bar".to_string()));
+        let path = tmp.path().join("translation.js");
+        write_js_locale_with_fs(&path, &map, &crate::fs::RealFileSystem, JsVariant::Esm)
+            .expect("write js file");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("export default"));
+        assert!(content.contains("foo"));
+    }
+
+    #[test]
+    fn test_write_ts_locale_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut map = Map::new();
+        map.insert("foo".to_string(), Value::String("bar".to_string()));
+        let path = tmp.path().join("translation.ts");
+        write_ts_locale_with_fs(&path, &map, &crate::fs::RealFileSystem).expect("write ts file");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("as const"));
+        assert!(content.contains("foo"));
     }
 }

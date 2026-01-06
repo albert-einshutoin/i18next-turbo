@@ -31,6 +31,7 @@ pub fn run(config: &Config, remove: bool, dry_run: bool, locale: Option<String>)
         &config.functions,
         config.extract_from_comments,
         &plural_config,
+        &config.trans_components,
     )?;
 
     let mut all_keys: Vec<ExtractedKey> = Vec::new();
