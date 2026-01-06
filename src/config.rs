@@ -132,7 +132,7 @@ pub struct Config {
 /// Optional separator configuration
 /// Supports both string (e.g., ":") and boolean false (disabled) formats
 /// When false is provided, it's converted to an empty string to disable the separator
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OptionalSeparator(pub String);
 
 impl OptionalSeparator {
@@ -205,12 +205,6 @@ impl serde::Serialize for OptionalSeparator {
     }
 }
 
-impl Default for OptionalSeparator {
-    fn default() -> Self {
-        Self(String::new())
-    }
-}
-
 /// JSON indentation configuration
 /// Supports both numeric (spaces) and string (e.g., "\t") formats
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,12 +215,11 @@ pub enum Indentation {
     Custom(String),
 }
 
-impl Indentation {
-    /// Convert to indentation string
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for Indentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Indentation::Spaces(n) => " ".repeat(*n),
-            Indentation::Custom(s) => s.clone(),
+            Indentation::Spaces(n) => write!(f, "{}", " ".repeat(*n)),
+            Indentation::Custom(s) => write!(f, "{}", s),
         }
     }
 }

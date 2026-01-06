@@ -6,6 +6,7 @@ use crate::extractor::{self, ExtractedKey};
 use crate::json_sync::{self, KeyConflict};
 use crate::typegen;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     config: &Config,
     output: Option<String>,

@@ -114,7 +114,7 @@ pub fn download(
     Ok(())
 }
 
-fn require_locize_config<'a>(config: &'a Config) -> Result<&'a LocizeConfig> {
+fn require_locize_config(config: &Config) -> Result<&LocizeConfig> {
     config
         .locize
         .as_ref()
@@ -187,16 +187,15 @@ fn detect_namespaces_from_files(config: &Config, extension: &str) -> Result<Vec<
         {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() {
-                if path
+            if path.is_file()
+                && path
                     .extension()
                     .and_then(|ext| ext.to_str())
                     .map(|ext| ext.eq_ignore_ascii_case(extension))
                     .unwrap_or(false)
-                {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        namespaces.push(stem.to_string());
-                    }
+            {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    namespaces.push(stem.to_string());
                 }
             }
         }

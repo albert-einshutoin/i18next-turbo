@@ -63,11 +63,9 @@ pub fn run(
             println!("操作をキャンセルしました。");
             return Ok(());
         }
-    } else if !auto_confirm {
-        if !prompt_yes_no("生成した設定を保存しますか?")? {
-            println!("操作をキャンセルしました。");
-            return Ok(());
-        }
+    } else if !auto_confirm && !prompt_yes_no("生成した設定を保存しますか?")? {
+        println!("操作をキャンセルしました。");
+        return Ok(());
     }
 
     fs::write(&target_path, format!("{}\n", preview))

@@ -264,11 +264,11 @@ fn extract_translation_calls(
     functions: &[String],
     include_dollar_alias: bool,
 ) -> Vec<String> {
-    let mut names: Vec<String> = functions.iter().cloned().collect();
+    let mut names: Vec<String> = functions.to_vec();
     if include_dollar_alias && !names.iter().any(|name| name == "$t") {
         names.push("$t".to_string());
     }
-    names.sort_by(|a, b| b.len().cmp(&a.len()));
+    names.sort_by_key(|b| std::cmp::Reverse(b.len()));
     names.dedup();
 
     let mut result = Vec::new();
@@ -329,7 +329,7 @@ fn skip_whitespace_to_paren(text: &str, mut index: usize) -> Option<usize> {
 
 fn function_boundary_ok(text: &str, start: usize, end: usize) -> bool {
     if start > 0 {
-        if let Some(prev) = text[..start].chars().rev().next() {
+        if let Some(prev) = text[..start].chars().next_back() {
             if is_identifier_char(prev) {
                 return false;
             }
@@ -1594,6 +1594,7 @@ impl<'a> StrategyContext<'a> {
         }
     }
 
+    #[allow(clippy::iter_cloned_collect)]
     fn template_functions(&self) -> Vec<String> {
         let mut names: Vec<String> = self.functions.iter().cloned().collect();
         if !names.iter().any(|name| name == "$t") {
