@@ -2,6 +2,8 @@ pub mod check;
 pub mod extract;
 pub mod init;
 pub mod lint;
+pub mod locize;
+pub mod migrate;
 pub mod rename_key;
 pub mod status;
 pub mod sync;

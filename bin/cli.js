@@ -63,16 +63,20 @@ if (!binaryPath || !fs.existsSync(binaryPath)) {
 
 async function main() {
   const rawArgs = process.argv.slice(2);
-  const { args, inlineConfigJson, configProvided } = await resolveConfigArgs(rawArgs);
+  const { args, inlineConfigJson, configProvided, configPathHint: inlineConfigPath } = await resolveConfigArgs(rawArgs);
 
   let configJson = inlineConfigJson;
+  let configPathHint = inlineConfigPath;
 
   if (!configJson && !configProvided) {
     try {
-      const config = await loadConfigFromDisk();
-      const normalized = normalizeConfig(config);
-      if (normalized) {
-        configJson = JSON.stringify(normalized);
+      const result = await loadConfigFromDisk();
+      if (result) {
+        const normalized = normalizeConfig(result.config);
+        if (normalized) {
+          configJson = JSON.stringify(normalized);
+          configPathHint = result.filepath;
+        }
       }
     } catch (error) {
       console.warn(`Warning: Failed to load config file: ${error.message}`);
@@ -82,6 +86,9 @@ async function main() {
   const rustArgs = [];
   if (configJson) {
     rustArgs.push('--config-stdin');
+    if (configPathHint) {
+      rustArgs.push('--config-path-hint', configPathHint);
+    }
   }
   rustArgs.push(...args);
 
@@ -116,6 +123,7 @@ async function resolveConfigArgs(argv) {
   const processedArgs = [];
   let inlineConfigJson = null;
   let configProvided = false;
+  let configPathHint = null;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -129,10 +137,13 @@ async function resolveConfigArgs(argv) {
       }
 
       if (shouldLoadWithNode(value)) {
-        const config = await loadConfigFromFile(value);
-        const normalized = normalizeConfig(config);
-        if (normalized) {
-          inlineConfigJson = JSON.stringify(normalized);
+        const result = await loadConfigFromFile(value);
+        if (result) {
+          const normalized = normalizeConfig(result.config);
+          if (normalized) {
+            inlineConfigJson = JSON.stringify(normalized);
+            configPathHint = result.filepath;
+          }
         }
         i += 1;
         continue;
@@ -147,10 +158,13 @@ async function resolveConfigArgs(argv) {
       configProvided = true;
       const value = arg.split('=')[1];
       if (shouldLoadWithNode(value)) {
-        const config = await loadConfigFromFile(value);
-        const normalized = normalizeConfig(config);
-        if (normalized) {
-          inlineConfigJson = JSON.stringify(normalized);
+        const result = await loadConfigFromFile(value);
+        if (result) {
+          const normalized = normalizeConfig(result.config);
+          if (normalized) {
+            inlineConfigJson = JSON.stringify(normalized);
+            configPathHint = result.filepath;
+          }
         }
         continue;
       }
@@ -159,7 +173,7 @@ async function resolveConfigArgs(argv) {
     processedArgs.push(arg);
   }
 
-  return { args: processedArgs, inlineConfigJson, configProvided };
+  return { args: processedArgs, inlineConfigJson, configProvided, configPathHint };
 }
 
 /**
@@ -169,14 +183,14 @@ async function resolveConfigArgs(argv) {
 async function loadConfigFromDisk() {
   const explorer = createExplorer();
   const result = await explorer.search();
-  return unwrapExplorerResult(result);
+  return formatExplorerResult(result);
 }
 
 async function loadConfigFromFile(filepath) {
   const explorer = createExplorer();
   const absolute = path.resolve(process.cwd(), filepath);
   const result = await explorer.load(absolute);
-  return unwrapExplorerResult(result);
+  return formatExplorerResult(result);
 }
 
 function createExplorer() {
@@ -203,11 +217,13 @@ function createExplorer() {
   });
 }
 
-function unwrapExplorerResult(result) {
+function formatExplorerResult(result) {
   if (!result) {
     return null;
   }
-  return result.config && result.config.default ? result.config.default : result.config;
+  const filepath = result.filepath ? path.resolve(result.filepath) : null;
+  const config = result.config && result.config.default ? result.config.default : result.config;
+  return { config, filepath };
 }
 
 function shouldLoadWithNode(filepath) {

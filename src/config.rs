@@ -2,12 +2,12 @@ use anyhow::{bail, Context, Result};
 use glob::Pattern;
 use icu_locid::Locale;
 use icu_plurals::{PluralCategory, PluralRules};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Configuration for i18next-turbo
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     /// Glob patterns for input files (e.g., ["src/**/*.tsx", "src/**/*.ts"])
@@ -39,7 +39,8 @@ pub struct Config {
     pub key_separator: String,
 
     /// Namespace separator (e.g., ":" for "common:greeting")
-    #[serde(default = "default_ns_separator")]
+    /// Set to false or "" to disable namespace separation
+    #[serde(default = "default_ns_separator", deserialize_with = "deserialize_optional_separator")]
     pub ns_separator: String,
 
     /// Context separator (e.g., "_" for "friend_male")
@@ -65,6 +66,12 @@ pub struct Config {
     /// Default: false
     #[serde(default)]
     pub disable_plurals: bool,
+
+    /// Whether to generate base plural forms (key without suffix) alongside plural keys
+    /// When true, generates both "item" and "item_one", "item_other"
+    /// Default: false
+    #[serde(default)]
+    pub generate_base_plural_forms: bool,
 
     /// Whether to extract keys from comments (e.g., // t('key'))
     /// Default: true
@@ -102,9 +109,191 @@ pub struct Config {
     /// Type generation configuration
     #[serde(default)]
     pub types: TypesConfig,
+
+    /// Locize integration settings
+    #[serde(default)]
+    pub locize: Option<LocizeConfig>,
+
+    /// Primary language for type generation and sync operations
+    /// When not set, the first locale in the `locales` array is used
+    #[serde(default)]
+    pub primary_language: Option<String>,
+
+    /// JSON indentation setting
+    /// Examples: 2 (spaces), 4 (spaces), "\t" (tab)
+    /// When not set, existing file's indentation is preserved or defaults to 2 spaces
+    #[serde(default)]
+    pub indentation: Option<Indentation>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+/// Optional separator configuration
+/// Supports both string (e.g., ":") and boolean false (disabled) formats
+/// When false is provided, it's converted to an empty string to disable the separator
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptionalSeparator(pub String);
+
+impl OptionalSeparator {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OptionalSeparator {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct OptionalSeparatorVisitor;
+
+        impl<'de> Visitor<'de> for OptionalSeparatorVisitor {
+            type Value = OptionalSeparator;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a string or boolean false")
+            }
+
+            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v {
+                    Err(E::custom("separator cannot be true, use a string or false"))
+                } else {
+                    // false means disabled (empty string)
+                    Ok(OptionalSeparator(String::new()))
+                }
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(OptionalSeparator(v.to_string()))
+            }
+
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(OptionalSeparator(v))
+            }
+        }
+
+        deserializer.deserialize_any(OptionalSeparatorVisitor)
+    }
+}
+
+impl serde::Serialize for OptionalSeparator {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if self.0.is_empty() {
+            serializer.serialize_bool(false)
+        } else {
+            serializer.serialize_str(&self.0)
+        }
+    }
+}
+
+impl Default for OptionalSeparator {
+    fn default() -> Self {
+        Self(String::new())
+    }
+}
+
+/// JSON indentation configuration
+/// Supports both numeric (spaces) and string (e.g., "\t") formats
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Indentation {
+    /// Number of spaces for indentation
+    Spaces(usize),
+    /// Custom indentation string (e.g., "\t")
+    Custom(String),
+}
+
+impl Indentation {
+    /// Convert to indentation string
+    pub fn to_string(&self) -> String {
+        match self {
+            Indentation::Spaces(n) => " ".repeat(*n),
+            Indentation::Custom(s) => s.clone(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Indentation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct IndentationVisitor;
+
+        impl<'de> Visitor<'de> for IndentationVisitor {
+            type Value = Indentation;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a positive integer or a string")
+            }
+
+            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if v >= 0 {
+                    Ok(Indentation::Spaces(v as usize))
+                } else {
+                    Err(E::custom("indentation must be non-negative"))
+                }
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Indentation::Spaces(v as usize))
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Indentation::Custom(v.to_string()))
+            }
+
+            fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(Indentation::Custom(v))
+            }
+        }
+
+        deserializer.deserialize_any(IndentationVisitor)
+    }
+}
+
+impl serde::Serialize for Indentation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Indentation::Spaces(n) => serializer.serialize_u64(*n as u64),
+            Indentation::Custom(s) => serializer.serialize_str(s),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum OutputFormat {
     #[default]
@@ -145,6 +334,10 @@ impl OutputFormat {
 pub struct PluralConfig {
     pub separator: String,
     pub suffixes: Vec<String>,
+    /// Whether to generate base key alongside plural keys
+    pub generate_base: bool,
+    /// Context separator (e.g., "_" for "friend_male")
+    pub context_separator: String,
 }
 
 impl Default for PluralConfig {
@@ -152,16 +345,28 @@ impl Default for PluralConfig {
         Self {
             separator: "_".to_string(),
             suffixes: vec!["one".to_string(), "other".to_string()],
+            generate_base: false,
+            context_separator: "_".to_string(),
         }
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TypesConfig {
     pub output: Option<String>,
     pub default_locale: Option<String>,
     pub locales_dir: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LocizeConfig {
+    pub project_id: String,
+    pub api_key: Option<String>,
+    pub version: Option<String>,
+    pub source_language: Option<String>,
+    pub namespaces: Option<Vec<String>>,
 }
 
 #[cfg(feature = "napi")]
@@ -183,6 +388,7 @@ pub struct NapiConfig {
     pub pluralSeparator: Option<String>,
     pub pluralSuffixes: Option<Vec<String>>,
     pub disablePlurals: Option<bool>,
+    pub generateBasePluralForms: Option<bool>,
     pub extractFromComments: Option<bool>,
     pub useLocalePluralRules: Option<bool>,
     pub ignore: Option<Vec<String>>,
@@ -190,6 +396,81 @@ pub struct NapiConfig {
     pub removeUnusedKeys: Option<bool>,
     pub defaultValue: Option<String>,
     pub types: Option<NapiTypesConfig>,
+    pub locize: Option<NapiLocizeConfig>,
+    pub primaryLanguage: Option<String>,
+    /// Indentation: number (spaces) or string (e.g., "\t")
+    pub indentation: Option<NapiIndentation>,
+}
+
+/// NAPI-compatible indentation type
+/// Can be either a number (spaces) or a string (custom indentation)
+#[cfg(feature = "napi")]
+#[napi(object)]
+pub struct NapiIndentation {
+    /// Number of spaces (mutually exclusive with `custom`)
+    pub spaces: Option<u32>,
+    /// Custom indentation string (mutually exclusive with `spaces`)
+    pub custom: Option<String>,
+}
+
+#[cfg(feature = "napi")]
+impl From<NapiIndentation> for Indentation {
+    fn from(value: NapiIndentation) -> Self {
+        if let Some(spaces) = value.spaces {
+            Indentation::Spaces(spaces as usize)
+        } else if let Some(custom) = value.custom {
+            Indentation::Custom(custom)
+        } else {
+            Indentation::Spaces(2) // default
+        }
+    }
+}
+
+/// Deserialize a separator that can be either a string or `false` (disabled)
+/// When `false` is provided, it's converted to an empty string
+fn deserialize_optional_separator<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct OptionalSeparatorVisitor;
+
+    impl<'de> Visitor<'de> for OptionalSeparatorVisitor {
+        type Value = String;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or boolean false")
+        }
+
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            if v {
+                Err(E::custom("separator cannot be true, use a string or false"))
+            } else {
+                // false means disabled (empty string)
+                Ok(String::new())
+            }
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v.to_string())
+        }
+
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(v)
+        }
+    }
+
+    deserializer.deserialize_any(OptionalSeparatorVisitor)
 }
 
 fn default_input() -> Vec<String> {
@@ -271,6 +552,7 @@ impl Default for Config {
             plural_separator: default_plural_separator(),
             plural_suffixes: default_plural_suffixes(),
             disable_plurals: false,
+            generate_base_plural_forms: false,
             extract_from_comments: default_extract_from_comments(),
             use_locale_plural_rules: default_use_locale_plural_rules(),
             ignore: Vec::new(),
@@ -280,6 +562,9 @@ impl Default for Config {
             types: TypesConfig::default(),
             trans_components: default_trans_components(),
             trans_keep_basic_html_nodes_for: default_trans_keep_nodes(),
+            locize: None,
+            primary_language: None,
+            indentation: None,
         }
     }
 }
@@ -291,6 +576,8 @@ impl Config {
             return PluralConfig {
                 separator: self.plural_separator.clone(),
                 suffixes: Vec::new(),
+                generate_base: false,
+                context_separator: self.context_separator.clone(),
             };
         }
 
@@ -313,6 +600,8 @@ impl Config {
         PluralConfig {
             separator: self.plural_separator.clone(),
             suffixes: final_suffixes,
+            generate_base: self.generate_base_plural_forms,
+            context_separator: self.context_separator.clone(),
         }
     }
 
@@ -443,6 +732,14 @@ impl Config {
             }
         }
 
+        if let Some(locize) = &self.locize {
+            if locize.project_id.trim().is_empty() {
+                bail!(
+                    "Configuration error: 'locize.projectId' must be a non-empty string when Locize integration is configured."
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -518,6 +815,7 @@ impl Config {
                 .pluralSuffixes
                 .unwrap_or_else(|| defaults.plural_suffixes.clone()),
             disable_plurals: config.disablePlurals.unwrap_or(false),
+            generate_base_plural_forms: config.generateBasePluralForms.unwrap_or(false),
             extract_from_comments: config
                 .extractFromComments
                 .unwrap_or(defaults.extract_from_comments),
@@ -537,6 +835,17 @@ impl Config {
             trans_components: default_trans_components(),
             trans_keep_basic_html_nodes_for: default_trans_keep_nodes(),
             types: config.types.map(TypesConfig::from).unwrap_or_default(),
+            locize: config.locize.and_then(|locize_cfg| {
+                locize_cfg.projectId.map(|project_id| LocizeConfig {
+                    project_id,
+                    api_key: locize_cfg.apiKey,
+                    version: locize_cfg.version,
+                    source_language: locize_cfg.sourceLanguage,
+                    namespaces: locize_cfg.namespaces,
+                })
+            }),
+            primary_language: config.primaryLanguage,
+            indentation: config.indentation.map(Indentation::from),
         };
         config.validate()?;
         Ok(config)
@@ -570,6 +879,20 @@ impl Config {
     pub fn default_types_output() -> String {
         default_types_output()
     }
+
+    /// Get the primary language for this configuration
+    /// Returns `primary_language` if set, otherwise the first locale
+    pub fn primary_language(&self) -> &str {
+        self.primary_language
+            .as_deref()
+            .unwrap_or_else(|| self.locales.first().map(|s| s.as_str()).unwrap_or("en"))
+    }
+
+    /// Get the indentation string for JSON output
+    /// Returns the configured indentation or None if not set
+    pub fn indentation_string(&self) -> Option<String> {
+        self.indentation.as_ref().map(|i| i.to_string())
+    }
 }
 
 #[cfg(feature = "napi")]
@@ -578,6 +901,16 @@ pub struct NapiTypesConfig {
     pub output: Option<String>,
     pub defaultLocale: Option<String>,
     pub localesDir: Option<String>,
+}
+
+#[cfg(feature = "napi")]
+#[napi(object)]
+pub struct NapiLocizeConfig {
+    pub projectId: Option<String>,
+    pub apiKey: Option<String>,
+    pub version: Option<String>,
+    pub sourceLanguage: Option<String>,
+    pub namespaces: Option<Vec<String>>,
 }
 
 #[cfg(feature = "napi")]

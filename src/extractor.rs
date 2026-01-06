@@ -4,6 +4,7 @@ use glob::Pattern;
 use regex::Regex;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
@@ -55,6 +56,10 @@ static COMMENT_WITH_DEFAULT_REGEX: OnceLock<Regex> = OnceLock::new();
 /// Captures: Group 1 = key, Group 2 = default value
 static COMMENT_WITH_OPTIONS_REGEX: OnceLock<Regex> = OnceLock::new();
 
+static SCRIPT_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
+static TEMPLATE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
+static STYLE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
+
 /// Returns regex for nested translations with quoted keys: $t('key') or $t("key")
 fn get_nested_quoted_regex() -> &'static Regex {
     NESTED_QUOTED_REGEX.get_or_init(|| {
@@ -100,6 +105,47 @@ fn get_comment_with_options_regex() -> &'static Regex {
         Regex::new(r#"(?s)(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(\{)"#)
             .expect("COMMENT_WITH_OPTIONS_REGEX pattern is invalid - this is a bug")
     })
+}
+
+fn get_script_block_regex() -> &'static Regex {
+    SCRIPT_BLOCK_REGEX.get_or_init(|| {
+        Regex::new(r#"(?is)<script\b[^>]*>(.*?)</script>"#)
+            .expect("SCRIPT_BLOCK_REGEX pattern is invalid - this is a bug")
+    })
+}
+
+fn get_template_block_regex() -> &'static Regex {
+    TEMPLATE_BLOCK_REGEX.get_or_init(|| {
+        Regex::new(r#"(?is)<template\b[^>]*>(.*?)</template>"#)
+            .expect("TEMPLATE_BLOCK_REGEX pattern is invalid - this is a bug")
+    })
+}
+
+fn get_style_block_regex() -> &'static Regex {
+    STYLE_BLOCK_REGEX.get_or_init(|| {
+        Regex::new(r#"(?is)<style\b[^>]*>.*?</style>"#)
+            .expect("STYLE_BLOCK_REGEX pattern is invalid - this is a bug")
+    })
+}
+
+#[derive(Debug, Clone)]
+struct TagBlock {
+    content: String,
+    range: Range<usize>,
+}
+
+fn extract_tag_blocks(source: &str, regex: &Regex) -> Vec<TagBlock> {
+    regex
+        .captures_iter(source)
+        .filter_map(|caps| {
+            let full = caps.get(0)?;
+            let inner = caps.get(1).unwrap_or(full);
+            Some(TagBlock {
+                content: inner.as_str().to_string(),
+                range: full.start()..full.end(),
+            })
+        })
+        .collect()
 }
 
 #[derive(Default)]
@@ -166,6 +212,143 @@ fn extract_braced_block(text: &str, start_index: usize) -> Option<(String, usize
     }
 
     None
+}
+
+fn extract_parenthesized_expression(text: &str, start_index: usize) -> Option<(String, usize)> {
+    let mut depth = 0usize;
+    let mut in_string: Option<char> = None;
+    let mut is_escaped = false;
+
+    for (offset, ch) in text[start_index..].char_indices() {
+        let abs_index = start_index + offset;
+
+        if let Some(quote) = in_string {
+            if is_escaped {
+                is_escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                is_escaped = true;
+                continue;
+            }
+            if ch == quote {
+                in_string = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' | '`' => in_string = Some(ch),
+            '(' => {
+                depth += 1;
+            }
+            ')' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let end = abs_index + ch.len_utf8();
+                    return Some((text[start_index..end].to_string(), end));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn extract_translation_calls(
+    text: &str,
+    functions: &[String],
+    include_dollar_alias: bool,
+) -> Vec<String> {
+    let mut names: Vec<String> = functions.iter().cloned().collect();
+    if include_dollar_alias && !names.iter().any(|name| name == "$t") {
+        names.push("$t".to_string());
+    }
+    names.sort_by(|a, b| b.len().cmp(&a.len()));
+    names.dedup();
+
+    let mut result = Vec::new();
+    let mut index = 0usize;
+    let len = text.len();
+
+    while index < len {
+        let slice = &text[index..];
+        let mut matched: Option<&str> = None;
+        for name in &names {
+            if slice.starts_with(name) && function_boundary_ok(text, index, index + name.len()) {
+                matched = Some(name);
+                break;
+            }
+        }
+
+        if let Some(name) = matched {
+            let after_name = index + name.len();
+            if let Some(open_index) = skip_whitespace_to_paren(text, after_name) {
+                if let Some((paren_block, end_index)) =
+                    extract_parenthesized_expression(text, open_index)
+                {
+                    result.push(format!("{}{}", name, paren_block));
+                    index = end_index;
+                    continue;
+                }
+            }
+        }
+
+        if let Some(ch) = text[index..].chars().next() {
+            index += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
+fn skip_whitespace_to_paren(text: &str, mut index: usize) -> Option<usize> {
+    while index < text.len() {
+        let mut iter = text[index..].char_indices();
+        if let Some((offset, ch)) = iter.next() {
+            if ch.is_whitespace() {
+                index += ch.len_utf8();
+                continue;
+            }
+            if ch == '(' {
+                return Some(index + offset);
+            }
+            return None;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+fn function_boundary_ok(text: &str, start: usize, end: usize) -> bool {
+    if start > 0 {
+        if let Some(prev) = text[..start].chars().rev().next() {
+            if is_identifier_char(prev) {
+                return false;
+            }
+        }
+    }
+
+    if end < text.len() {
+        if let Some(next) = text[end..].chars().next() {
+            if is_identifier_char(next) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn is_identifier_char(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch == '.' || ch.is_alphanumeric()
 }
 
 fn extract_comment_string_option(text: &str, key: &str) -> Option<String> {
@@ -279,10 +462,14 @@ pub struct TranslationVisitor {
     file_path: Option<String>,
     /// Warning count for non-extractable patterns
     warning_count: usize,
+    /// Context separator (e.g., "_" for "friend_male")
+    context_separator: String,
     /// Plural separator (e.g., "_" for "item_one")
     plural_separator: String,
     /// Plural suffixes to generate (e.g., ["one", "other"])
     plural_suffixes: Vec<String>,
+    /// Whether to generate base key alongside plural keys
+    generate_base_plural: bool,
 }
 
 impl TranslationVisitor {
@@ -306,8 +493,10 @@ impl TranslationVisitor {
             scope_bindings: HashMap::new(),
             file_path: None,
             warning_count: 0,
+            context_separator: plural_config.context_separator,
             plural_separator: plural_config.separator,
             plural_suffixes: plural_config.suffixes,
+            generate_base_plural: plural_config.generate_base,
         }
     }
 
@@ -423,6 +612,12 @@ impl TranslationVisitor {
 
     /// Generate plural keys based on configuration
     /// Returns a list of keys with the appropriate plural suffixes
+    ///
+    /// For single-category languages (e.g., Japanese with only "other"),
+    /// only the base key is generated without any suffix.
+    ///
+    /// If `generate_base_plural` is enabled, the base key (without suffix) is also
+    /// generated alongside the plural keys.
     fn generate_plural_keys(
         &self,
         base_key: &str,
@@ -430,23 +625,54 @@ impl TranslationVisitor {
         namespace: Option<String>,
         default_value: Option<String>,
     ) -> Vec<ExtractedKey> {
-        self.plural_suffixes
-            .iter()
-            .map(|suffix| {
-                let key = match context {
-                    Some(ctx) => format!(
-                        "{}{}{}{}{}",
-                        base_key, self.plural_separator, ctx, self.plural_separator, suffix
-                    ),
-                    None => format!("{}{}{}", base_key, self.plural_separator, suffix),
-                };
-                ExtractedKey {
-                    key,
-                    namespace: namespace.clone(),
-                    default_value: default_value.clone(),
-                }
-            })
-            .collect()
+        // For single-category languages (only "other"), use base key without suffix
+        let is_single_category =
+            self.plural_suffixes.len() == 1 && self.plural_suffixes[0] == "other";
+
+        if is_single_category {
+            let key = match context {
+                Some(ctx) => format!("{}{}{}", base_key, self.context_separator, ctx),
+                None => base_key.to_string(),
+            };
+            return vec![ExtractedKey {
+                key,
+                namespace,
+                default_value,
+            }];
+        }
+
+        let mut keys: Vec<ExtractedKey> = Vec::new();
+
+        // Optionally generate base key (without plural suffix)
+        if self.generate_base_plural {
+            let base = match context {
+                Some(ctx) => format!("{}{}{}", base_key, self.context_separator, ctx),
+                None => base_key.to_string(),
+            };
+            keys.push(ExtractedKey {
+                key: base,
+                namespace: namespace.clone(),
+                default_value: default_value.clone(),
+            });
+        }
+
+        // Generate plural keys with suffixes
+        keys.extend(self.plural_suffixes.iter().map(|suffix| {
+            let key = match context {
+                Some(ctx) => format!(
+                    "{}{}{}{}{}",
+                    base_key, self.context_separator, ctx, self.plural_separator, suffix
+                ),
+                None => format!("{}{}{}", base_key, self.plural_separator, suffix),
+            };
+            ExtractedKey {
+                key,
+                namespace: namespace.clone(),
+                default_value: default_value.clone(),
+            }
+        }));
+
+        keys
     }
 
     fn generate_plural_keys_with_context(
@@ -1339,6 +1565,80 @@ impl Visit for TranslationVisitor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExtractorStrategy {
+    JavaScript,
+    Vue,
+    Svelte,
+}
+
+struct StrategyContext<'a> {
+    functions: &'a [String],
+    trans_components: &'a [String],
+    extract_from_comments: bool,
+    plural_config: &'a PluralConfig,
+}
+
+impl<'a> StrategyContext<'a> {
+    fn new(
+        functions: &'a [String],
+        trans_components: &'a [String],
+        extract_from_comments: bool,
+        plural_config: &'a PluralConfig,
+    ) -> Self {
+        Self {
+            functions,
+            trans_components,
+            extract_from_comments,
+            plural_config,
+        }
+    }
+
+    fn template_functions(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.functions.iter().cloned().collect();
+        if !names.iter().any(|name| name == "$t") {
+            names.push("$t".to_string());
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+}
+
+impl ExtractorStrategy {
+    fn from_path(path: &Path) -> Self {
+        match path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|s| s.to_ascii_lowercase())
+        {
+            Some(ext) if ext == "vue" => ExtractorStrategy::Vue,
+            Some(ext) if ext == "svelte" => ExtractorStrategy::Svelte,
+            _ => ExtractorStrategy::JavaScript,
+        }
+    }
+
+    fn extract(
+        &self,
+        path: &Path,
+        source_code: &str,
+        ctx: &StrategyContext,
+    ) -> Result<(Vec<ExtractedKey>, usize)> {
+        match self {
+            ExtractorStrategy::JavaScript => extract_from_source_with_warnings(
+                source_code,
+                path,
+                ctx.functions,
+                ctx.trans_components,
+                ctx.extract_from_comments,
+                ctx.plural_config,
+            ),
+            ExtractorStrategy::Vue => extract_vue_component(path, source_code, ctx),
+            ExtractorStrategy::Svelte => extract_svelte_component(path, source_code, ctx),
+        }
+    }
+}
+
 /// Extract translation keys from a TypeScript/JavaScript file
 /// Note: This function always extracts from comments for backward compatibility.
 pub fn extract_from_file<P: AsRef<Path>>(
@@ -1385,15 +1685,14 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
     let path = path.as_ref();
     let source_code = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
-
-    extract_from_source_with_warnings(
-        &source_code,
-        path,
+    let strategy = ExtractorStrategy::from_path(path);
+    let ctx = StrategyContext::new(
         functions,
         trans_components,
         extract_from_comments,
         plural_config,
-    )
+    );
+    strategy.extract(path, &source_code, &ctx)
 }
 
 /// Extract translation keys from source code string
@@ -1515,6 +1814,146 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     }
 
     Ok((visitor.keys, visitor.warning_count))
+}
+
+fn extract_vue_component(
+    file_path: &Path,
+    source_code: &str,
+    ctx: &StrategyContext,
+) -> Result<(Vec<ExtractedKey>, usize)> {
+    let mut keys = Vec::new();
+    let mut warnings = 0usize;
+
+    let script_blocks = extract_tag_blocks(source_code, get_script_block_regex());
+    for (idx, block) in script_blocks.iter().enumerate() {
+        let virtual_path = format!("{}#script{}", file_path.display(), idx + 1);
+        let (mut script_keys, block_warnings) = extract_from_source_with_warnings(
+            block.content.as_str(),
+            &virtual_path,
+            ctx.functions,
+            ctx.trans_components,
+            ctx.extract_from_comments,
+            ctx.plural_config,
+        )?;
+        keys.append(&mut script_keys);
+        warnings += block_warnings;
+    }
+
+    let template_blocks = extract_tag_blocks(source_code, get_template_block_regex());
+    if !template_blocks.is_empty() {
+        let template_functions = ctx.template_functions();
+        for (block_idx, block) in template_blocks.iter().enumerate() {
+            let exprs = extract_translation_calls(&block.content, &template_functions, true);
+            for (expr_idx, expr) in exprs.iter().enumerate() {
+                let virtual_source = format!(
+                    "function __i18n_tpl_{}() {{ return {}; }}",
+                    expr_idx + 1,
+                    expr
+                );
+                let virtual_path = format!(
+                    "{}#template{}:{}",
+                    file_path.display(),
+                    block_idx + 1,
+                    expr_idx + 1
+                );
+                let (mut tpl_keys, tpl_warnings) = extract_from_source_with_warnings(
+                    &virtual_source,
+                    &virtual_path,
+                    &template_functions,
+                    ctx.trans_components,
+                    false,
+                    ctx.plural_config,
+                )?;
+                keys.append(&mut tpl_keys);
+                warnings += tpl_warnings;
+            }
+        }
+    }
+
+    if script_blocks.is_empty() && template_blocks.is_empty() {
+        return extract_from_source_with_warnings(
+            source_code,
+            file_path,
+            ctx.functions,
+            ctx.trans_components,
+            ctx.extract_from_comments,
+            ctx.plural_config,
+        );
+    }
+
+    Ok((keys, warnings))
+}
+
+fn extract_svelte_component(
+    file_path: &Path,
+    source_code: &str,
+    ctx: &StrategyContext,
+) -> Result<(Vec<ExtractedKey>, usize)> {
+    let mut keys = Vec::new();
+    let mut warnings = 0usize;
+
+    let script_blocks = extract_tag_blocks(source_code, get_script_block_regex());
+    for (idx, block) in script_blocks.iter().enumerate() {
+        let virtual_path = format!("{}#script{}", file_path.display(), idx + 1);
+        let (mut script_keys, block_warnings) = extract_from_source_with_warnings(
+            block.content.as_str(),
+            &virtual_path,
+            ctx.functions,
+            ctx.trans_components,
+            ctx.extract_from_comments,
+            ctx.plural_config,
+        )?;
+        keys.append(&mut script_keys);
+        warnings += block_warnings;
+    }
+
+    let mut trimmed_template = source_code.to_string();
+    let mut removal_ranges: Vec<Range<usize>> = script_blocks
+        .iter()
+        .map(|block| block.range.clone())
+        .collect();
+    let style_blocks = extract_tag_blocks(source_code, get_style_block_regex());
+    for block in style_blocks {
+        removal_ranges.push(block.range);
+    }
+    removal_ranges.sort_by(|a, b| b.start.cmp(&a.start));
+    for range in removal_ranges {
+        let len = range.end.saturating_sub(range.start);
+        if len == 0 || range.end > trimmed_template.len() {
+            continue;
+        }
+        trimmed_template.replace_range(range, &" ".repeat(len));
+    }
+
+    let template_functions = ctx.template_functions();
+    let template_exprs = extract_translation_calls(&trimmed_template, &template_functions, true);
+    for (idx, expr) in template_exprs.iter().enumerate() {
+        let virtual_source = format!("function __svelte_tpl_{}() {{ return {}; }}", idx + 1, expr);
+        let virtual_path = format!("{}#template:{}", file_path.display(), idx + 1);
+        let (mut tpl_keys, tpl_warnings) = extract_from_source_with_warnings(
+            &virtual_source,
+            &virtual_path,
+            &template_functions,
+            ctx.trans_components,
+            false,
+            ctx.plural_config,
+        )?;
+        keys.append(&mut tpl_keys);
+        warnings += tpl_warnings;
+    }
+
+    if script_blocks.is_empty() && template_exprs.is_empty() {
+        return extract_from_source_with_warnings(
+            source_code,
+            file_path,
+            ctx.functions,
+            ctx.trans_components,
+            ctx.extract_from_comments,
+            ctx.plural_config,
+        );
+    }
+
+    Ok((keys, warnings))
 }
 
 /// Result type for a single file extraction (used internally for lock-free processing)
@@ -1820,6 +2259,8 @@ fn compile_ignore_patterns(patterns: &[String]) -> Result<Vec<Pattern>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_extract_simple_t_call() {
@@ -2527,6 +2968,64 @@ mod tests {
         assert_eq!(keys.len(), 2);
         assert!(keys.iter().any(|k| k.key == "greeting"));
         assert!(keys.iter().any(|k| k.key == "name"));
+    }
+
+    fn extract_from_virtual_file(
+        content: &str,
+        file_name: &str,
+        functions: &[String],
+    ) -> Vec<ExtractedKey> {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(file_name);
+        fs::write(&path, content).unwrap();
+        extract_from_file_with_options(&path, functions, true, &PluralConfig::default()).unwrap()
+    }
+
+    #[test]
+    fn test_vue_component_script_and_template() {
+        let source = r#"
+            <template>
+              <div>{{ $t('template.title') }}</div>
+              <button :title="t('template.tooltip', { defaultValue: 'Tooltip' })"></button>
+            </template>
+            <script setup lang="ts">
+            const label = t('script.key');
+            </script>
+        "#;
+
+        let functions = vec!["t".to_string()];
+        let keys = extract_from_virtual_file(source, "component.vue", &functions);
+
+        assert_eq!(keys.len(), 3);
+        assert!(keys.iter().any(|k| k.key == "script.key"));
+        assert!(keys.iter().any(|k| k.key == "template.title"));
+        let tooltip = keys
+            .iter()
+            .find(|k| k.key == "template.tooltip")
+            .expect("template tooltip key");
+        assert_eq!(tooltip.default_value.as_deref(), Some("Tooltip"));
+    }
+
+    #[test]
+    fn test_svelte_component_script_and_markup() {
+        let source = r#"
+            <script>
+              const heading = t('script.value', { defaultValue: 'Value' });
+            </script>
+
+            <h1>{$t('template.header')}</h1>
+        "#;
+
+        let functions = vec!["t".to_string()];
+        let keys = extract_from_virtual_file(source, "component.svelte", &functions);
+
+        assert_eq!(keys.len(), 2);
+        let script_key = keys
+            .iter()
+            .find(|k| k.key == "script.value")
+            .expect("script key");
+        assert_eq!(script_key.default_value.as_deref(), Some("Value"));
+        assert!(keys.iter().any(|k| k.key == "template.header"));
     }
 
     /// Test that all regex patterns compile successfully.

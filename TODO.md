@@ -165,7 +165,7 @@
 - [x] 設定された全言語の複数形カテゴリを取得
   - `zero`, `one`, `two`, `few`, `many`, `other`
 - [x] 各言語のカテゴリに基づいてキーを生成
-- [ ] 単一カテゴリ（`other` のみ）の言語ではベースキーを使用
+- [x] 単一カテゴリ（`other` のみ）の言語ではベースキーを使用
 
 #### 2.2.2: Ordinal 複数形の対応
 - [ ] `ordinal` タイプの複数形を検出
@@ -175,11 +175,11 @@
 #### 2.2.3: コンテキストと複数形の組み合わせ ✅
 - [x] `context` と `count` の両方が存在する場合の処理
 - [x] `key_context_one`, `key_context_other` の生成
-- [ ] ベース複数形キーの生成制御（`generateBasePluralForms` オプション）
+- [x] ベース複数形キーの生成制御（`generateBasePluralForms` オプション）
 
 - [x] `t('apple', { count: 5 })` で基本的な複数形キー（`_one`, `_other`）が生成される
 - [x] `t('apple', { count: 5 })` で言語に応じた複数形カテゴリが生成される（ICU ルールに基づく）
-- [ ] 日本語（`other` のみ）では `apple` のみが生成される（言語別カテゴリは未実装）
+- [x] 日本語（`other` のみ）では `apple` のみが生成される
 - [x] ロシア語では `apple_one`, `apple_few`, `apple_many`, `apple_other` が生成される
 
 ---
@@ -364,7 +364,7 @@
 - [x] `contextSeparator`: コンテキストセパレータ（デフォルト: `'_'`）
 - [x] `pluralSeparator`: 複数形セパレータ（デフォルト: `'_'`）
 - [x] `keySeparator: ""` でフラットキーサポート（空文字列で無効化）
-- [ ] `nsSeparator: false` で無効化
+- [x] `nsSeparator: false` で無効化
 - [ ] `interpolationPrefix`: 補間プレフィックス（デフォルト: `'{{'`）
 - [ ] `interpolationSuffix`: 補間サフィックス（デフォルト: `'}}'`）
 - [ ] `nestingPrefix`: ネスト翻訳プレフィックス（デフォルト: `'$t('`）
@@ -372,7 +372,7 @@
 - [ ] `nestingOptionsSeparator`: ネスト翻訳オプションセパレータ（デフォルト: `','`）
 
 #### 3.2.4: 言語とデフォルト値の設定
-- [ ] `primaryLanguage`: プライマリ言語の指定（デフォルト: `locales[0]`）
+- [x] `primaryLanguage`: プライマリ言語の指定（デフォルト: `locales[0]`）
 - [ ] `secondaryLanguages`: セカンダリ言語の配列（自動計算も可能）
 - [x] `defaultValue`: デフォルト値の設定（部分的実装）
   - 文字列形式: `''` ✅ 実装済み（`ExtractedKey.default_value` が空文字列として使用される）
@@ -383,9 +383,9 @@
 - [x] `sort`: キーのソート設定（アルファベット順で実装済み、`sort_keys_alphabetically` 関数）
   - ブール値: `true`（アルファベット順）✅ 実装済み
   - 関数形式: `(a: ExtractedKey, b: ExtractedKey) => number` - [ ] 未実装
-- [ ] `indentation`: JSON のインデント（現在は `serde_json::to_string_pretty` のデフォルト）
-  - 数値形式: `2`（スペース数）- [ ] 未実装
-  - 文字列形式: `'\t'`（タブ）または `'  '`（スペース）- [ ] 未実装
+- [x] `indentation`: JSON のインデント設定
+  - 数値形式: `2`（スペース数）✅ 実装済み
+  - 文字列形式: `'\t'`（タブ）または `'  '`（スペース）✅ 実装済み
 
 #### 3.2.6: Trans コンポーネント設定
 - [ ] `transKeepBasicHtmlNodesFor`: Trans コンポーネントで保持する HTML タグ（デフォルト: `['br', 'strong', 'i']`）
@@ -577,10 +577,11 @@
 - ✅ セパレータの設定（`nsSeparator`, `contextSeparator`, `pluralSeparator`）
 - ❌ 補間構文の設定（`interpolationPrefix`, `interpolationSuffix`）
 - ❌ ネスト翻訳の設定（`nestingPrefix`, `nestingSuffix`, `nestingOptionsSeparator`）
-- ❌ プライマリ/セカンダリ言語の設定
+- ✅ プライマリ言語の設定（`primaryLanguage`）
+- ❌ セカンダリ言語の設定（`secondaryLanguages`）
 - ❌ `defaultValue` の関数形式
 - ❌ `sort` の関数形式
-- ❌ `indentation` の文字列形式
+- ✅ `indentation` 設定（数値/文字列形式）
 - ❌ `output` の関数形式
 - ❌ `defaultNS: false` のサポート
 - ❌ `transKeepBasicHtmlNodesFor` の設定
@@ -728,4 +729,4 @@
 
 ---
 
-最終更新: 2026-01-06（extract --dry-run/--ci オプション追加、preservePatterns/removeUnusedKeys/ignore 設定済み確認）
+最終更新: 2026-01-06（indentation設定、primaryLanguage設定、nsSeparator:false対応、単一カテゴリ言語ベースキー、generateBasePluralFormsオプション追加）

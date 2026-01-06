@@ -815,9 +815,22 @@ pub(crate) fn sync_locale_file_locked_with_fs<F: FileSystem>(
     let trimmed_empty = content_str.trim().is_empty();
     let style = if format == OutputFormat::Json {
         if trimmed_empty {
-            Some(JsonStyle::default())
+            // For new files, use configured indentation or default
+            let indent = config
+                .indentation_string()
+                .unwrap_or_else(|| "  ".to_string());
+            Some(JsonStyle {
+                indent,
+                use_crlf: false,
+                trailing_newline: true,
+            })
         } else {
-            Some(detect_json_style(&content_str))
+            // For existing files, prefer configured indentation over detected
+            let mut detected = detect_json_style(&content_str);
+            if let Some(indent) = config.indentation_string() {
+                detected.indent = indent;
+            }
+            Some(detected)
         }
     } else {
         None

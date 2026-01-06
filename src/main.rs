@@ -4,7 +4,7 @@ use i18next_turbo::commands;
 use i18next_turbo::config::Config;
 use i18next_turbo::watcher::FileWatcher;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "i18next-turbo")]
@@ -21,6 +21,10 @@ struct Cli {
     /// Read configuration JSON from stdin (avoids ARG_MAX limits for large configs)
     #[arg(long, global = true, hide = true)]
     config_stdin: bool,
+
+    /// Hint for the original config path (provided by Node wrapper for JS/TS configs)
+    #[arg(long, global = true, hide = true)]
+    config_path_hint: Option<PathBuf>,
 
     /// Enable verbose output for detailed logging
     #[arg(short, long, global = true)]
@@ -172,27 +176,67 @@ enum Commands {
         #[arg(short, long, default_value = "t")]
         functions: String,
     },
+
+    /// Migrate existing i18next/i18next-parser config files to i18next-turbo.json
+    Migrate {
+        /// Output path for the generated i18next-turbo.json
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Automatically confirm prompts and overwrite existing files
+        #[arg(long)]
+        yes: bool,
+
+        /// Show the converted config without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Locize integration commands
+    Locize {
+        #[command(subcommand)]
+        command: LocizeCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum LocizeCommands {
+    /// Upload local translation files to Locize
+    Upload {
+        /// Limit upload to a specific locale
+        #[arg(long)]
+        locale: Option<String>,
+
+        /// Limit upload to a specific namespace
+        #[arg(long)]
+        namespace: Option<String>,
+
+        /// Preview the upload without calling the API
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Download translations from Locize into the local project
+    Download {
+        /// Limit download to a specific locale
+        #[arg(long)]
+        locale: Option<String>,
+
+        /// Limit download to a specific namespace
+        #[arg(long)]
+        namespace: Option<String>,
+
+        /// Preview the download without writing files
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Load configuration
-    // Priority: --config-stdin > --config-json > --config > default
-    let config = if cli.config_stdin {
-        // Read config from stdin (avoids ARG_MAX limits and hides from process list)
-        let mut stdin_content = String::new();
-        std::io::stdin()
-            .read_to_string(&mut stdin_content)
-            .context("Failed to read config from stdin")?;
-        Config::from_json_string(&stdin_content)?
-    } else if let Some(config_json) = cli.config_json {
-        // Load from JSON string (used by Node.js wrapper)
-        Config::from_json_string(&config_json)?
-    } else {
-        // Load from file or use default
-        Config::load_or_default(cli.config.as_ref())?
-    };
+    let loaded_config = load_config(&cli)?;
+    let config = loaded_config.config;
 
     match cli.command {
         Commands::Extract {
@@ -217,7 +261,7 @@ fn main() -> Result<()> {
         }
         Commands::Watch { output } => {
             println!("=== i18next-turbo watch ===\n");
-            let mut watcher = FileWatcher::new(config, output);
+            let mut watcher = FileWatcher::new(config.clone(), output);
             watcher.run()?;
         }
         Commands::Typegen {
@@ -276,7 +320,99 @@ fn main() -> Result<()> {
         } => {
             commands::init::run(force, &input, &output, &locales, &namespace, &functions)?;
         }
+        Commands::Migrate {
+            output,
+            yes,
+            dry_run,
+        } => {
+            commands::migrate::run(
+                &config,
+                output,
+                yes,
+                dry_run,
+                loaded_config.source_path.as_deref(),
+                matches!(loaded_config.source_kind, ConfigSourceKind::InlineJson),
+            )?;
+        }
+        Commands::Locize { command } => match command {
+            LocizeCommands::Upload {
+                locale,
+                namespace,
+                dry_run,
+            } => {
+                commands::locize::upload(&config, locale, namespace, dry_run)?;
+            }
+            LocizeCommands::Download {
+                locale,
+                namespace,
+                dry_run,
+            } => {
+                commands::locize::download(&config, locale, namespace, dry_run)?;
+            }
+        },
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigSourceKind {
+    Default,
+    File,
+    InlineJson,
+}
+
+struct LoadedConfig {
+    config: Config,
+    source_kind: ConfigSourceKind,
+    source_path: Option<PathBuf>,
+}
+
+fn load_config(cli: &Cli) -> Result<LoadedConfig> {
+    if cli.config_stdin {
+        let mut stdin_content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut stdin_content)
+            .context("Failed to read config from stdin")?;
+        let config = Config::from_json_string(&stdin_content)?;
+        return Ok(LoadedConfig {
+            config,
+            source_kind: ConfigSourceKind::InlineJson,
+            source_path: cli.config_path_hint.clone(),
+        });
+    }
+
+    if let Some(config_json) = &cli.config_json {
+        let config = Config::from_json_string(config_json)?;
+        return Ok(LoadedConfig {
+            config,
+            source_kind: ConfigSourceKind::InlineJson,
+            source_path: cli.config_path_hint.clone(),
+        });
+    }
+
+    if let Some(config_path) = &cli.config {
+        let config = Config::load(config_path)?;
+        return Ok(LoadedConfig {
+            config,
+            source_kind: ConfigSourceKind::File,
+            source_path: Some(config_path.clone()),
+        });
+    }
+
+    let default_path = Path::new("i18next-turbo.json");
+    if default_path.exists() {
+        let config = Config::load(default_path)?;
+        return Ok(LoadedConfig {
+            config,
+            source_kind: ConfigSourceKind::File,
+            source_path: Some(default_path.to_path_buf()),
+        });
+    }
+
+    Ok(LoadedConfig {
+        config: Config::default(),
+        source_kind: ConfigSourceKind::Default,
+        source_path: None,
+    })
 }
