@@ -12,8 +12,14 @@ pub fn run(
     fail_on_warnings: bool,
     generate_types: bool,
     types_output: &str,
+    dry_run: bool,
+    ci: bool,
 ) -> Result<()> {
-    println!("=== i18next-turbo extract ===\n");
+    if dry_run {
+        println!("=== i18next-turbo extract (dry-run) ===\n");
+    } else {
+        println!("=== i18next-turbo extract ===\n");
+    }
 
     // Determine output directory
     let output_dir = output.as_ref().unwrap_or(&config.output);
@@ -85,8 +91,12 @@ pub fn run(
     }
 
     // Sync to JSON files
-    println!("\nSyncing to locale files...");
-    let sync_results = json_sync::sync_all_locales(config, &all_keys, output_dir)?;
+    if dry_run {
+        println!("\nPreviewing changes (dry-run mode)...");
+    } else {
+        println!("\nSyncing to locale files...");
+    }
+    let sync_results = json_sync::sync_all_locales(config, &all_keys, output_dir, dry_run)?;
 
     // Report sync results
     let mut total_added = 0;
@@ -94,11 +104,14 @@ pub fn run(
     let mut total_conflicts = 0;
     let mut all_conflicts: Vec<(String, KeyConflict)> = Vec::new();
 
+    let would_verb = if dry_run { "would be" } else { "" };
+
     for result in &sync_results {
         if !result.added_keys.is_empty() {
             println!(
-                "  {} - added {} new key(s)",
+                "  {} - {} {} new key(s)",
                 result.file_path,
+                if dry_run { "would add" } else { "added" },
                 result.added_keys.len()
             );
             total_added += result.added_keys.len();
@@ -106,8 +119,9 @@ pub fn run(
 
         if !result.removed_keys.is_empty() {
             println!(
-                "  {} - removed {} stale key(s)",
+                "  {} - {} {} stale key(s)",
                 result.file_path,
+                if dry_run { "would remove" } else { "removed" },
                 result.removed_keys.len()
             );
             total_removed += result.removed_keys.len();
@@ -123,10 +137,17 @@ pub fn run(
     }
 
     if total_added == 0 {
-        println!("  No new keys added (all keys already exist).");
+        println!(
+            "  No new keys {} added (all keys already exist).",
+            would_verb
+        );
     }
     if total_removed > 0 {
-        println!("  Removed stale keys: {}", total_removed);
+        println!(
+            "  {} stale keys: {}",
+            if dry_run { "Would remove" } else { "Removed" },
+            total_removed
+        );
     }
 
     // Report conflicts with user-friendly messages
@@ -165,8 +186,8 @@ pub fn run(
         eprintln!("  \x1b[90mor rename the keys in your source code to avoid collision.\x1b[0m");
     }
 
-    // Generate TypeScript types if requested
-    if generate_types {
+    // Generate TypeScript types if requested (skip in dry-run mode)
+    if generate_types && !dry_run {
         println!("\nGenerating TypeScript types...");
         let locales_dir_override = config
             .types_locales_dir()
@@ -179,9 +200,15 @@ pub fn run(
             .unwrap_or_else(|| "en".to_string());
         typegen::generate_types(locales_dir_path, types_path, &default_locale_owned)?;
         println!("  Generated: {}", types_output);
+    } else if generate_types && dry_run {
+        println!("\n(Skipping type generation in dry-run mode)");
     }
 
-    println!("\nDone!");
+    if dry_run {
+        println!("\nDry-run complete. No files were modified.");
+    } else {
+        println!("\nDone!");
+    }
 
     // Check fail-on-warnings (includes extraction warnings and key conflicts)
     let total_warnings = extraction.warning_count + total_conflicts;
@@ -191,6 +218,17 @@ pub fn run(
             total_warnings,
             extraction.warning_count,
             total_conflicts
+        );
+    }
+
+    // Check CI mode: fail if locale files would be/were updated
+    let has_changes = total_added > 0 || total_removed > 0;
+    if ci && has_changes {
+        bail!(
+            "Locale files {} out of sync (--ci enabled): {} keys added, {} keys removed",
+            if dry_run { "are" } else { "were" },
+            total_added,
+            total_removed
         );
     }
 

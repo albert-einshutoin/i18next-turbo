@@ -45,6 +45,14 @@ enum Commands {
         /// TypeScript output path (only used with --generate-types)
         #[arg(long)]
         types_output: Option<String>,
+
+        /// Preview changes without writing files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Exit with non-zero code if locale files would be updated (useful for CI)
+        #[arg(long)]
+        ci: bool,
     },
 
     /// Watch for file changes and extract keys automatically
@@ -188,6 +196,8 @@ fn main() -> Result<()> {
             fail_on_warnings,
             generate_types,
             types_output,
+            dry_run,
+            ci,
         } => {
             let resolved_types_output = types_output.unwrap_or_else(|| config.types_output_path());
             commands::extract::run(
@@ -196,6 +206,8 @@ fn main() -> Result<()> {
                 fail_on_warnings,
                 generate_types,
                 &resolved_types_output,
+                dry_run,
+                ci,
             )?;
         }
         Commands::Watch { output } => {

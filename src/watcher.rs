@@ -144,7 +144,8 @@ impl FileWatcher {
 
         // Sync to JSON
         let all_keys: Vec<ExtractedKey> = self.file_cache.values().flatten().cloned().collect();
-        let sync_results = json_sync::sync_all_locales(&self.config, &all_keys, &self.output_dir)?;
+        let sync_results =
+            json_sync::sync_all_locales(&self.config, &all_keys, &self.output_dir, false)?;
 
         // Report
         let total_keys: usize = self.file_cache.values().map(|v| v.len()).sum();
@@ -247,6 +248,7 @@ impl FileWatcher {
             &all_keys,
             &self.output_dir,
             &affected_namespaces,
+            false, // dry_run (watch mode always writes)
         )?;
 
         let total_added: usize = sync_results.iter().map(|r| r.added_keys.len()).sum();

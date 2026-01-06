@@ -654,12 +654,16 @@ pub fn write_locale_file_with_fs<F: FileSystem>(
 ///
 /// The lock is held for the entire read-modify-write cycle to ensure ACID-like
 /// transaction guarantees.
+///
+/// If `dry_run` is true, the file will not be written but the result will still
+/// indicate what changes would have been made.
 pub(crate) fn sync_locale_file_locked(
     path: &Path,
     keys: &[ExtractedKey],
     target_namespace: &str,
     config: &Config,
     preserve_matcher: &PreserveMatcher,
+    dry_run: bool,
 ) -> Result<SyncResult> {
     sync_locale_file_locked_with_fs(
         path,
@@ -667,18 +671,23 @@ pub(crate) fn sync_locale_file_locked(
         target_namespace,
         config,
         preserve_matcher,
+        dry_run,
         &crate::fs::RealFileSystem,
     )
 }
 
 /// Atomically read, modify, and write a locale file using the provided FileSystem.
 /// This version is testable with mock file systems.
+///
+/// If `dry_run` is true, the file will not be written but the result will still
+/// indicate what changes would have been made.
 pub(crate) fn sync_locale_file_locked_with_fs<F: FileSystem>(
     path: &Path,
     keys: &[ExtractedKey],
     target_namespace: &str,
     config: &Config,
     preserve_matcher: &PreserveMatcher,
+    dry_run: bool,
     fs: &F,
 ) -> Result<SyncResult> {
     // Ensure parent directory exists
@@ -719,8 +728,8 @@ pub(crate) fn sync_locale_file_locked_with_fs<F: FileSystem>(
     );
     sync_result.file_path = path.display().to_string();
 
-    // Only write if there were changes
-    if !sync_result.added_keys.is_empty() || !sync_result.removed_keys.is_empty() {
+    // Only write if there were changes and not in dry-run mode
+    if !dry_run && (!sync_result.added_keys.is_empty() || !sync_result.removed_keys.is_empty()) {
         let sorted = sort_keys_alphabetically(&content);
         write_locale_file_with_fs(path, &sorted, format, style.as_ref(), fs)
             .with_context(|| format!("Failed to write locale file: {}", path.display()))?;
@@ -752,11 +761,15 @@ pub fn collect_namespaces(
 ///
 /// Uses file locking to prevent data corruption when multiple processes
 /// (e.g., watch mode + manual extract) access the same files.
+///
+/// If `dry_run` is true, files will not be written but results will still
+/// indicate what changes would have been made.
 pub fn sync_namespaces(
     config: &Config,
     keys: &[ExtractedKey],
     output_dir: &str,
     namespaces: &std::collections::HashSet<String>,
+    dry_run: bool,
 ) -> Result<Vec<SyncResult>> {
     let preserve_matcher = PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator)?;
     let mut results = Vec::new();
@@ -771,8 +784,14 @@ pub fn sync_namespaces(
             ));
 
             // Use locked sync for data integrity
-            let sync_result =
-                sync_locale_file_locked(&file_path, keys, namespace, config, &preserve_matcher)?;
+            let sync_result = sync_locale_file_locked(
+                &file_path,
+                keys,
+                namespace,
+                config,
+                &preserve_matcher,
+                dry_run,
+            )?;
 
             results.push(sync_result);
         }
@@ -781,17 +800,21 @@ pub fn sync_namespaces(
     Ok(results)
 }
 
-/// Sync extracted keys to all locale files
+/// Sync extracted keys to all locale files.
+///
+/// If `dry_run` is true, files will not be written but results will still
+/// indicate what changes would have been made.
 pub fn sync_all_locales(
     config: &Config,
     keys: &[ExtractedKey],
     output_dir: &str,
+    dry_run: bool,
 ) -> Result<Vec<SyncResult>> {
     // Collect all namespaces from keys
     let namespaces = collect_namespaces(keys, &config.default_namespace);
 
     // Use the namespace-specific sync
-    sync_namespaces(config, keys, output_dir, &namespaces)
+    sync_namespaces(config, keys, output_dir, &namespaces, dry_run)
 }
 
 #[cfg(test)]
@@ -1125,6 +1148,7 @@ mod tests {
             "translation",
             &config,
             &matcher,
+            false, // dry_run
             &fs,
         )
         .unwrap();
@@ -1191,6 +1215,7 @@ mod tests {
             "translation",
             &config,
             &matcher,
+            false, // dry_run
             &fs,
         )
         .unwrap();
@@ -1236,6 +1261,7 @@ mod tests {
             "translation",
             &config,
             &matcher,
+            false, // dry_run
             &fs,
         )
         .unwrap();
@@ -1271,6 +1297,7 @@ mod tests {
             "translation",
             &config,
             &matcher,
+            false, // dry_run
             &fs,
         )
         .unwrap();
@@ -1313,6 +1340,7 @@ mod tests {
             "translation",
             &config,
             &matcher,
+            false, // dry_run
             &fs,
         )
         .unwrap();

@@ -174,7 +174,7 @@ pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<Ex
     }
 
     // Sync to JSON files
-    let sync_results = crate::json_sync::sync_all_locales(&config, &all_keys, output_dir)
+    let sync_results = crate::json_sync::sync_all_locales(&config, &all_keys, output_dir, false)
         .map_err(|e| napi::Error::from_reason(format!("Sync failed: {}", e)))?;
 
     // Report sync results

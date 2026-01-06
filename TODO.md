@@ -346,17 +346,17 @@
 #### 3.2.1: Extract コマンドのオプション
 - [ ] `--sync-primary`: プライマリ言語のデフォルト値同期
 - [ ] `--sync-all`: 全ロケールの同期
-- [ ] `--dry-run`: ファイル変更なしのプレビュー
-- [ ] `--ci`: CI モード（ファイル更新時に非ゼロ終了）
+- [x] `--dry-run`: ファイル変更なしのプレビュー ✅
+- [x] `--ci`: CI モード（ファイル更新時に非ゼロ終了）✅
 
 #### 3.2.2: 設定ファイルの拡張（基本オプション）
-- [ ] `preservePatterns`: 動的キーのパターン保持（glob パターン配列）
+- [x] `preservePatterns`: 動的キーのパターン保持（glob パターン配列）✅
 - [ ] `preserveContextVariants`: コンテキスト変種の保持
 - [ ] `generateBasePluralForms`: ベース複数形の生成制御
 - [ ] `disablePlurals`: 複数形の完全無効化
-- [x] `extractFromComments`: コメントからの抽出
-- [ ] `removeUnusedKeys`: 未使用キーの削除（デフォルト: `true`）
-- [ ] `ignore`: 抽出対象から除外するファイルパターン（glob 配列）
+- [x] `extractFromComments`: コメントからの抽出 ✅
+- [x] `removeUnusedKeys`: 未使用キーの削除（デフォルト: `true`）✅
+- [x] `ignore`: 抽出対象から除外するファイルパターン（glob 配列）✅
 
 #### 3.2.3: セパレータと補間の設定 ✅
 - [x] `keySeparator`: キーのセパレータ（デフォルト: `'.'`）
@@ -728,4 +728,4 @@
 
 ---
 
-最終更新: 2026-01-05（技術的改善: tempfile原子的書込、キー競合レポート、globストリーミング、NFC最適化、エラーメッセージ改善、JSONインデント検知・保持、FileSystemトレイト統合）
+最終更新: 2026-01-06（extract --dry-run/--ci オプション追加、preservePatterns/removeUnusedKeys/ignore 設定済み確認）
