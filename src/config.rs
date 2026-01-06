@@ -40,7 +40,10 @@ pub struct Config {
 
     /// Namespace separator (e.g., ":" for "common:greeting")
     /// Set to false or "" to disable namespace separation
-    #[serde(default = "default_ns_separator", deserialize_with = "deserialize_optional_separator")]
+    #[serde(
+        default = "default_ns_separator",
+        deserialize_with = "deserialize_optional_separator"
+    )]
     pub ns_separator: String,
 
     /// Context separator (e.g., "_" for "friend_male")
