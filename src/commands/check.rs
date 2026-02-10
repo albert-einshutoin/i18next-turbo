@@ -32,10 +32,13 @@ pub fn run(config: &Config, remove: bool, dry_run: bool, locale: Option<String>)
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.trans_keep_basic_html_nodes_for,
         &config.use_translation_names,
         &config.nesting_prefix,
         &config.nesting_suffix,
         &config.nesting_options_separator,
+        &config.interpolation_prefix,
+        &config.interpolation_suffix,
     )?;
 
     let mut all_keys: Vec<ExtractedKey> = Vec::new();
@@ -51,7 +54,10 @@ pub fn run(config: &Config, remove: bool, dry_run: bool, locale: Option<String>)
     let dead_keys = cleanup::find_dead_keys(
         locales_path,
         &all_keys,
-        &config.default_namespace,
+        config.effective_default_namespace(),
+        config.namespace_less_mode(),
+        config.preserve_context_variants,
+        &config.context_separator,
         check_locale,
     )?;
 

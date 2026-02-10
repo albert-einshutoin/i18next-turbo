@@ -2,9 +2,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use i18next_turbo::commands;
 use i18next_turbo::config::Config;
+use i18next_turbo::logging::{self, LogLevel};
 use i18next_turbo::watcher::FileWatcher;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::{fs, path::Path};
 
 #[derive(Parser)]
 #[command(name = "i18next-turbo")]
@@ -29,6 +31,10 @@ struct Cli {
     /// Enable verbose output for detailed logging
     #[arg(short, long, global = true)]
     verbose: bool,
+
+    /// Log level: error, warn, info, debug
+    #[arg(long, global = true)]
+    log_level: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -61,6 +67,14 @@ enum Commands {
         /// Exit with non-zero code if locale files would be updated (useful for CI)
         #[arg(long)]
         ci: bool,
+
+        /// Sync only primary language locale files
+        #[arg(long)]
+        sync_primary: bool,
+
+        /// Sync all configured locale files (default behavior)
+        #[arg(long)]
+        sync_all: bool,
     },
 
     /// Watch for file changes and extract keys automatically
@@ -131,6 +145,10 @@ enum Commands {
         /// Fail on lint errors (useful for CI)
         #[arg(long)]
         fail_on_error: bool,
+
+        /// Watch mode: re-run lint when files change
+        #[arg(long)]
+        watch: bool,
     },
 
     /// Rename a translation key in source files and locale files
@@ -230,13 +248,60 @@ enum LocizeCommands {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Upload then download translations to keep local and Locize data in sync
+    Sync {
+        /// Limit sync to a specific locale
+        #[arg(long)]
+        locale: Option<String>,
+
+        /// Limit sync to a specific namespace
+        #[arg(long)]
+        namespace: Option<String>,
+
+        /// Preview sync actions without API/file writes
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Migrate local translation resources to Locize and pull normalized data back
+    Migrate {
+        /// Limit migrate to a specific locale
+        #[arg(long)]
+        locale: Option<String>,
+
+        /// Limit migrate to a specific namespace
+        #[arg(long)]
+        namespace: Option<String>,
+
+        /// Preview migrate actions without API/file writes
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let loaded_config = load_config(&cli)?;
-    let config = loaded_config.config;
+    let mut config = loaded_config.config;
+
+    if matches!(loaded_config.source_kind, ConfigSourceKind::Default) {
+        auto_detect_config_for_command(&mut config, &cli.command);
+    }
+
+    let requested_level = cli
+        .log_level
+        .as_deref()
+        .or(Some(config.log_level.as_str()))
+        .unwrap_or("info");
+    let level = if cli.verbose {
+        LogLevel::Debug
+    } else {
+        LogLevel::parse(requested_level).unwrap_or(LogLevel::Info)
+    };
+    logging::set_level(level);
+    logging::debug(&format!("resolved log level: {:?}", level));
 
     match cli.command {
         Commands::Extract {
@@ -246,6 +311,8 @@ fn main() -> Result<()> {
             types_output,
             dry_run,
             ci,
+            sync_primary,
+            sync_all,
         } => {
             let resolved_types_output = types_output.unwrap_or_else(|| config.types_output_path());
             commands::extract::run(
@@ -256,6 +323,8 @@ fn main() -> Result<()> {
                 &resolved_types_output,
                 dry_run,
                 ci,
+                sync_primary,
+                sync_all,
                 cli.verbose,
             )?;
         }
@@ -299,8 +368,11 @@ fn main() -> Result<()> {
         } => {
             commands::sync::run(&config, remove_unused, dry_run)?;
         }
-        Commands::Lint { fail_on_error } => {
-            commands::lint::run(&config, fail_on_error)?;
+        Commands::Lint {
+            fail_on_error,
+            watch,
+        } => {
+            commands::lint::run(&config, fail_on_error, watch)?;
         }
         Commands::RenameKey {
             old_key,
@@ -349,10 +421,121 @@ fn main() -> Result<()> {
             } => {
                 commands::locize::download(&config, locale, namespace, dry_run)?;
             }
+            LocizeCommands::Sync {
+                locale,
+                namespace,
+                dry_run,
+            } => {
+                commands::locize::sync(&config, locale, namespace, dry_run)?;
+            }
+            LocizeCommands::Migrate {
+                locale,
+                namespace,
+                dry_run,
+            } => {
+                commands::locize::migrate(&config, locale, namespace, dry_run)?;
+            }
         },
     }
 
     Ok(())
+}
+
+fn auto_detect_config_for_command(config: &mut Config, command: &Commands) {
+    let should_detect = matches!(command, Commands::Status { .. } | Commands::Lint { .. });
+    if !should_detect {
+        return;
+    }
+
+    if let Some(output) = detect_locales_output_dir() {
+        logging::debug(&format!("auto-detected locales output: {}", output));
+        config.output = output;
+    }
+    let detected_locales = detect_locale_codes(Path::new(&config.output));
+    if !detected_locales.is_empty() {
+        logging::debug(&format!("auto-detected locales: {:?}", detected_locales));
+        config.locales = detected_locales;
+    }
+
+    let inputs = detect_source_globs();
+    if !inputs.is_empty() {
+        logging::debug(&format!("auto-detected input patterns: {:?}", inputs));
+        config.input = inputs;
+    }
+}
+
+fn detect_locales_output_dir() -> Option<String> {
+    let candidates = ["locales", "public/locales", "src/locales", "app/locales"];
+    for dir in candidates {
+        let path = Path::new(dir);
+        if path.exists() && path.is_dir() && has_locale_json_subdir(path) {
+            return Some(path.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+fn has_locale_json_subdir(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let sub = entry.path();
+        if !sub.is_dir() {
+            continue;
+        }
+        if let Ok(files) = fs::read_dir(&sub) {
+            for file in files.flatten() {
+                let p = file.path();
+                if p.is_file() && p.extension().map(|e| e == "json").unwrap_or(false) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn detect_locale_codes(output_dir: &Path) -> Vec<String> {
+    let mut locales = Vec::new();
+    let Ok(entries) = fs::read_dir(output_dir) else {
+        return locales;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let has_json = fs::read_dir(&path)
+            .ok()
+            .map(|iter| {
+                iter.flatten().any(|f| {
+                    let p = f.path();
+                    p.is_file() && p.extension().map(|e| e == "json").unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        if has_json {
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                locales.push(name.to_string());
+            }
+        }
+    }
+    locales.sort();
+    locales.dedup();
+    locales
+}
+
+fn detect_source_globs() -> Vec<String> {
+    let candidates = ["src", "app", "components", "pages", "lib"];
+    let mut globs = Vec::new();
+    for dir in candidates {
+        let path = Path::new(dir);
+        if path.exists() && path.is_dir() {
+            globs.push(format!("{}/**/*.{{ts,tsx,js,jsx}}", dir));
+        }
+    }
+    globs
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

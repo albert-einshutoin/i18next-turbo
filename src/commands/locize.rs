@@ -1,10 +1,14 @@
 use crate::config::{Config, LocizeConfig, OutputFormat};
+use crate::logging;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::blocking::{Client, Response};
+use reqwest::header::LAST_MODIFIED;
 use serde_json::Value;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::SystemTime;
 
 pub fn upload(
     config: &Config,
@@ -12,12 +16,17 @@ pub fn upload(
     namespace: Option<String>,
     dry_run: bool,
 ) -> Result<()> {
+    check_locize_cli_dependency();
     let locize = require_locize_config(config)?;
     ensure_supported_format(config)?;
-    let locales = resolve_locales(config, locale)?;
+    let mut locales = resolve_locales(config, locale)?;
+    if locize.source_language_only.unwrap_or(false) {
+        locales = vec![resolve_source_locale(config, locize)];
+    }
     let extension = config.output_format.extension().to_string();
     let namespaces = resolve_namespaces(config, locize, namespace.as_deref(), &extension)?;
     let api_key = resolve_api_key(locize)?;
+    let dry_run = dry_run || locize.dry_run.unwrap_or(false);
     let version = locize
         .version
         .clone()
@@ -36,6 +45,14 @@ pub fn upload(
             }
 
             let payload = read_local_payload(config, &file_path)?;
+            let payload = if !locize.update_values.unwrap_or(true) {
+                let existing =
+                    fetch_remote_payload(&client, locize, &api_key, &version, &locale, ns)
+                        .unwrap_or(Value::Object(Default::default()));
+                filter_new_keys(&payload, &existing)
+            } else {
+                payload
+            };
             if dry_run {
                 let key_count = payload.as_object().map(|o| o.len()).unwrap_or_default();
                 println!("[dry-run] Upload {} / {} ({} keys)", locale, ns, key_count);
@@ -60,18 +77,44 @@ pub fn upload(
     Ok(())
 }
 
+pub fn sync(
+    config: &Config,
+    locale: Option<String>,
+    namespace: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    check_locize_cli_dependency();
+    upload(config, locale.clone(), namespace.clone(), dry_run)?;
+    download(config, locale, namespace, dry_run)
+}
+
+pub fn migrate(
+    config: &Config,
+    locale: Option<String>,
+    namespace: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    println!("Locize migration: uploading local resources and downloading normalized resources...");
+    sync(config, locale, namespace, dry_run)
+}
+
 pub fn download(
     config: &Config,
     locale: Option<String>,
     namespace: Option<String>,
     dry_run: bool,
 ) -> Result<()> {
+    check_locize_cli_dependency();
     let locize = require_locize_config(config)?;
     ensure_supported_format(config)?;
-    let locales = resolve_locales(config, locale)?;
+    let mut locales = resolve_locales(config, locale)?;
+    if locize.source_language_only.unwrap_or(false) {
+        locales = vec![resolve_source_locale(config, locize)];
+    }
     let extension = config.output_format.extension().to_string();
     let namespaces = resolve_namespaces(config, locize, namespace.as_deref(), &extension)?;
     let api_key = resolve_api_key(locize)?;
+    let dry_run = dry_run || locize.dry_run.unwrap_or(false);
     let version = locize
         .version
         .clone()
@@ -80,9 +123,10 @@ pub fn download(
 
     for locale in locales {
         for ns in &namespaces {
+            let host = download_base_host(locize);
             let url = format!(
-                "https://api.locize.app/{}/{}/{}/{}",
-                locize.project_id, version, locale, ns
+                "https://{}/{}/{}/{}/{}",
+                host, locize.project_id, version, locale, ns
             );
             if dry_run {
                 println!("[dry-run] Download {} / {} ({})", locale, ns, url);
@@ -94,12 +138,23 @@ pub fn download(
             let response = request
                 .send()
                 .with_context(|| format!("Locize download request failed: {}", url))?;
+            let remote_last_modified = response
+                .headers()
+                .get(LAST_MODIFIED)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| httpdate::parse_http_date(s).ok());
             let response = ensure_success(response, &url)?;
             let payload: Value = response
                 .json()
                 .with_context(|| format!("Failed to parse Locize response: {}", url))?;
 
             let file_path = locale_namespace_path(config, &locale, ns, &extension);
+            if locize.compare_modification_time.unwrap_or(false)
+                && should_skip_download_due_to_mtime(&file_path, remote_last_modified)?
+            {
+                println!("↷ Skipped {} / {} (local file is newer)", locale, ns);
+                continue;
+            }
             if let Some(parent) = file_path.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
@@ -152,6 +207,13 @@ fn resolve_locales(config: &Config, override_locale: Option<String>) -> Result<V
         return Ok(vec![locale]);
     }
     Ok(config.locales.clone())
+}
+
+fn resolve_source_locale(config: &Config, locize: &LocizeConfig) -> String {
+    locize
+        .source_language
+        .clone()
+        .unwrap_or_else(|| config.primary_language().to_string())
 }
 
 fn resolve_namespaces(
@@ -207,7 +269,7 @@ fn detect_namespaces_from_files(config: &Config, extension: &str) -> Result<Vec<
         }
     }
 
-    Ok(vec![config.default_namespace.clone()])
+    Ok(vec![config.effective_default_namespace().to_string()])
 }
 
 fn locale_namespace_path(
@@ -241,9 +303,93 @@ fn ensure_success(response: Response, url: &str) -> Result<Response> {
     }
 }
 
+fn download_base_host(locize: &LocizeConfig) -> &'static str {
+    match locize.cdn_type.as_deref() {
+        Some("pro") => "api.locize.pro",
+        _ => "api.locize.app",
+    }
+}
+
+fn fetch_remote_payload(
+    client: &Client,
+    locize: &LocizeConfig,
+    api_key: &str,
+    version: &str,
+    locale: &str,
+    namespace: &str,
+) -> Result<Value> {
+    let host = download_base_host(locize);
+    let url = format!(
+        "https://{}/{}/{}/{}/{}",
+        host, locize.project_id, version, locale, namespace
+    );
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .with_context(|| format!("Locize fetch request failed: {}", url))?;
+    if !response.status().is_success() {
+        return Ok(Value::Object(Default::default()));
+    }
+    response
+        .json()
+        .with_context(|| format!("Failed to parse Locize response: {}", url))
+}
+
+fn filter_new_keys(local: &Value, remote: &Value) -> Value {
+    match (local, remote) {
+        (Value::Object(local_obj), Value::Object(remote_obj)) => {
+            let mut out = serde_json::Map::new();
+            for (k, local_v) in local_obj {
+                match remote_obj.get(k) {
+                    None => {
+                        out.insert(k.clone(), local_v.clone());
+                    }
+                    Some(remote_v) => {
+                        let diff = filter_new_keys(local_v, remote_v);
+                        if !diff.is_null() {
+                            out.insert(k.clone(), diff);
+                        }
+                    }
+                }
+            }
+            Value::Object(out)
+        }
+        // If remote has any value at this key, keep existing (no update)
+        (_, Value::Null) => local.clone(),
+        (_, _) => Value::Null,
+    }
+}
+
+fn should_skip_download_due_to_mtime(
+    path: &Path,
+    remote_mtime: Option<SystemTime>,
+) -> Result<bool> {
+    let Some(remote_time) = remote_mtime else {
+        return Ok(false);
+    };
+    if !path.exists() {
+        return Ok(false);
+    }
+    let local_modified = fs::metadata(path)
+        .with_context(|| format!("Failed to read metadata: {}", path.display()))?
+        .modified()
+        .with_context(|| format!("Failed to read modified time: {}", path.display()))?;
+    Ok(local_modified > remote_time)
+}
+
+fn check_locize_cli_dependency() {
+    if Command::new("locize").arg("--version").output().is_err() {
+        logging::warn(
+            "locize-cli が見つかりません。API同期は継続しますが、互換性のため `npm i -g locize-cli` を推奨します。",
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, SystemTime};
     use tempfile::tempdir;
 
     #[test]
@@ -271,6 +417,33 @@ mod tests {
         let mut config = Config::default();
         config.output = base.to_string_lossy().to_string();
         let namespaces = detect_namespaces_from_files(&config, "json").unwrap();
-        assert_eq!(namespaces, vec![config.default_namespace]);
+        assert_eq!(
+            namespaces,
+            vec![config.effective_default_namespace().to_string()]
+        );
+    }
+
+    #[test]
+    fn filter_new_keys_keeps_only_missing_remote_keys() {
+        let local: Value = serde_json::json!({
+            "a": "1",
+            "b": { "x": "2", "y": "3" },
+            "c": "4"
+        });
+        let remote: Value = serde_json::json!({
+            "a": "old",
+            "b": { "x": "old" }
+        });
+        let diff = filter_new_keys(&local, &remote);
+        assert_eq!(diff, serde_json::json!({ "b": { "y": "3" }, "c": "4" }));
+    }
+
+    #[test]
+    fn should_skip_download_when_local_newer() {
+        let tmp = tempdir().unwrap();
+        let file = tmp.path().join("a.json");
+        fs::write(&file, "{}").unwrap();
+        let remote = Some(SystemTime::now() - Duration::from_secs(3600));
+        assert!(should_skip_download_due_to_mtime(&file, remote).unwrap());
     }
 }

@@ -38,6 +38,7 @@ swc_ecma_visit = "19"
 
 # Regex for comment extraction
 regex = "1.10"
+httpdate = "1.0"
 
 # Unicode normalization for consistent key handling
 unicode-normalization = "0.1"

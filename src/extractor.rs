@@ -483,6 +483,8 @@ pub struct TranslationVisitor {
     functions: HashSet<String>,
     /// Trans component names to look for
     trans_components: HashSet<String>,
+    /// HTML tags that should remain as literal tags in Trans defaults/children extraction.
+    trans_keep_basic_html_nodes_for: HashSet<String>,
     /// Extracted keys
     pub keys: Vec<ExtractedKey>,
     /// Source map for line number lookup
@@ -512,12 +514,15 @@ pub struct TranslationVisitor {
     nesting_prefix: String,
     nesting_suffix: String,
     nesting_options_separator: String,
+    interpolation_prefix: String,
+    interpolation_suffix: String,
 }
 
 impl TranslationVisitor {
     pub fn new(
         functions: Vec<String>,
         trans_components: Vec<String>,
+        trans_keep_basic_html_nodes_for: Vec<String>,
         use_translation_names: Vec<UseTranslationName>,
         source_map: Lrc<SourceMap>,
         comments: Option<SingleThreadedComments>,
@@ -525,6 +530,8 @@ impl TranslationVisitor {
         nesting_prefix: String,
         nesting_suffix: String,
         nesting_options_separator: String,
+        interpolation_prefix: String,
+        interpolation_suffix: String,
     ) -> Self {
         // Parse magic comments to find disabled lines
         let disabled_lines = Self::parse_disabled_lines(&comments);
@@ -532,6 +539,7 @@ impl TranslationVisitor {
         Self {
             functions: functions.into_iter().collect(),
             trans_components: trans_components.into_iter().collect(),
+            trans_keep_basic_html_nodes_for: trans_keep_basic_html_nodes_for.into_iter().collect(),
             keys: Vec::new(),
             source_map,
             comments,
@@ -547,6 +555,8 @@ impl TranslationVisitor {
             nesting_prefix,
             nesting_suffix,
             nesting_options_separator,
+            interpolation_prefix,
+            interpolation_suffix,
         }
     }
 
@@ -705,6 +715,18 @@ impl TranslationVisitor {
         self.warning_count += 1;
         eprintln!(
             "Warning: Dynamic template literal found at {}:{}:{}. Translation key extraction skipped. Consider using i18next-extract-disable-line if intentional.",
+            file_path,
+            loc.line,
+            loc.col_display + 1
+        );
+    }
+
+    fn warn_unresolved_dynamic_context(&mut self, span: Span) {
+        let loc = self.source_map.lookup_char_pos(span.lo);
+        let file_path = self.file_path.as_deref().unwrap_or("<unknown>");
+        self.warning_count += 1;
+        eprintln!(
+            "Warning: Unresolved dynamic context at {}:{}:{}. Falling back to base key extraction.",
             file_path,
             loc.line,
             loc.col_display + 1
@@ -1225,7 +1247,10 @@ impl TranslationVisitor {
                     // Handle {variable} - keep as placeholder
                     if let swc_ecma_ast::JSXExpr::Expr(expr) = &container.expr {
                         if let Expr::Ident(ident) = expr.as_ref() {
-                            text_parts.push(format!("{{{{{}}}}}", ident.sym));
+                            text_parts.push(format!(
+                                "{}{}{}",
+                                self.interpolation_prefix, ident.sym, self.interpolation_suffix
+                            ));
                         }
                     }
                 }
@@ -1234,12 +1259,19 @@ impl TranslationVisitor {
                     // Keep tag names like <strong>, <br>, etc.
                     if let JSXElementName::Ident(ident) = &element.opening.name {
                         let tag = ident.sym.to_string();
-                        // For simple inline tags, wrap content
-                        if let Some(inner) = self.extract_jsx_children_text(&element.children) {
-                            text_parts.push(format!("<{}>{}</{}>", tag, inner, tag));
-                        } else if element.closing.is_none() {
-                            // Self-closing tag
-                            text_parts.push(format!("<{}/>", tag));
+                        let keep_tag = self.trans_keep_basic_html_nodes_for.contains(&tag);
+                        if keep_tag {
+                            // For configured inline tags, keep wrapper
+                            if let Some(inner) = self.extract_jsx_children_text(&element.children) {
+                                text_parts.push(format!("<{}>{}</{}>", tag, inner, tag));
+                            } else if element.closing.is_none() {
+                                text_parts.push(format!("<{}/>", tag));
+                            }
+                        } else if let Some(inner) =
+                            self.extract_jsx_children_text(&element.children)
+                        {
+                            // For non-kept tags, keep only inner text
+                            text_parts.push(inner);
                         }
                     }
                 }
@@ -1455,6 +1487,21 @@ impl TranslationVisitor {
         }
     }
 
+    fn get_expr_function_name(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(ident) => Some(ident.sym.to_string()),
+            Expr::Member(member) => {
+                if let MemberProp::Ident(prop) = &member.prop {
+                    if let Expr::Ident(obj) = member.obj.as_ref() {
+                        return Some(format!("{}.{}", obj.sym, prop.sym));
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     /// Extract keys from comments (e.g., // t('key') or /* t('key', 'default') */)
     pub fn extract_from_comments(&mut self) {
         // Collect all comment texts first to avoid borrow issues
@@ -1514,8 +1561,8 @@ impl TranslationVisitor {
                             has_ordinal,
                         } = CommentOptionsData::from_text(&options_text);
 
-                        let (namespace_from_key, base_key) = self.parse_key_with_namespace(key);
-                        let namespace = namespace_override.or(namespace_from_key);
+                        let (namespace, base_key) =
+                            self.resolve_comment_key_scope(key, namespace_override);
 
                         if has_count {
                             let plural_keys = self.generate_plural_keys(
@@ -1552,7 +1599,7 @@ impl TranslationVisitor {
             if let Some(key_match) = cap.get(1) {
                 let key = key_match.as_str();
                 // Check if already captured by options pattern
-                let (namespace, base_key) = self.parse_key_with_namespace(key);
+                let (namespace, base_key) = self.resolve_comment_key_scope(key, None);
                 if !self
                     .keys
                     .iter()
@@ -1572,7 +1619,7 @@ impl TranslationVisitor {
         for cap in single_arg_pattern.captures_iter(text) {
             if let Some(key_match) = cap.get(1) {
                 let key = key_match.as_str();
-                let (namespace, base_key) = self.parse_key_with_namespace(key);
+                let (namespace, base_key) = self.resolve_comment_key_scope(key, None);
                 // Check if already captured
                 if !self
                     .keys
@@ -1587,6 +1634,35 @@ impl TranslationVisitor {
                 }
             }
         }
+    }
+
+    fn inferred_comment_scope(&self) -> Option<ScopeInfo> {
+        if self.scope_bindings.len() == 1 {
+            self.scope_bindings.values().next().cloned()
+        } else {
+            None
+        }
+    }
+
+    fn resolve_comment_key_scope(
+        &self,
+        raw_key: &str,
+        namespace_override: Option<String>,
+    ) -> (Option<String>, String) {
+        let (ns_from_key, base_key) = self.parse_key_with_namespace(raw_key);
+        let mut namespace = namespace_override.or(ns_from_key);
+        let mut final_key = base_key;
+
+        if let Some(scope) = self.inferred_comment_scope() {
+            if namespace.is_none() {
+                namespace = scope.namespace;
+            }
+            if let Some(prefix) = scope.key_prefix {
+                final_key = format!("{}.{}", prefix, final_key);
+            }
+        }
+
+        (namespace, final_key)
     }
 }
 
@@ -1605,6 +1681,18 @@ impl Visit for TranslationVisitor {
                 else if let Some(scope_info) = self.parse_get_fixed_t_call(call) {
                     if let Some(t_name) = self.extract_bound_t_name(&decl.name) {
                         self.scope_bindings.insert(t_name, scope_info);
+                    }
+                }
+            } else if let Some(alias_name) = self.extract_bound_t_name(&decl.name) {
+                // Alias tracking: const translate = t / const tr = i18n.t
+                if let Some(source_name) = self.get_expr_function_name(init.as_ref()) {
+                    if self.functions.contains(&source_name)
+                        || self.scope_bindings.contains_key(&source_name)
+                    {
+                        self.functions.insert(alias_name.clone());
+                        if let Some(scope_info) = self.scope_bindings.get(&source_name).cloned() {
+                            self.scope_bindings.insert(alias_name, scope_info);
+                        }
                     }
                 }
             }
@@ -1679,6 +1767,9 @@ impl Visit for TranslationVisitor {
                     );
                 } else if let Some(info) = context_info {
                     if info.values.is_empty() {
+                        if info.is_dynamic {
+                            self.warn_unresolved_dynamic_context(call.span);
+                        }
                         self.keys.push(ExtractedKey {
                             key: base_key,
                             namespace: namespace_from_scope,
@@ -1783,6 +1874,9 @@ impl Visit for TranslationVisitor {
                     );
                 } else if let Some(info) = context_info {
                     if info.values.is_empty() {
+                        if info.is_dynamic {
+                            self.warn_unresolved_dynamic_context(elem.span);
+                        }
                         self.keys.push(ExtractedKey {
                             key: base_key,
                             namespace,
@@ -1830,34 +1924,43 @@ enum ExtractorStrategy {
 struct StrategyContext<'a> {
     functions: &'a [String],
     trans_components: &'a [String],
+    trans_keep_basic_html_nodes_for: &'a [String],
     use_translation_names: &'a [UseTranslationName],
     extract_from_comments: bool,
     plural_config: &'a PluralConfig,
     nesting_prefix: &'a str,
     nesting_suffix: &'a str,
     nesting_options_separator: &'a str,
+    interpolation_prefix: &'a str,
+    interpolation_suffix: &'a str,
 }
 
 impl<'a> StrategyContext<'a> {
     fn new(
         functions: &'a [String],
         trans_components: &'a [String],
+        trans_keep_basic_html_nodes_for: &'a [String],
         use_translation_names: &'a [UseTranslationName],
         extract_from_comments: bool,
         plural_config: &'a PluralConfig,
         nesting_prefix: &'a str,
         nesting_suffix: &'a str,
         nesting_options_separator: &'a str,
+        interpolation_prefix: &'a str,
+        interpolation_suffix: &'a str,
     ) -> Self {
         Self {
             functions,
             trans_components,
+            trans_keep_basic_html_nodes_for,
             use_translation_names,
             extract_from_comments,
             plural_config,
             nesting_prefix,
             nesting_suffix,
             nesting_options_separator,
+            interpolation_prefix,
+            interpolation_suffix,
         }
     }
 
@@ -1898,12 +2001,15 @@ impl ExtractorStrategy {
                 path,
                 ctx.functions,
                 ctx.trans_components,
+                ctx.trans_keep_basic_html_nodes_for,
                 ctx.use_translation_names,
                 ctx.extract_from_comments,
                 ctx.plural_config,
                 ctx.nesting_prefix,
                 ctx.nesting_suffix,
                 ctx.nesting_options_separator,
+                ctx.interpolation_prefix,
+                ctx.interpolation_suffix,
             ),
             ExtractorStrategy::Vue => extract_vue_component(path, source_code, ctx),
             ExtractorStrategy::Svelte => extract_svelte_component(path, source_code, ctx),
@@ -1919,18 +2025,23 @@ pub fn extract_from_file<P: AsRef<Path>>(
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_trans_keep_basic_html_nodes_for =
+        vec!["br".to_string(), "strong".to_string(), "i".to_string()];
     let default_use_translation_names =
         vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_file_with_warnings(
         path,
         functions,
         &default_trans_components,
+        &default_trans_keep_basic_html_nodes_for,
         &default_use_translation_names,
         true,
         plural_config,
         "$t(",
         ")",
         ",",
+        "{{",
+        "}}",
     )?;
     Ok(keys)
 }
@@ -1943,18 +2054,23 @@ pub fn extract_from_file_with_options<P: AsRef<Path>>(
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_trans_keep_basic_html_nodes_for =
+        vec!["br".to_string(), "strong".to_string(), "i".to_string()];
     let default_use_translation_names =
         vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_file_with_warnings(
         path,
         functions,
         &default_trans_components,
+        &default_trans_keep_basic_html_nodes_for,
         &default_use_translation_names,
         extract_from_comments,
         plural_config,
         "$t(",
         ")",
         ",",
+        "{{",
+        "}}",
     )?;
     Ok(keys)
 }
@@ -1963,12 +2079,15 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     trans_components: &[String],
+    trans_keep_basic_html_nodes_for: &[String],
     use_translation_names: &[UseTranslationName],
     extract_from_comments: bool,
     plural_config: &PluralConfig,
     nesting_prefix: &str,
     nesting_suffix: &str,
     nesting_options_separator: &str,
+    interpolation_prefix: &str,
+    interpolation_suffix: &str,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let source_code = std::fs::read_to_string(path)
@@ -1977,12 +2096,15 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
     let ctx = StrategyContext::new(
         functions,
         trans_components,
+        trans_keep_basic_html_nodes_for,
         use_translation_names,
         extract_from_comments,
         plural_config,
         nesting_prefix,
         nesting_suffix,
         nesting_options_separator,
+        interpolation_prefix,
+        interpolation_suffix,
     );
     strategy.extract(path, &source_code, &ctx)
 }
@@ -1997,6 +2119,8 @@ pub fn extract_from_source<P: AsRef<Path>>(
 ) -> Result<Vec<ExtractedKey>> {
     let plural_config = PluralConfig::default();
     let default_trans_components = vec!["Trans".to_string()];
+    let default_trans_keep_basic_html_nodes_for =
+        vec!["br".to_string(), "strong".to_string(), "i".to_string()];
     let default_use_translation_names =
         vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_source_with_warnings(
@@ -2004,12 +2128,15 @@ pub fn extract_from_source<P: AsRef<Path>>(
         path,
         functions,
         &default_trans_components,
+        &default_trans_keep_basic_html_nodes_for,
         &default_use_translation_names,
         true,
         &plural_config,
         "$t(",
         ")",
         ",",
+        "{{",
+        "}}",
     )?;
     Ok(keys)
 }
@@ -2023,6 +2150,8 @@ pub fn extract_from_source_with_options<P: AsRef<Path>>(
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_trans_keep_basic_html_nodes_for =
+        vec!["br".to_string(), "strong".to_string(), "i".to_string()];
     let default_use_translation_names =
         vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_source_with_warnings(
@@ -2030,12 +2159,15 @@ pub fn extract_from_source_with_options<P: AsRef<Path>>(
         path,
         functions,
         &default_trans_components,
+        &default_trans_keep_basic_html_nodes_for,
         &default_use_translation_names,
         extract_from_comments,
         plural_config,
         "$t(",
         ")",
         ",",
+        "{{",
+        "}}",
     )?;
     Ok(keys)
 }
@@ -2045,12 +2177,15 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     trans_components: &[String],
+    trans_keep_basic_html_nodes_for: &[String],
     use_translation_names: &[UseTranslationName],
     should_extract_from_comments: bool,
     plural_config: &PluralConfig,
     nesting_prefix: &str,
     nesting_suffix: &str,
     nesting_options_separator: &str,
+    interpolation_prefix: &str,
+    interpolation_suffix: &str,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
@@ -2109,6 +2244,7 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     let mut visitor = TranslationVisitor::new(
         functions.to_vec(),
         trans_components.to_vec(),
+        trans_keep_basic_html_nodes_for.to_vec(),
         use_translation_names.to_vec(),
         cm,
         Some(comments),
@@ -2116,6 +2252,8 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
         nesting_prefix.to_string(),
         nesting_suffix.to_string(),
         nesting_options_separator.to_string(),
+        interpolation_prefix.to_string(),
+        interpolation_suffix.to_string(),
     );
     visitor.file_path = Some(path.display().to_string());
     module.visit_with(&mut visitor);
@@ -2144,12 +2282,15 @@ fn extract_vue_component(
             &virtual_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.trans_keep_basic_html_nodes_for,
             ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
             ctx.nesting_prefix,
             ctx.nesting_suffix,
             ctx.nesting_options_separator,
+            ctx.interpolation_prefix,
+            ctx.interpolation_suffix,
         )?;
         keys.append(&mut script_keys);
         warnings += block_warnings;
@@ -2177,12 +2318,15 @@ fn extract_vue_component(
                     &virtual_path,
                     &template_functions,
                     ctx.trans_components,
+                    ctx.trans_keep_basic_html_nodes_for,
                     ctx.use_translation_names,
                     false,
                     ctx.plural_config,
                     ctx.nesting_prefix,
                     ctx.nesting_suffix,
                     ctx.nesting_options_separator,
+                    ctx.interpolation_prefix,
+                    ctx.interpolation_suffix,
                 )?;
                 keys.append(&mut tpl_keys);
                 warnings += tpl_warnings;
@@ -2196,12 +2340,15 @@ fn extract_vue_component(
             file_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.trans_keep_basic_html_nodes_for,
             ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
             ctx.nesting_prefix,
             ctx.nesting_suffix,
             ctx.nesting_options_separator,
+            ctx.interpolation_prefix,
+            ctx.interpolation_suffix,
         );
     }
 
@@ -2224,12 +2371,15 @@ fn extract_svelte_component(
             &virtual_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.trans_keep_basic_html_nodes_for,
             ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
             ctx.nesting_prefix,
             ctx.nesting_suffix,
             ctx.nesting_options_separator,
+            ctx.interpolation_prefix,
+            ctx.interpolation_suffix,
         )?;
         keys.append(&mut script_keys);
         warnings += block_warnings;
@@ -2263,12 +2413,15 @@ fn extract_svelte_component(
             &virtual_path,
             &template_functions,
             ctx.trans_components,
+            ctx.trans_keep_basic_html_nodes_for,
             ctx.use_translation_names,
             false,
             ctx.plural_config,
             ctx.nesting_prefix,
             ctx.nesting_suffix,
             ctx.nesting_options_separator,
+            ctx.interpolation_prefix,
+            ctx.interpolation_suffix,
         )?;
         keys.append(&mut tpl_keys);
         warnings += tpl_warnings;
@@ -2280,12 +2433,15 @@ fn extract_svelte_component(
             file_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.trans_keep_basic_html_nodes_for,
             ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
             ctx.nesting_prefix,
             ctx.nesting_suffix,
             ctx.nesting_options_separator,
+            ctx.interpolation_prefix,
+            ctx.interpolation_suffix,
         );
     }
 
@@ -2319,6 +2475,8 @@ pub fn extract_from_glob(
     plural_config: &PluralConfig,
 ) -> Result<ExtractionResult> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_trans_keep_basic_html_nodes_for =
+        vec!["br".to_string(), "strong".to_string(), "i".to_string()];
     let default_use_translation_names =
         vec![UseTranslationName::Name("useTranslation".to_string())];
     extract_from_glob_with_options(
@@ -2328,10 +2486,13 @@ pub fn extract_from_glob(
         true,
         plural_config,
         &default_trans_components,
+        &default_trans_keep_basic_html_nodes_for,
         &default_use_translation_names,
         "$t(",
         ")",
         ",",
+        "{{",
+        "}}",
     )
 }
 
@@ -2343,20 +2504,26 @@ pub fn extract_from_glob_with_options(
     extract_from_comments: bool,
     plural_config: &PluralConfig,
     trans_components: &[String],
+    trans_keep_basic_html_nodes_for: &[String],
     use_translation_names: &[UseTranslationName],
     nesting_prefix: &str,
     nesting_suffix: &str,
     nesting_options_separator: &str,
+    interpolation_prefix: &str,
+    interpolation_suffix: &str,
 ) -> Result<ExtractionResult> {
     use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
 
     let ignore_matchers = Arc::new(compile_ignore_patterns(ignore_patterns)?);
     let trans_components = Arc::new(trans_components.to_vec());
+    let trans_keep_basic_html_nodes_for = Arc::new(trans_keep_basic_html_nodes_for.to_vec());
     let use_translation_names = Arc::new(use_translation_names.to_vec());
     let nesting_prefix = Arc::new(nesting_prefix.to_string());
     let nesting_suffix = Arc::new(nesting_suffix.to_string());
     let nesting_options_separator = Arc::new(nesting_options_separator.to_string());
+    let interpolation_prefix = Arc::new(interpolation_prefix.to_string());
+    let interpolation_suffix = Arc::new(interpolation_suffix.to_string());
 
     // Create a streaming iterator that chains all glob patterns
     // This avoids collecting all file paths into memory upfront
@@ -2407,22 +2574,28 @@ pub fn extract_from_glob_with_options(
         .par_bridge() // Stream directly into parallel processing
         .map({
             let trans_components = Arc::clone(&trans_components);
+            let trans_keep_basic_html_nodes_for = Arc::clone(&trans_keep_basic_html_nodes_for);
             let use_translation_names = Arc::clone(&use_translation_names);
             let nesting_prefix = Arc::clone(&nesting_prefix);
             let nesting_suffix = Arc::clone(&nesting_suffix);
             let nesting_options_separator = Arc::clone(&nesting_options_separator);
+            let interpolation_prefix = Arc::clone(&interpolation_prefix);
+            let interpolation_suffix = Arc::clone(&interpolation_suffix);
             move |item| match item {
                 GlobItem::Path(path) => {
                     match extract_from_file_with_warnings(
                         &path,
                         functions,
                         &trans_components,
+                        &trans_keep_basic_html_nodes_for,
                         &use_translation_names,
                         extract_from_comments,
                         plural_config,
                         &nesting_prefix,
                         &nesting_suffix,
                         &nesting_options_separator,
+                        &interpolation_prefix,
+                        &interpolation_suffix,
                     ) {
                         Ok((keys, warnings)) => {
                             if keys.is_empty() {
@@ -2500,6 +2673,8 @@ pub fn extract_from_glob_deduplicated(
     plural_config: &PluralConfig,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_trans_keep_basic_html_nodes_for =
+        vec!["br".to_string(), "strong".to_string(), "i".to_string()];
     let default_use_translation_names =
         vec![UseTranslationName::Name("useTranslation".to_string())];
     extract_from_glob_deduplicated_with_options(
@@ -2509,10 +2684,13 @@ pub fn extract_from_glob_deduplicated(
         true,
         plural_config,
         &default_trans_components,
+        &default_trans_keep_basic_html_nodes_for,
         &default_use_translation_names,
         "$t(",
         ")",
         ",",
+        "{{",
+        "}}",
     )
 }
 
@@ -2524,10 +2702,13 @@ pub fn extract_from_glob_deduplicated_with_options(
     extract_from_comments: bool,
     plural_config: &PluralConfig,
     trans_components: &[String],
+    trans_keep_basic_html_nodes_for: &[String],
     use_translation_names: &[UseTranslationName],
     nesting_prefix: &str,
     nesting_suffix: &str,
     nesting_options_separator: &str,
+    interpolation_prefix: &str,
+    interpolation_suffix: &str,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
     use rayon::prelude::*;
 
@@ -2562,30 +2743,39 @@ pub fn extract_from_glob_deduplicated_with_options(
 
     let initial: AccumulatorType = (HashMap::new(), 0, Vec::new());
     let trans_components = Arc::new(trans_components.to_vec());
+    let trans_keep_basic_html_nodes_for = Arc::new(trans_keep_basic_html_nodes_for.to_vec());
     let use_translation_names = Arc::new(use_translation_names.to_vec());
     let nesting_prefix = Arc::new(nesting_prefix.to_string());
     let nesting_suffix = Arc::new(nesting_suffix.to_string());
     let nesting_options_separator = Arc::new(nesting_options_separator.to_string());
+    let interpolation_prefix = Arc::new(interpolation_prefix.to_string());
+    let interpolation_suffix = Arc::new(interpolation_suffix.to_string());
 
     let (unique_keys, warning_count, mut errors) = all_files
         .par_iter()
         .fold(|| initial.clone(), {
             let trans_components = Arc::clone(&trans_components);
+            let trans_keep_basic_html_nodes_for = Arc::clone(&trans_keep_basic_html_nodes_for);
             let use_translation_names = Arc::clone(&use_translation_names);
             let nesting_prefix = Arc::clone(&nesting_prefix);
             let nesting_suffix = Arc::clone(&nesting_suffix);
             let nesting_options_separator = Arc::clone(&nesting_options_separator);
+            let interpolation_prefix = Arc::clone(&interpolation_prefix);
+            let interpolation_suffix = Arc::clone(&interpolation_suffix);
             move |mut acc: AccumulatorType, path: &std::path::PathBuf| {
                 match extract_from_file_with_warnings(
                     path,
                     functions,
                     &trans_components,
+                    &trans_keep_basic_html_nodes_for,
                     &use_translation_names,
                     extract_from_comments,
                     plural_config,
                     &nesting_prefix,
                     &nesting_suffix,
                     &nesting_options_separator,
+                    &interpolation_prefix,
+                    &interpolation_suffix,
                 ) {
                     Ok((keys, warnings)) => {
                         acc.1 += warnings;
@@ -2891,6 +3081,74 @@ mod tests {
     }
 
     #[test]
+    fn test_trans_children_respects_trans_keep_basic_html_nodes_for() {
+        let source = r#"
+            function Component() {
+                return <Trans>Hello <strong>World</strong></Trans>;
+            }
+        "#;
+        let plural_config = PluralConfig::default();
+        let trans_components = vec!["Trans".to_string()];
+        let hooks = vec![UseTranslationName::Name("useTranslation".to_string())];
+        let keep_nodes = vec!["br".to_string(), "i".to_string()]; // strong is intentionally excluded
+
+        let (keys, _) = extract_from_source_with_warnings(
+            source,
+            "test.tsx",
+            &["t".to_string()],
+            &trans_components,
+            &keep_nodes,
+            &hooks,
+            true,
+            &plural_config,
+            "$t(",
+            ")",
+            ",",
+            "{{",
+            "}}",
+        )
+        .unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].key.contains("Hello"));
+        assert!(!keys[0].key.contains("<strong>"));
+        assert!(keys[0].key.contains("World"));
+    }
+
+    #[test]
+    fn test_trans_children_uses_custom_interpolation_delimiters() {
+        let source = r#"
+            function Component({ name }) {
+                return <Trans>Hello {name}</Trans>;
+            }
+        "#;
+        let plural_config = PluralConfig::default();
+        let trans_components = vec!["Trans".to_string()];
+        let hooks = vec![UseTranslationName::Name("useTranslation".to_string())];
+        let keep_nodes = vec!["br".to_string(), "strong".to_string(), "i".to_string()];
+
+        let (keys, _) = extract_from_source_with_warnings(
+            source,
+            "test.tsx",
+            &["t".to_string()],
+            &trans_components,
+            &keep_nodes,
+            &hooks,
+            true,
+            &plural_config,
+            "$t(",
+            ")",
+            ",",
+            "<<",
+            ">>",
+        )
+        .unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].key.contains("<<name>>"));
+    }
+
+    #[test]
     fn test_trans_ns_attribute() {
         let source = r#"
             function Component() {
@@ -3098,6 +3356,35 @@ mod tests {
     }
 
     #[test]
+    fn test_translation_function_alias_tracking() {
+        let source = r#"
+            function Component() {
+                const translate = t;
+                return <div>{translate('hello.alias')}</div>;
+            }
+        "#;
+
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        assert!(keys.iter().any(|k| k.key == "hello.alias"));
+    }
+
+    #[test]
+    fn test_use_translation_alias_inherits_scope() {
+        let source = r#"
+            function Component() {
+                const { t } = useTranslation('common', { keyPrefix: 'user' });
+                const translate = t;
+                return <div>{translate('name')}</div>;
+            }
+        "#;
+
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+        assert!(keys
+            .iter()
+            .any(|k| k.namespace.as_deref() == Some("common") && k.key == "user.name"));
+    }
+
+    #[test]
     fn test_get_fixed_t_with_namespace() {
         let source = r#"
             const t = i18n.getFixedT('en', 'common');
@@ -3109,6 +3396,39 @@ mod tests {
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "greeting");
         assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_unresolved_dynamic_context_emits_warning_and_falls_back() {
+        let source = r#"
+            function Component(user) {
+                return t('friend', { context: user.gender });
+            }
+        "#;
+        let plural_config = PluralConfig::default();
+        let trans_components = vec!["Trans".to_string()];
+        let keep_nodes = vec!["br".to_string(), "strong".to_string(), "i".to_string()];
+        let hooks = vec![UseTranslationName::Name("useTranslation".to_string())];
+
+        let (keys, warnings) = extract_from_source_with_warnings(
+            source,
+            "test.ts",
+            &["t".to_string()],
+            &trans_components,
+            &keep_nodes,
+            &hooks,
+            true,
+            &plural_config,
+            "$t(",
+            ")",
+            ",",
+            "{{",
+            "}}",
+        )
+        .unwrap();
+
+        assert!(warnings >= 1);
+        assert!(keys.iter().any(|k| k.key == "friend"));
     }
 
     #[test]
@@ -3134,6 +3454,7 @@ mod tests {
         "#;
         let plural_config = PluralConfig::default();
         let trans_components = vec!["Trans".to_string()];
+        let keep_nodes = vec!["br".to_string(), "strong".to_string(), "i".to_string()];
         let hooks = vec![UseTranslationName::Detailed(
             crate::config::UseTranslationNameDetails {
                 name: "loadPageTranslations".to_string(),
@@ -3147,12 +3468,15 @@ mod tests {
             "test.tsx",
             &["t".to_string()],
             &trans_components,
+            &keep_nodes,
             &hooks,
             true,
             &plural_config,
             "$t(",
             ")",
             ",",
+            "{{",
+            "}}",
         )
         .unwrap();
         assert_eq!(keys.len(), 1);
@@ -3167,18 +3491,22 @@ mod tests {
         "#;
         let plural_config = PluralConfig::default();
         let trans_components = vec!["Trans".to_string()];
+        let keep_nodes = vec!["br".to_string(), "strong".to_string(), "i".to_string()];
         let hooks = vec![UseTranslationName::Name("useTranslation".to_string())];
         let (keys, _) = extract_from_source_with_warnings(
             source,
             "test.ts",
             &["t".to_string()],
             &trans_components,
+            &keep_nodes,
             &hooks,
             true,
             &plural_config,
             "__nest__(",
             ")",
             ",",
+            "{{",
+            "}}",
         )
         .unwrap();
 
@@ -3375,6 +3703,41 @@ mod tests {
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, "button.save");
         assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_comment_resolves_use_translation_scope() {
+        let source = r#"
+            function Component() {
+                const { t } = useTranslation('common', { keyPrefix: 'user' });
+                // t('name')
+                return null;
+            }
+        "#;
+
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "user.name");
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_comment_does_not_apply_scope_when_ambiguous() {
+        let source = r#"
+            function Component() {
+                const { t } = useTranslation('common', { keyPrefix: 'user' });
+                const { t: tOther } = useTranslation('admin', { keyPrefix: 'role' });
+                // t('name')
+                return tOther('title');
+            }
+        "#;
+
+        let keys = extract_from_source(source, "test.tsx", &["t".to_string()]).unwrap();
+
+        assert!(keys
+            .iter()
+            .any(|k| k.key == "name" && k.namespace.is_none()));
     }
 
     #[test]

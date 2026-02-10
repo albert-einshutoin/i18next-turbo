@@ -68,7 +68,7 @@ t('friend', { context: 'male' })  // → friend_male
 t('friend', { count: 2, context: 'female' })  // → friend_female_one, friend_female_other
 ```
 
-ICU ベースの複数形ルールに従って、`locales` に列挙した言語ごとに必要なカテゴリ（`zero`/`one`/`few`/`many` など）を自動生成します。例えばロシア語を指定すると `friend_one`/`friend_few`/`friend_many`/`friend_other` が同時に追加されます。
+Based on ICU plural rules, the required categories (`zero`, `one`, `few`, `many`, etc.) are generated for each language in `locales`. For example, with Russian you get `friend_one`, `friend_few`, `friend_many`, `friend_other` added at once.
 
 ### Other Features
 
@@ -131,9 +131,14 @@ Create `i18next-turbo.json` in your project root:
 | `locales` | List of target languages | `["en"]` |
 | `defaultNamespace` | Default namespace | `"translation"` |
 | `functions` | Function names to extract | `["t"]` |
+| `logLevel` | Logging verbosity (`error`/`warn`/`info`/`debug`) | `"info"` |
 | `types.output` | Path for generated TypeScript definitions | `"src/@types/i18next.d.ts"` |
 | `types.defaultLocale` | Default locale for type generation | First entry in `locales` |
 | `types.localesDir` | Directory read when generating types | Same as `output` |
+| `types.input` | Glob patterns of locale files to include in type generation | all `*.json` in default locale |
+| `types.resourcesFile` | Optional secondary file path for `Resources` interfaces | not generated |
+| `types.enableSelector` | Enable selector helper types (`true`, `false`, `"optimize"`) | `false` |
+| `types.indentation` | Indentation for generated type files | `2 spaces` |
 
 Use the optional `types` block to control where type definitions are written and which locale files `i18next-turbo typegen` or `i18next-turbo extract --generate-types` should use.
 
@@ -323,26 +328,26 @@ Supported mappings:
 |:---|:---|
 | `input` | `input` |
 | `output` (string) | `output` (directory) |
+| `output` (function) | evaluated and projected to `output` directory |
 | `functions` | `functions` |
 | `defaultNS` | `defaultNamespace` |
 | `keySeparator` | `keySeparator` (`false` -> empty string) |
 | `nsSeparator` | `nsSeparator` (`false` -> empty string) |
 | `contextSeparator` | `contextSeparator` |
 | `pluralSeparator` | `pluralSeparator` |
+| `defaultNS = false` | `defaultNamespace = ""` + namespace-less mode |
+| `secondaryLanguages` | `secondaryLanguages` |
+| `transKeepBasicHtmlNodesFor` | `transKeepBasicHtmlNodesFor` |
+| `preserveContextVariants` | `preserveContextVariants` |
+| `interpolationPrefix` / `interpolationSuffix` | `interpolationPrefix` / `interpolationSuffix` |
+| `mergeNamespaces` | `mergeNamespaces` |
 | `extractFromComments` | `extractFromComments` (default `true`) |
 
 Not supported:
 
 | i18next-cli (extract) | Reason |
 |:---|:---|
-| `output` (function) | Function output is not supported |
-| `defaultNS = false` | Namespace-less mode is not supported |
-| `transKeepBasicHtmlNodesFor` | Not implemented in i18next-turbo |
-| `preserveContextVariants` | Not implemented in i18next-turbo |
 | `sort` | Not implemented in i18next-turbo |
-| `primaryLanguage` / `secondaryLanguages` | Not implemented in i18next-turbo |
-| `mergeNamespaces` | Not implemented in i18next-turbo |
-| `interpolationPrefix` / `interpolationSuffix` | Not implemented in i18next-turbo |
 
 Notes:
 - Output templates like `locales/{{language}}/{{namespace}}.json` are reduced to a base directory.
@@ -615,9 +620,14 @@ cargo build --release
 | `locales` | 対象言語のリスト | `["en"]` |
 | `defaultNamespace` | デフォルトの名前空間 | `"translation"` |
 | `functions` | 抽出対象の関数名 | `["t"]` |
+| `logLevel` | ログレベル（`error`/`warn`/`info`/`debug`） | `"info"` |
 | `types.output` | 型定義ファイルの出力パス | `"src/@types/i18next.d.ts"` |
 | `types.defaultLocale` | 型生成時に使用するデフォルトロケール | `locales` の先頭 | 
 | `types.localesDir` | 型生成時に読むロケールディレクトリ | `output` と同じ |
+| `types.input` | 型生成に含める翻訳ファイルの glob パターン | デフォルトロケール配下の `*.json` 全件 |
+| `types.resourcesFile` | `Resources` インターフェースを出力する補助ファイル | 未生成 |
+| `types.enableSelector` | セレクター補助型を有効化（`true`, `false`, `"optimize"`） | `false` |
+| `types.indentation` | 生成される型定義ファイルのインデント | `2スペース` |
 
 `types` ブロックを設定すると、`i18next-turbo typegen` や `i18next-turbo extract --generate-types` が参照する出力パスやロケールを制御できます。
 
@@ -794,26 +804,26 @@ t('apple', { count });  // → apple_one, apple_other が生成される
 |:---|:---|
 | `input` | `input` |
 | `output` (文字列) | `output` (ディレクトリ) |
+| `output` (関数) | 評価して `output` ディレクトリへ射影 |
 | `functions` | `functions` |
 | `defaultNS` | `defaultNamespace` |
 | `keySeparator` | `keySeparator` (`false` -> 空文字) |
 | `nsSeparator` | `nsSeparator` (`false` -> 空文字) |
 | `contextSeparator` | `contextSeparator` |
 | `pluralSeparator` | `pluralSeparator` |
+| `defaultNS = false` | `defaultNamespace = ""` + namespace-less mode |
+| `secondaryLanguages` | `secondaryLanguages` |
+| `transKeepBasicHtmlNodesFor` | `transKeepBasicHtmlNodesFor` |
+| `preserveContextVariants` | `preserveContextVariants` |
+| `interpolationPrefix` / `interpolationSuffix` | `interpolationPrefix` / `interpolationSuffix` |
+| `mergeNamespaces` | `mergeNamespaces` |
 | `extractFromComments` | `extractFromComments`（デフォルト `true`） |
 
 未対応:
 
 | i18next-cli (extract) | 理由 |
 |:---|:---|
-| `output` (関数) | 関数出力は未対応 |
-| `defaultNS = false` | namespace 無効は未対応 |
-| `transKeepBasicHtmlNodesFor` | 未実装 |
-| `preserveContextVariants` | 未実装 |
 | `sort` | 未実装 |
-| `primaryLanguage` / `secondaryLanguages` | 未実装 |
-| `mergeNamespaces` | 未実装 |
-| `interpolationPrefix` / `interpolationSuffix` | 未実装 |
 
 注意点:
 - `locales/{{language}}/{{namespace}}.json` のようなテンプレート出力はベースディレクトリに変換します。

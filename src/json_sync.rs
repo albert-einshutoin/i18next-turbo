@@ -11,6 +11,27 @@ use crate::config::{Config, OutputFormat};
 use crate::extractor::ExtractedKey;
 use crate::fs::FileSystem;
 
+fn effective_namespace(default_namespace: &str) -> &str {
+    if default_namespace.is_empty() {
+        "translation"
+    } else {
+        default_namespace
+    }
+}
+
+fn merge_namespace_key(config: &Config, namespace: &str, key: &str) -> String {
+    let separator = if config.key_separator.is_empty() {
+        "."
+    } else {
+        config.key_separator.as_str()
+    };
+    if key.is_empty() {
+        namespace.to_string()
+    } else {
+        format!("{}{}{}", namespace, separator, key)
+    }
+}
+
 // =============================================================================
 // JSON Style Detection and Custom Formatting
 // =============================================================================
@@ -450,18 +471,24 @@ pub(crate) fn merge_keys(
     let mut result = SyncResult::default();
     let mut seen_paths: HashSet<String> = HashSet::new();
     let mut seen_object_roots: Vec<String> = Vec::new();
-    let default_namespace = &config.default_namespace;
+    let default_namespace = effective_namespace(&config.default_namespace);
     let fallback_default = config.default_value.as_deref();
     let key_separator = config.key_separator.as_str();
 
     for key in keys {
         let key_namespace = key.namespace.as_deref().unwrap_or(default_namespace);
 
-        if key_namespace != target_namespace {
+        if !config.merge_namespaces && key_namespace != target_namespace {
             continue;
         }
 
-        if let Some(root) = key.key.strip_suffix(".*") {
+        let effective_key = if config.merge_namespaces {
+            merge_namespace_key(config, key_namespace, &key.key)
+        } else {
+            key.key.clone()
+        };
+
+        if let Some(root) = effective_key.strip_suffix(".*") {
             seen_paths.insert(root.to_string());
             seen_object_roots.push(root.to_string());
             continue;
@@ -473,26 +500,26 @@ pub(crate) fn merge_keys(
             .or(fallback_default)
             .unwrap_or("");
 
-        seen_paths.insert(key.key.clone());
+        seen_paths.insert(effective_key.clone());
 
         if key_separator.is_empty() {
-            if let Some(existing_value) = existing.get(&key.key) {
+            if let Some(existing_value) = existing.get(&effective_key) {
                 if existing_value.is_object() {
                     result.conflicts.push(KeyConflict::ObjectIsValue {
-                        key_path: key.key.clone(),
+                        key_path: effective_key.clone(),
                     });
                 } else {
                     result.existing_keys += 1;
                 }
             } else {
-                existing.insert(key.key.clone(), Value::String(value.to_string()));
-                result.added_keys.push(key.key.clone());
+                existing.insert(effective_key.clone(), Value::String(value.to_string()));
+                result.added_keys.push(effective_key.clone());
             }
         } else {
-            let parts: Vec<&str> = key.key.split(key_separator).collect();
+            let parts: Vec<&str> = effective_key.split(key_separator).collect();
             match insert_nested_key(existing, &parts, value) {
                 InsertResult::Added => {
-                    result.added_keys.push(key.key.clone());
+                    result.added_keys.push(effective_key.clone());
                 }
                 InsertResult::Existed => {
                     result.existing_keys += 1;
@@ -652,10 +679,77 @@ fn write_json5_locale_with_fs<F: FileSystem>(
             .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
 
-    let mut buffer = serde_json::to_string_pretty(content)?.into_bytes();
-    buffer.push(b'\n');
+    let existing = if fs.exists(path) {
+        fs.read_to_string(path).ok()
+    } else {
+        None
+    };
+    let (prefix_comments, suffix_comments, prefer_trailing_comma) = existing
+        .as_deref()
+        .map(extract_json5_preservation_hints)
+        .unwrap_or_default();
+
+    let mut json_body = serde_json::to_string_pretty(content)?;
+    if prefer_trailing_comma {
+        json_body = add_trailing_commas_to_pretty_json(&json_body);
+    }
+
+    let mut output = String::new();
+    if !prefix_comments.is_empty() {
+        output.push_str(&prefix_comments);
+        if !prefix_comments.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    output.push_str(&json_body);
+    if !suffix_comments.is_empty() {
+        output.push('\n');
+        output.push_str(&suffix_comments);
+    }
+    output.push('\n');
+    let buffer = output.into_bytes();
     fs.atomic_write(path, &buffer)
         .with_context(|| format!("Failed to write locale file: {}", path.display()))
+}
+
+fn extract_json5_preservation_hints(content: &str) -> (String, String, bool) {
+    let first_brace = content.find('{');
+    let last_brace = content.rfind('}');
+    let prefix = first_brace
+        .map(|idx| content[..idx].trim_end().to_string())
+        .unwrap_or_default();
+    let suffix = last_brace
+        .map(|idx| content[idx + 1..].trim_start().to_string())
+        .unwrap_or_default();
+    let prefer_trailing_comma = content.contains(",\n}") || content.contains(",\n]");
+    (prefix, suffix, prefer_trailing_comma)
+}
+
+fn add_trailing_commas_to_pretty_json(pretty_json: &str) -> String {
+    let mut lines: Vec<String> = pretty_json.lines().map(|l| l.to_string()).collect();
+    for i in 1..lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed == "}" || trimmed == "]" {
+            // find previous non-empty line
+            let mut prev_idx = None;
+            for j in (0..i).rev() {
+                if !lines[j].trim().is_empty() {
+                    prev_idx = Some(j);
+                    break;
+                }
+            }
+            if let Some(j) = prev_idx {
+                let prev_trimmed = lines[j].trim();
+                if !(prev_trimmed.ends_with(',')
+                    || prev_trimmed.ends_with('{')
+                    || prev_trimmed.ends_with('['))
+                {
+                    lines[j].push(',');
+                }
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 enum JsVariant {
@@ -882,9 +976,15 @@ pub(crate) fn sync_locale_file_locked_with_fs<F: FileSystem>(
 pub fn collect_namespaces(
     keys: &[ExtractedKey],
     default_namespace: &str,
+    merge_namespaces: bool,
 ) -> std::collections::HashSet<String> {
     let mut namespaces = std::collections::HashSet::new();
-    namespaces.insert(default_namespace.to_string());
+    let effective_default = effective_namespace(default_namespace).to_string();
+    namespaces.insert(effective_default.clone());
+
+    if merge_namespaces {
+        return namespaces;
+    }
 
     for key in keys {
         if let Some(ns) = &key.namespace {
@@ -939,6 +1039,41 @@ pub fn sync_namespaces(
     Ok(results)
 }
 
+/// Sync extracted keys to a specific subset of locales.
+pub fn sync_locales(
+    config: &Config,
+    keys: &[ExtractedKey],
+    output_dir: &str,
+    target_locales: &[String],
+    dry_run: bool,
+) -> Result<Vec<SyncResult>> {
+    let preserve_matcher = PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator)?;
+    let mut results = Vec::new();
+    let namespaces = collect_namespaces(keys, &config.default_namespace, config.merge_namespaces);
+
+    for locale in target_locales {
+        for namespace in &namespaces {
+            let file_path = Path::new(output_dir).join(locale).join(format!(
+                "{}.{}",
+                namespace,
+                config.output_extension()
+            ));
+
+            let sync_result = sync_locale_file_locked(
+                &file_path,
+                keys,
+                namespace,
+                config,
+                &preserve_matcher,
+                dry_run,
+            )?;
+            results.push(sync_result);
+        }
+    }
+
+    Ok(results)
+}
+
 /// Sync extracted keys to all locale files.
 ///
 /// If `dry_run` is true, files will not be written but results will still
@@ -949,11 +1084,7 @@ pub fn sync_all_locales(
     output_dir: &str,
     dry_run: bool,
 ) -> Result<Vec<SyncResult>> {
-    // Collect all namespaces from keys
-    let namespaces = collect_namespaces(keys, &config.default_namespace);
-
-    // Use the namespace-specific sync
-    sync_namespaces(config, keys, output_dir, &namespaces, dry_run)
+    sync_locales(config, keys, output_dir, &config.locales, dry_run)
 }
 
 #[cfg(test)]
@@ -1155,6 +1286,43 @@ mod tests {
         // Should NOT have nested structure
         assert!(existing.get("button").is_none());
         assert!(existing.get("form").is_none());
+    }
+
+    #[test]
+    fn test_merge_keys_with_merge_namespaces() {
+        let mut existing = Map::new();
+        let keys = vec![
+            ExtractedKey {
+                key: "hello".to_string(),
+                namespace: Some("common".to_string()),
+                default_value: Some("Hello".to_string()),
+            },
+            ExtractedKey {
+                key: "title".to_string(),
+                namespace: Some("home".to_string()),
+                default_value: Some("Home".to_string()),
+            },
+        ];
+
+        let mut config = Config::default();
+        config.merge_namespaces = true;
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
+        assert_eq!(result.added_keys.len(), 2);
+        let common = existing
+            .get("common")
+            .and_then(|v| v.as_object())
+            .expect("common namespace object should exist");
+        assert_eq!(
+            common.get("hello"),
+            Some(&Value::String("Hello".to_string()))
+        );
+        let home = existing
+            .get("home")
+            .and_then(|v| v.as_object())
+            .expect("home namespace object should exist");
+        assert_eq!(home.get("title"), Some(&Value::String("Home".to_string())));
     }
 
     #[test]

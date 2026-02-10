@@ -13,8 +13,12 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    let primary_locale = &config.locales[0];
-    let secondary_locales: Vec<&String> = config.locales[1..].iter().collect();
+    let primary_locale = config.primary_language().to_string();
+    let secondary_locales = config.secondary_languages();
+    if secondary_locales.is_empty() {
+        println!("Sync requires at least one secondary locale configured.");
+        return Ok(());
+    }
 
     println!("Configuration:");
     println!("  Locales directory: {}", config.output);
@@ -30,7 +34,7 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
     let output_format = config.output_format();
 
     // Read all namespaces from primary locale
-    let primary_dir = locales_path.join(primary_locale);
+    let primary_dir = locales_path.join(&primary_locale);
     if !primary_dir.exists() {
         println!(
             "Primary locale directory does not exist: {}",

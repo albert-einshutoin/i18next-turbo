@@ -287,6 +287,10 @@ function mapCliExtractConfig(rawConfig) {
     mapped.locales = rawConfig.locales;
   }
 
+  if (Array.isArray(rawConfig.secondaryLanguages)) {
+    mapped.secondaryLanguages = rawConfig.secondaryLanguages;
+  }
+
   if (typeof extract.input === 'string') {
     mapped.input = [extract.input];
   } else if (Array.isArray(extract.input)) {
@@ -299,7 +303,12 @@ function mapCliExtractConfig(rawConfig) {
       mapped.output = outputDir;
     }
   } else if (typeof extract.output === 'function') {
-    console.warn('Warning: extract.output function is not supported by i18next-turbo.');
+    const outputDir = resolveOutputDirFromFunction(extract.output, rawConfig, extract);
+    if (outputDir) {
+      mapped.output = outputDir;
+    } else {
+      console.warn('Warning: extract.output function could not be resolved to a directory.');
+    }
   }
 
   if (Array.isArray(extract.functions)) {
@@ -313,7 +322,10 @@ function mapCliExtractConfig(rawConfig) {
   if (typeof extract.defaultNS === 'string') {
     mapped.defaultNamespace = extract.defaultNS;
   } else if (extract.defaultNS === false) {
-    console.warn('Warning: extract.defaultNS=false is not supported by i18next-turbo.');
+    mapped.defaultNamespace = '';
+    if (typeof extract.nsSeparator === 'undefined') {
+      mapped.nsSeparator = '';
+    }
   }
 
   if (typeof extract.keySeparator === 'string') {
@@ -332,12 +344,20 @@ function mapCliExtractConfig(rawConfig) {
     mapped.contextSeparator = extract.contextSeparator;
   }
 
+  if (Array.isArray(extract.secondaryLanguages)) {
+    mapped.secondaryLanguages = extract.secondaryLanguages;
+  }
+
   if (typeof extract.pluralSeparator === 'string') {
     mapped.pluralSeparator = extract.pluralSeparator;
   }
 
   if (Array.isArray(extract.transComponents)) {
     mapped.transComponents = extract.transComponents;
+  }
+
+  if (Array.isArray(extract.transKeepBasicHtmlNodesFor)) {
+    mapped.transKeepBasicHtmlNodesFor = extract.transKeepBasicHtmlNodesFor;
   }
 
   if (Array.isArray(extract.ignore)) {
@@ -348,8 +368,16 @@ function mapCliExtractConfig(rawConfig) {
     mapped.preservePatterns = extract.preservePatterns;
   }
 
+  if (typeof extract.preserveContextVariants === 'boolean') {
+    mapped.preserveContextVariants = extract.preserveContextVariants;
+  }
+
   if (typeof extract.removeUnusedKeys === 'boolean') {
     mapped.removeUnusedKeys = extract.removeUnusedKeys;
+  }
+
+  if (typeof extract.mergeNamespaces === 'boolean') {
+    mapped.mergeNamespaces = extract.mergeNamespaces;
   }
 
   if (typeof extract.defaultValue === 'string') {
@@ -376,6 +404,14 @@ function mapCliExtractConfig(rawConfig) {
     mapped.nestingOptionsSeparator = extract.nestingOptionsSeparator;
   }
 
+  if (typeof extract.interpolationPrefix === 'string') {
+    mapped.interpolationPrefix = extract.interpolationPrefix;
+  }
+
+  if (typeof extract.interpolationSuffix === 'string') {
+    mapped.interpolationSuffix = extract.interpolationSuffix;
+  }
+
   return mapped;
 }
 
@@ -400,6 +436,66 @@ function coerceOutputDir(output) {
   }
 
   return output;
+}
+
+function resolveOutputDirFromFunction(outputFn, rawConfig, extractConfig) {
+  const locales = Array.isArray(rawConfig.locales) && rawConfig.locales.length > 0
+    ? rawConfig.locales
+    : ['en', 'ja'];
+  const defaultNs = typeof extractConfig.defaultNS === 'string' && extractConfig.defaultNS.length > 0
+    ? extractConfig.defaultNS
+    : 'translation';
+  const namespaces = [defaultNs, 'common'];
+
+  const candidates = [];
+  for (const locale of locales.slice(0, 2)) {
+    for (const namespace of namespaces) {
+      try {
+        const maybe = outputFn(locale, namespace);
+        if (typeof maybe === 'string' && maybe.trim().length > 0) {
+          const dir = coerceOutputDir(maybe);
+          if (dir) {
+            candidates.push(path.resolve(process.cwd(), dir));
+          }
+        }
+      } catch (error) {
+        console.warn(`Warning: extract.output function threw for (${locale}, ${namespace}): ${error.message}`);
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const unique = [...new Set(candidates)];
+  if (unique.length === 1) {
+    return unique[0];
+  }
+
+  const common = longestCommonPathPrefix(unique);
+  if (common) {
+    return common;
+  }
+
+  return unique[0];
+}
+
+function longestCommonPathPrefix(paths) {
+  if (!paths.length) {
+    return null;
+  }
+  const split = paths.map(p => path.resolve(p).split(path.sep).filter(Boolean));
+  const first = split[0];
+  let i = 0;
+  while (i < first.length && split.every(parts => parts[i] === first[i])) {
+    i += 1;
+  }
+  if (i === 0) {
+    return null;
+  }
+  const root = path.parse(path.resolve(paths[0])).root;
+  return path.join(root, ...first.slice(0, i));
 }
 
 /**

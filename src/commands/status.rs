@@ -27,7 +27,10 @@ pub fn run(
     println!("Configuration:");
     println!("  Locales directory: {}", config.output);
     println!("  Checking locale: {}", check_locale);
-    println!("  Default namespace: {}", config.default_namespace);
+    println!(
+        "  Default namespace: {}",
+        config.effective_default_namespace()
+    );
     if let Some(ns) = namespace_filter {
         println!("  Namespace filter: {}", ns);
     }
@@ -43,23 +46,31 @@ pub fn run(
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.trans_keep_basic_html_nodes_for,
         &config.use_translation_names,
         &config.nesting_prefix,
         &config.nesting_suffix,
         &config.nesting_options_separator,
+        &config.interpolation_prefix,
+        &config.interpolation_suffix,
     )?;
 
     let mut source_keys: HashSet<String> = HashSet::new();
     let mut all_keys: Vec<ExtractedKey> = Vec::new();
+    let namespace_less_mode = config.namespace_less_mode();
 
     for (_file_path, keys) in &extraction.files {
         for key in keys {
             let namespace = key
                 .namespace
                 .as_deref()
-                .unwrap_or(&config.default_namespace);
+                .unwrap_or(config.effective_default_namespace());
             if namespace_filter.is_none_or(|filter| filter == namespace) {
-                let full_key = format!("{}:{}", namespace, key.key);
+                let full_key = if namespace_less_mode {
+                    key.key.clone()
+                } else {
+                    format!("{}:{}", namespace, key.key)
+                };
                 source_keys.insert(full_key);
             }
             all_keys.push(key.clone());
@@ -98,7 +109,7 @@ pub fn run(
                 }
 
                 if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                    count_json_keys(&json, namespace, "", &mut locale_keys);
+                    count_json_keys(&json, namespace, "", namespace_less_mode, &mut locale_keys);
                 }
             }
         }
@@ -110,7 +121,10 @@ pub fn run(
     let dead_keys = cleanup::find_dead_keys(
         locales_path,
         &all_keys,
-        &config.default_namespace,
+        config.effective_default_namespace(),
+        namespace_less_mode,
+        config.preserve_context_variants,
+        &config.context_separator,
         check_locale,
     )?;
     let dead_keys: Vec<_> = dead_keys
@@ -170,7 +184,13 @@ pub fn run(
 }
 
 /// Count all leaf keys in a JSON structure
-fn count_json_keys(value: &Value, namespace: &str, prefix: &str, keys: &mut HashSet<String>) {
+fn count_json_keys(
+    value: &Value,
+    namespace: &str,
+    prefix: &str,
+    namespace_less_mode: bool,
+    keys: &mut HashSet<String>,
+) {
     match value {
         Value::Object(obj) => {
             for (k, v) in obj {
@@ -179,11 +199,15 @@ fn count_json_keys(value: &Value, namespace: &str, prefix: &str, keys: &mut Hash
                 } else {
                     format!("{}.{}", prefix, k)
                 };
-                count_json_keys(v, namespace, &path, keys);
+                count_json_keys(v, namespace, &path, namespace_less_mode, keys);
             }
         }
         Value::String(_) => {
-            keys.insert(format!("{}:{}", namespace, prefix));
+            if namespace_less_mode {
+                keys.insert(prefix.to_string());
+            } else {
+                keys.insert(format!("{}:{}", namespace, prefix));
+            }
         }
         _ => {}
     }

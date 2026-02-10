@@ -30,7 +30,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node bin/postinstall.js"
+    "postinstall": "node bin/postinstall.js",
+    "sync-version": "node scripts/sync-version.mjs"
   },
   "dependencies": {
     "cosmiconfig": "^9.0.0",

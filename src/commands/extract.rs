@@ -15,8 +15,14 @@ pub fn run(
     types_output: &str,
     dry_run: bool,
     ci: bool,
+    sync_primary: bool,
+    sync_all: bool,
     verbose: bool,
 ) -> Result<()> {
+    if sync_primary && sync_all {
+        bail!("--sync-primary and --sync-all cannot be used together");
+    }
+
     if dry_run {
         println!("=== i18next-turbo extract (dry-run) ===\n");
     } else {
@@ -57,10 +63,13 @@ pub fn run(
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.trans_keep_basic_html_nodes_for,
         &config.use_translation_names,
         &config.nesting_prefix,
         &config.nesting_suffix,
         &config.nesting_options_separator,
+        &config.interpolation_prefix,
+        &config.interpolation_suffix,
     )?;
 
     // Report any errors encountered during extraction
@@ -117,7 +126,15 @@ pub fn run(
     } else {
         println!("\nSyncing to locale files...");
     }
-    let sync_results = json_sync::sync_all_locales(config, &all_keys, output_dir, dry_run)?;
+    let sync_results = if sync_primary {
+        let locales = vec![config.primary_language().to_string()];
+        json_sync::sync_locales(config, &all_keys, output_dir, &locales, dry_run)?
+    } else if sync_all {
+        json_sync::sync_all_locales(config, &all_keys, output_dir, dry_run)?
+    } else {
+        // default is sync-all behavior
+        json_sync::sync_all_locales(config, &all_keys, output_dir, dry_run)?
+    };
 
     // Report sync results
     let mut total_added = 0;
@@ -229,7 +246,20 @@ pub fn run(
             .types_default_locale()
             .or_else(|| config.locales.first().cloned())
             .unwrap_or_else(|| "en".to_string());
-        typegen::generate_types(locales_dir_path, types_path, &default_locale_owned)?;
+        let indentation = config.types_indentation_string();
+        let input_patterns = config.types_input_patterns();
+        let resources_file = config.types_resources_file();
+        let enable_selector = config.types_enable_selector();
+        typegen::generate_types_with_options(
+            locales_dir_path,
+            types_path,
+            &default_locale_owned,
+            indentation.as_deref(),
+            input_patterns.as_deref(),
+            resources_file.as_deref().map(std::path::Path::new),
+            enable_selector.as_ref(),
+            config.merge_namespaces,
+        )?;
         println!("  Generated: {}", types_output);
     } else if generate_types && dry_run {
         println!("\n(Skipping type generation in dry-run mode)");
