@@ -337,22 +337,11 @@ Not supported:
 |:---|:---|
 | `output` (function) | Function output is not supported |
 | `defaultNS = false` | Namespace-less mode is not supported |
-| `ignore` | Not implemented in i18next-turbo |
-| `transComponents` | Not implemented in i18next-turbo |
-| `useTranslationNames` | Not implemented in i18next-turbo |
 | `transKeepBasicHtmlNodesFor` | Not implemented in i18next-turbo |
-| `preservePatterns` | Not implemented in i18next-turbo |
 | `preserveContextVariants` | Not implemented in i18next-turbo |
 | `sort` | Not implemented in i18next-turbo |
-| `indentation` | Not implemented in i18next-turbo |
-| `defaultValue` | Not implemented in i18next-turbo |
 | `primaryLanguage` / `secondaryLanguages` | Not implemented in i18next-turbo |
-| `outputFormat` | Not implemented in i18next-turbo |
 | `mergeNamespaces` | Not implemented in i18next-turbo |
-| `removeUnusedKeys` | Not implemented in i18next-turbo |
-| `generateBasePluralForms` | Not implemented in i18next-turbo |
-| `disablePlurals` | Not implemented in i18next-turbo |
-| `nestingPrefix` / `nestingSuffix` / `nestingOptionsSeparator` | Not implemented in i18next-turbo |
 | `interpolationPrefix` / `interpolationSuffix` | Not implemented in i18next-turbo |
 
 Notes:
@@ -819,22 +808,11 @@ t('apple', { count });  // → apple_one, apple_other が生成される
 |:---|:---|
 | `output` (関数) | 関数出力は未対応 |
 | `defaultNS = false` | namespace 無効は未対応 |
-| `ignore` | 未実装 |
-| `transComponents` | 未実装 |
-| `useTranslationNames` | 未実装 |
 | `transKeepBasicHtmlNodesFor` | 未実装 |
-| `preservePatterns` | 未実装 |
 | `preserveContextVariants` | 未実装 |
 | `sort` | 未実装 |
-| `indentation` | 未実装 |
-| `defaultValue` | 未実装 |
 | `primaryLanguage` / `secondaryLanguages` | 未実装 |
-| `outputFormat` | 未実装 |
 | `mergeNamespaces` | 未実装 |
-| `removeUnusedKeys` | 未実装 |
-| `generateBasePluralForms` | 未実装 |
-| `disablePlurals` | 未実装 |
-| `nestingPrefix` / `nestingSuffix` / `nestingOptionsSeparator` | 未実装 |
 | `interpolationPrefix` / `interpolationSuffix` | 未実装 |
 
 注意点:

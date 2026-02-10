@@ -43,6 +43,10 @@ pub fn run(
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.use_translation_names,
+        &config.nesting_prefix,
+        &config.nesting_suffix,
+        &config.nesting_options_separator,
     )?;
 
     let mut source_keys: HashSet<String> = HashSet::new();

@@ -135,6 +135,10 @@ impl FileWatcher {
             self.config.extract_from_comments,
             &plural_config,
             &self.config.trans_components,
+            &self.config.use_translation_names,
+            &self.config.nesting_prefix,
+            &self.config.nesting_suffix,
+            &self.config.nesting_options_separator,
         )?;
 
         // Populate cache

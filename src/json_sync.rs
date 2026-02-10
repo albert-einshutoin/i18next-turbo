@@ -449,6 +449,7 @@ pub(crate) fn merge_keys(
 ) -> SyncResult {
     let mut result = SyncResult::default();
     let mut seen_paths: HashSet<String> = HashSet::new();
+    let mut seen_object_roots: Vec<String> = Vec::new();
     let default_namespace = &config.default_namespace;
     let fallback_default = config.default_value.as_deref();
     let key_separator = config.key_separator.as_str();
@@ -457,6 +458,12 @@ pub(crate) fn merge_keys(
         let key_namespace = key.namespace.as_deref().unwrap_or(default_namespace);
 
         if key_namespace != target_namespace {
+            continue;
+        }
+
+        if let Some(root) = key.key.strip_suffix(".*") {
+            seen_paths.insert(root.to_string());
+            seen_object_roots.push(root.to_string());
             continue;
         }
 
@@ -505,6 +512,7 @@ pub(crate) fn merge_keys(
             key_separator,
             target_namespace,
             &seen_paths,
+            &seen_object_roots,
             preserve_matcher,
             &mut removed,
         );
@@ -520,6 +528,7 @@ fn prune_unused_keys(
     key_separator: &str,
     namespace: &str,
     seen_paths: &HashSet<String>,
+    seen_object_roots: &[String],
     preserve_matcher: &PreserveMatcher,
     removed: &mut Vec<String>,
 ) -> bool {
@@ -533,6 +542,15 @@ fn prune_unused_keys(
         };
 
         let keep = seen_paths.contains(&current_path)
+            || seen_object_roots.iter().any(|root| {
+                current_path == *root
+                    || (!root.is_empty()
+                        && if key_separator.is_empty() {
+                            current_path.starts_with(root)
+                        } else {
+                            current_path.starts_with(&format!("{}{}", root, key_separator))
+                        })
+            })
             || preserve_matcher.matches(namespace, &current_path);
 
         if let Some(obj) = value.as_object_mut() {
@@ -542,6 +560,7 @@ fn prune_unused_keys(
                 key_separator,
                 namespace,
                 seen_paths,
+                seen_object_roots,
                 preserve_matcher,
                 removed,
             );
@@ -1395,6 +1414,55 @@ mod tests {
             .expect("File should exist");
         let parsed: Map<String, Value> = serde_json::from_str(content).unwrap();
         assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn test_return_objects_marker_preserves_nested_keys() {
+        use crate::fs::mock::InMemoryFileSystem;
+        use std::path::Path;
+
+        let fs = InMemoryFileSystem::new();
+        fs.add_file(
+            "locales/en/translation.json",
+            r#"{"countries":{"jp":"Japan","us":"United States"},"stale":"remove"}"#,
+        );
+
+        let keys = vec![ExtractedKey {
+            key: "countries.*".to_string(),
+            namespace: None,
+            default_value: None,
+        }];
+        let config = Config::default();
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+
+        let result = sync_locale_file_locked_with_fs(
+            Path::new("locales/en/translation.json"),
+            &keys,
+            "translation",
+            &config,
+            &matcher,
+            false,
+            &fs,
+        )
+        .unwrap();
+
+        assert_eq!(result.removed_keys, vec!["stale".to_string()]);
+
+        let files = fs.get_files();
+        let content = files
+            .get(Path::new("locales/en/translation.json"))
+            .expect("File should exist");
+        let parsed: Map<String, Value> = serde_json::from_str(content).unwrap();
+        assert!(parsed.get("countries").is_some());
+        let countries = parsed
+            .get("countries")
+            .and_then(|v| v.as_object())
+            .expect("countries should be object");
+        assert_eq!(
+            countries.get("jp"),
+            Some(&Value::String("Japan".to_string()))
+        );
     }
 
     #[test]

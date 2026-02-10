@@ -138,6 +138,10 @@ pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<Ex
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.use_translation_names,
+        &config.nesting_prefix,
+        &config.nesting_suffix,
+        &config.nesting_options_separator,
     )
     .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
@@ -353,6 +357,10 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.use_translation_names,
+        &config.nesting_prefix,
+        &config.nesting_suffix,
+        &config.nesting_options_separator,
     )
     .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 

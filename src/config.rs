@@ -34,6 +34,11 @@ pub struct Config {
     #[serde(default = "default_functions")]
     pub functions: Vec<String>,
 
+    /// Hook-like function names that return a translation function (t)
+    /// Supports string entries or objects with custom argument positions.
+    #[serde(default = "default_use_translation_names")]
+    pub use_translation_names: Vec<UseTranslationName>,
+
     /// Key separator (e.g., "." for "button.submit")
     #[serde(default = "default_key_separator")]
     pub key_separator: String,
@@ -109,6 +114,18 @@ pub struct Config {
     #[serde(default = "default_trans_keep_nodes")]
     pub trans_keep_basic_html_nodes_for: Vec<String>,
 
+    /// Prefix for nested translation calls inside strings (default: "$t(")
+    #[serde(default = "default_nesting_prefix")]
+    pub nesting_prefix: String,
+
+    /// Suffix for nested translation calls inside strings (default: ")")
+    #[serde(default = "default_nesting_suffix")]
+    pub nesting_suffix: String,
+
+    /// Separator between nested key and nested options (default: ",")
+    #[serde(default = "default_nesting_options_separator")]
+    pub nesting_options_separator: String,
+
     /// Type generation configuration
     #[serde(default)]
     pub types: TypesConfig,
@@ -142,6 +159,46 @@ impl OptionalSeparator {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum UseTranslationName {
+    Name(String),
+    Detailed(UseTranslationNameDetails),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UseTranslationNameDetails {
+    pub name: String,
+    #[serde(default = "default_ns_arg")]
+    pub ns_arg: usize,
+    #[serde(default = "default_key_prefix_arg")]
+    pub key_prefix_arg: usize,
+}
+
+impl UseTranslationName {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Name(name) => name,
+            Self::Detailed(details) => details.name.as_str(),
+        }
+    }
+
+    pub fn ns_arg(&self) -> usize {
+        match self {
+            Self::Name(_) => default_ns_arg(),
+            Self::Detailed(details) => details.ns_arg,
+        }
+    }
+
+    pub fn key_prefix_arg(&self) -> usize {
+        match self {
+            Self::Name(_) => default_key_prefix_arg(),
+            Self::Detailed(details) => details.key_prefix_arg,
+        }
     }
 }
 
@@ -378,6 +435,7 @@ pub struct NapiConfig {
     pub locales: Option<Vec<String>>,
     pub defaultNamespace: Option<String>,
     pub functions: Option<Vec<String>>,
+    pub useTranslationNames: Option<Vec<String>>,
     pub keySeparator: Option<String>,
     pub nsSeparator: Option<String>,
     pub contextSeparator: Option<String>,
@@ -391,6 +449,10 @@ pub struct NapiConfig {
     pub preservePatterns: Option<Vec<String>>,
     pub removeUnusedKeys: Option<bool>,
     pub defaultValue: Option<String>,
+    pub transComponents: Option<Vec<String>>,
+    pub nestingPrefix: Option<String>,
+    pub nestingSuffix: Option<String>,
+    pub nestingOptionsSeparator: Option<String>,
     pub types: Option<NapiTypesConfig>,
     pub locize: Option<NapiLocizeConfig>,
     pub primaryLanguage: Option<String>,
@@ -489,6 +551,22 @@ fn default_functions() -> Vec<String> {
     vec!["t".to_string()]
 }
 
+fn default_use_translation_names() -> Vec<UseTranslationName> {
+    vec![
+        UseTranslationName::Name("useTranslation".to_string()),
+        UseTranslationName::Name("getT".to_string()),
+        UseTranslationName::Name("useT".to_string()),
+    ]
+}
+
+fn default_ns_arg() -> usize {
+    0
+}
+
+fn default_key_prefix_arg() -> usize {
+    1
+}
+
 fn default_key_separator() -> String {
     ".".to_string()
 }
@@ -529,6 +607,18 @@ fn default_trans_keep_nodes() -> Vec<String> {
     vec!["br".to_string(), "strong".to_string(), "i".to_string()]
 }
 
+fn default_nesting_prefix() -> String {
+    "$t(".to_string()
+}
+
+fn default_nesting_suffix() -> String {
+    ")".to_string()
+}
+
+fn default_nesting_options_separator() -> String {
+    ",".to_string()
+}
+
 fn default_types_output() -> String {
     "src/@types/i18next.d.ts".to_string()
 }
@@ -542,6 +632,7 @@ impl Default for Config {
             locales: default_locales(),
             default_namespace: default_namespace(),
             functions: default_functions(),
+            use_translation_names: default_use_translation_names(),
             key_separator: default_key_separator(),
             ns_separator: default_ns_separator(),
             context_separator: default_context_separator(),
@@ -558,6 +649,9 @@ impl Default for Config {
             types: TypesConfig::default(),
             trans_components: default_trans_components(),
             trans_keep_basic_html_nodes_for: default_trans_keep_nodes(),
+            nesting_prefix: default_nesting_prefix(),
+            nesting_suffix: default_nesting_suffix(),
+            nesting_options_separator: default_nesting_options_separator(),
             locize: None,
             primary_language: None,
             indentation: None,
@@ -714,11 +808,26 @@ impl Config {
             );
         }
 
+        for (i, hook) in self.use_translation_names.iter().enumerate() {
+            if hook.name().trim().is_empty() {
+                bail!(
+                    "Configuration error: 'useTranslationNames[{}]' must contain a non-empty function name.",
+                    i
+                );
+            }
+        }
+
         // Check default_namespace is not empty
         if self.default_namespace.trim().is_empty() {
             bail!(
                 "Configuration error: 'defaultNamespace' must be a non-empty string.\n\
                  Example: \"defaultNamespace\": \"translation\""
+            );
+        }
+
+        if self.nesting_prefix.is_empty() || self.nesting_suffix.is_empty() {
+            bail!(
+                "Configuration error: 'nestingPrefix' and 'nestingSuffix' must be non-empty strings."
             );
         }
 
@@ -795,6 +904,10 @@ impl Config {
             functions: config
                 .functions
                 .unwrap_or_else(|| defaults.functions.clone()),
+            use_translation_names: config
+                .useTranslationNames
+                .map(|names| names.into_iter().map(UseTranslationName::Name).collect())
+                .unwrap_or_else(|| defaults.use_translation_names.clone()),
             key_separator: config
                 .keySeparator
                 .unwrap_or_else(|| defaults.key_separator.clone()),
@@ -828,8 +941,19 @@ impl Config {
             default_value: config
                 .defaultValue
                 .or_else(|| defaults.default_value.clone()),
-            trans_components: default_trans_components(),
-            trans_keep_basic_html_nodes_for: default_trans_keep_nodes(),
+            trans_components: config
+                .transComponents
+                .unwrap_or_else(|| defaults.trans_components.clone()),
+            trans_keep_basic_html_nodes_for: defaults.trans_keep_basic_html_nodes_for.clone(),
+            nesting_prefix: config
+                .nestingPrefix
+                .unwrap_or_else(|| defaults.nesting_prefix.clone()),
+            nesting_suffix: config
+                .nestingSuffix
+                .unwrap_or_else(|| defaults.nesting_suffix.clone()),
+            nesting_options_separator: config
+                .nestingOptionsSeparator
+                .unwrap_or_else(|| defaults.nesting_options_separator.clone()),
             types: config.types.map(TypesConfig::from).unwrap_or_default(),
             locize: config.locize.and_then(|locize_cfg| {
                 locize_cfg.projectId.map(|project_id| LocizeConfig {
@@ -967,6 +1091,32 @@ mod tests {
         config.disable_plurals = true;
         let plural = config.plural_config();
         assert!(plural.suffixes.is_empty());
+    }
+
+    #[test]
+    fn parses_use_translation_names_and_nesting_settings() {
+        let json = r#"
+        {
+          "useTranslationNames": [
+            "useTranslation",
+            { "name": "loadPageTranslations", "nsArg": 1, "keyPrefixArg": 2 }
+          ],
+          "nestingPrefix": "__nest__(",
+          "nestingSuffix": ")",
+          "nestingOptionsSeparator": "|"
+        }
+        "#;
+        let config = Config::from_json_string(json).unwrap();
+        assert_eq!(config.use_translation_names.len(), 2);
+        assert_eq!(
+            config.use_translation_names[1].name(),
+            "loadPageTranslations"
+        );
+        assert_eq!(config.use_translation_names[1].ns_arg(), 1);
+        assert_eq!(config.use_translation_names[1].key_prefix_arg(), 2);
+        assert_eq!(config.nesting_prefix, "__nest__(");
+        assert_eq!(config.nesting_suffix, ")");
+        assert_eq!(config.nesting_options_separator, "|");
     }
 }
 

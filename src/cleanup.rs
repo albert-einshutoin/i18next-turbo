@@ -31,10 +31,14 @@ pub fn find_dead_keys(
 
     // Build a set of extracted key paths (namespace:key format)
     let mut extracted_set: HashSet<String> = HashSet::new();
+    let mut object_root_set: HashSet<String> = HashSet::new();
     for key in extracted_keys {
         let ns = key.namespace.as_deref().unwrap_or(default_namespace);
-        // Store both the full key and flattened version
-        extracted_set.insert(format!("{}:{}", ns, key.key));
+        if let Some(root) = key.key.strip_suffix(".*") {
+            object_root_set.insert(format!("{}:{}", ns, root));
+        } else {
+            extracted_set.insert(format!("{}:{}", ns, key.key));
+        }
     }
 
     // Scan locale directory
@@ -73,6 +77,7 @@ pub fn find_dead_keys(
                     &namespace,
                     "",
                     &extracted_set,
+                    &object_root_set,
                     &file_path,
                     &mut dead_keys,
                 );
@@ -89,6 +94,7 @@ fn find_dead_keys_in_object(
     namespace: &str,
     prefix: &str,
     extracted_set: &HashSet<String>,
+    object_root_set: &HashSet<String>,
     file_path: &str,
     dead_keys: &mut Vec<DeadKey>,
 ) {
@@ -107,6 +113,7 @@ fn find_dead_keys_in_object(
                     namespace,
                     &key_path,
                     extracted_set,
+                    object_root_set,
                     file_path,
                     dead_keys,
                 );
@@ -114,7 +121,10 @@ fn find_dead_keys_in_object(
             Value::String(_) => {
                 // Check if this leaf key exists in extracted keys
                 let full_key = format!("{}:{}", namespace, key_path);
-                if !extracted_set.contains(&full_key) {
+                let covered_by_object_root = object_root_set
+                    .iter()
+                    .any(|root| full_key == *root || full_key.starts_with(&format!("{}.", root)));
+                if !extracted_set.contains(&full_key) && !covered_by_object_root {
                     dead_keys.push(DeadKey {
                         file_path: file_path.to_string(),
                         key_path: key_path.clone(),

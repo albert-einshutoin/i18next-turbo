@@ -1,4 +1,4 @@
-use crate::config::PluralConfig;
+use crate::config::{PluralConfig, UseTranslationName};
 use anyhow::{Context, Result};
 use glob::Pattern;
 use regex::Regex;
@@ -31,16 +31,6 @@ fn normalize_key(key: &str) -> Cow<'_, str> {
 // All regex patterns are validated at compile time via tests (see test_regex_initialization).
 // If any pattern is invalid, the test will fail during CI, preventing runtime panics.
 
-/// Pattern for nested translations with quoted keys.
-/// Matches: `$t('key')`, `$t("key")`, `$t( 'key' )`
-/// Captures: Group 1 = the key string
-static NESTED_QUOTED_REGEX: OnceLock<Regex> = OnceLock::new();
-
-/// Pattern for nested translations with unquoted keys (bare identifiers).
-/// Matches: `$t(key)`, `$t(some.key.path)`, `$t(ns:key)`
-/// Captures: Group 1 = the key identifier
-static NESTED_UNQUOTED_REGEX: OnceLock<Regex> = OnceLock::new();
-
 /// Pattern for t() calls in comments with single argument.
 /// Matches: `t('key')`, `t("key")`, `t(\`key\`)`
 /// Captures: Group 1 = the key string
@@ -59,26 +49,6 @@ static COMMENT_WITH_OPTIONS_REGEX: OnceLock<Regex> = OnceLock::new();
 static SCRIPT_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
 static TEMPLATE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
 static STYLE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
-
-/// Returns regex for nested translations with quoted keys: $t('key') or $t("key")
-fn get_nested_quoted_regex() -> &'static Regex {
-    NESTED_QUOTED_REGEX.get_or_init(|| {
-        // Pattern: $t followed by optional whitespace, open paren, optional whitespace,
-        // then a quoted string (single or double quotes), capturing the content
-        Regex::new(r#"\$t\s*\(\s*['"]([^'"]+)['"]"#)
-            .expect("NESTED_QUOTED_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-/// Returns regex for nested translations with unquoted keys: $t(key) or $t(ns:key)
-fn get_nested_unquoted_regex() -> &'static Regex {
-    NESTED_UNQUOTED_REGEX.get_or_init(|| {
-        // Pattern: $t followed by optional whitespace, open paren, optional whitespace,
-        // then an identifier (letter or underscore, followed by alphanumeric, underscore, dot, or colon)
-        Regex::new(r#"\$t\s*\(\s*([a-zA-Z_][a-zA-Z0-9_.:]*)"#)
-            .expect("NESTED_UNQUOTED_REGEX pattern is invalid - this is a bug")
-    })
-}
 
 /// Returns regex for t() calls in comments with single argument
 fn get_comment_single_arg_regex() -> &'static Regex {
@@ -154,6 +124,7 @@ struct CommentOptionsData {
     namespace: Option<String>,
     context: Option<String>,
     has_count: bool,
+    has_ordinal: bool,
 }
 
 impl CommentOptionsData {
@@ -163,6 +134,7 @@ impl CommentOptionsData {
             namespace: extract_comment_string_option(text, "ns"),
             context: extract_comment_string_option(text, "context"),
             has_count: comment_option_exists(text, "count"),
+            has_ordinal: comment_option_truthy(text, "ordinal"),
         }
     }
 }
@@ -381,6 +353,17 @@ fn comment_option_exists(text: &str, key: &str) -> bool {
         .is_some()
 }
 
+fn comment_option_truthy(text: &str, key: &str) -> bool {
+    let pattern = format!(
+        r#"(?s)(?:^|[^a-zA-Z0-9_])["']?{}["']?\s*:\s*true(?:[^a-zA-Z0-9_]|$)"#,
+        regex::escape(key)
+    );
+    Regex::new(&pattern)
+        .ok()
+        .and_then(|re| re.find(text))
+        .is_some()
+}
+
 fn dedup_strings(values: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
@@ -390,6 +373,59 @@ fn dedup_strings(values: Vec<String>) -> Vec<String> {
         }
     }
     result
+}
+
+fn split_top_level_once<'a>(text: &'a str, separator: &str) -> Option<(&'a str, &'a str)> {
+    if separator.is_empty() {
+        return None;
+    }
+    let mut depth_paren = 0usize;
+    let mut depth_brace = 0usize;
+    let mut in_string: Option<char> = None;
+    let mut escaped = false;
+
+    for (idx, ch) in text.char_indices() {
+        if let Some(quote) = in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                in_string = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' | '`' => in_string = Some(ch),
+            '(' => depth_paren += 1,
+            ')' => depth_paren = depth_paren.saturating_sub(1),
+            '{' => depth_brace += 1,
+            '}' => depth_brace = depth_brace.saturating_sub(1),
+            _ => {}
+        }
+
+        if depth_paren == 0 && depth_brace == 0 && text[idx..].starts_with(separator) {
+            let right = &text[idx + separator.len()..];
+            return Some((&text[..idx], right));
+        }
+    }
+    None
+}
+
+fn parse_nested_key_token(token: &str) -> Option<&str> {
+    let t = token.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if (t.starts_with('\'') && t.ends_with('\'')) || (t.starts_with('"') && t.ends_with('"')) {
+        return Some(&t[1..t.len() - 1]);
+    }
+    Some(t)
 }
 
 use swc_common::comments::SingleThreadedComments;
@@ -458,6 +494,8 @@ pub struct TranslationVisitor {
     disabled_lines: HashSet<u32>,
     /// Scope info for variables bound from useTranslation/getFixedT
     scope_bindings: HashMap<String, ScopeInfo>,
+    /// Hook-like functions that produce a bound t function.
+    use_translation_names: Vec<UseTranslationName>,
     /// File path being processed (for warning messages)
     file_path: Option<String>,
     /// Warning count for non-extractable patterns
@@ -470,15 +508,23 @@ pub struct TranslationVisitor {
     plural_suffixes: Vec<String>,
     /// Whether to generate base key alongside plural keys
     generate_base_plural: bool,
+    /// Prefix/suffix settings for nested translation extraction.
+    nesting_prefix: String,
+    nesting_suffix: String,
+    nesting_options_separator: String,
 }
 
 impl TranslationVisitor {
     pub fn new(
         functions: Vec<String>,
         trans_components: Vec<String>,
+        use_translation_names: Vec<UseTranslationName>,
         source_map: Lrc<SourceMap>,
         comments: Option<SingleThreadedComments>,
         plural_config: PluralConfig,
+        nesting_prefix: String,
+        nesting_suffix: String,
+        nesting_options_separator: String,
     ) -> Self {
         // Parse magic comments to find disabled lines
         let disabled_lines = Self::parse_disabled_lines(&comments);
@@ -491,12 +537,16 @@ impl TranslationVisitor {
             comments,
             disabled_lines,
             scope_bindings: HashMap::new(),
+            use_translation_names,
             file_path: None,
             warning_count: 0,
             context_separator: plural_config.context_separator,
             plural_separator: plural_config.separator,
             plural_suffixes: plural_config.suffixes,
             generate_base_plural: plural_config.generate_base,
+            nesting_prefix,
+            nesting_suffix,
+            nesting_options_separator,
         }
     }
 
@@ -564,9 +614,66 @@ impl TranslationVisitor {
                 Expr::Lit(Lit::Str(s)) => s.value.as_str().map(|s| s.to_string()),
                 // Template literal: t(`key`)
                 Expr::Tpl(tpl) => self.extract_simple_template_literal(tpl, call.span),
+                // Selector API: t($ => $.user.profile)
+                Expr::Arrow(arrow) => self.extract_selector_key(arrow),
                 _ => None,
             }
         })
+    }
+
+    fn extract_selector_key(&self, arrow: &swc_ecma_ast::ArrowExpr) -> Option<String> {
+        if arrow.params.len() != 1 {
+            return None;
+        }
+
+        let root_param = match &arrow.params[0] {
+            Pat::Ident(ident) => ident.id.sym.to_string(),
+            _ => return None,
+        };
+
+        let expr = match &*arrow.body {
+            swc_ecma_ast::BlockStmtOrExpr::Expr(expr) => expr.as_ref(),
+            _ => return None,
+        };
+
+        let mut parts = Vec::new();
+        if self.collect_selector_parts(expr, &root_param, &mut parts) {
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("."))
+            }
+        } else {
+            None
+        }
+    }
+
+    fn collect_selector_parts(&self, expr: &Expr, root: &str, parts: &mut Vec<String>) -> bool {
+        match expr {
+            Expr::Ident(ident) => ident.sym.as_ref() == root,
+            Expr::Member(member) => {
+                if !self.collect_selector_parts(member.obj.as_ref(), root, parts) {
+                    return false;
+                }
+                match &member.prop {
+                    MemberProp::Ident(ident) => parts.push(ident.sym.to_string()),
+                    MemberProp::Computed(computed) => {
+                        if let Expr::Lit(Lit::Str(s)) = computed.expr.as_ref() {
+                            if let Some(value) = s.value.as_str() {
+                                parts.push(value.to_string());
+                            } else {
+                                return false;
+                            }
+                        } else {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Extract key from a template literal (only if it's a simple string without expressions)
@@ -624,6 +731,7 @@ impl TranslationVisitor {
         context: Option<&str>,
         namespace: Option<String>,
         default_value: Option<String>,
+        ordinal: bool,
     ) -> Vec<ExtractedKey> {
         // For single-category languages (only "other"), use base key without suffix
         let is_single_category =
@@ -658,6 +766,11 @@ impl TranslationVisitor {
 
         // Generate plural keys with suffixes
         keys.extend(self.plural_suffixes.iter().map(|suffix| {
+            let suffix = if ordinal {
+                format!("ordinal_{}", suffix)
+            } else {
+                suffix.clone()
+            };
             let key = match context {
                 Some(ctx) => format!(
                     "{}{}{}{}{}",
@@ -681,6 +794,7 @@ impl TranslationVisitor {
         namespace: Option<String>,
         default_value: Option<String>,
         context_info: Option<&ContextInfo>,
+        ordinal: bool,
     ) {
         match context_info {
             Some(info) if !info.values.is_empty() => {
@@ -690,32 +804,96 @@ impl TranslationVisitor {
                         Some(ctx.as_str()),
                         namespace.clone(),
                         default_value.clone(),
+                        ordinal,
                     );
                     self.keys.extend(plural_keys);
                 }
 
                 if info.is_dynamic {
-                    let plural_keys =
-                        self.generate_plural_keys(base_key, None, namespace, default_value);
+                    let plural_keys = self.generate_plural_keys(
+                        base_key,
+                        None,
+                        namespace,
+                        default_value,
+                        ordinal,
+                    );
                     self.keys.extend(plural_keys);
                 }
             }
             _ => {
                 let plural_keys =
-                    self.generate_plural_keys(base_key, None, namespace, default_value);
+                    self.generate_plural_keys(base_key, None, namespace, default_value, ordinal);
                 self.keys.extend(plural_keys);
             }
         }
     }
 
-    /// Check if call has context option
-    fn get_context_option(&self, call: &CallExpr) -> Option<String> {
-        self.get_option_value(call, "context")
+    fn options_object<'a>(&self, call: &'a CallExpr) -> Option<&'a ObjectLit> {
+        if call.args.len() < 2 {
+            return None;
+        }
+        if let Expr::Object(obj) = call.args[1].expr.as_ref() {
+            Some(obj)
+        } else {
+            None
+        }
+    }
+
+    /// Check if call has context option (supports literal and simple dynamic expressions)
+    fn get_context_info(&self, call: &CallExpr) -> Option<ContextInfo> {
+        let obj = self.options_object(call)?;
+        for prop in &obj.props {
+            if let PropOrSpread::Prop(prop) = prop {
+                if let Prop::KeyValue(kv) = prop.as_ref() {
+                    let prop_key = match &kv.key {
+                        PropName::Ident(ident) => Some(ident.sym.to_string()),
+                        PropName::Str(s) => s.value.as_str().map(|s| s.to_string()),
+                        _ => None,
+                    };
+                    if prop_key.as_deref() != Some("context") {
+                        continue;
+                    }
+
+                    if let Expr::Lit(Lit::Str(s)) = kv.value.as_ref() {
+                        if let Some(value) = s.value.as_str() {
+                            if value.is_empty() {
+                                return None;
+                            }
+                            return Some(ContextInfo {
+                                values: vec![value.to_string()],
+                                is_dynamic: false,
+                            });
+                        }
+                    }
+
+                    let values = self.resolve_possible_context_values(kv.value.as_ref());
+                    return Some(ContextInfo {
+                        values,
+                        is_dynamic: true,
+                    });
+                }
+            }
+        }
+        None
     }
 
     /// Get defaultValue option from t() call
     fn get_default_value_option(&self, call: &CallExpr) -> Option<String> {
         self.get_option_value(call, "defaultValue")
+    }
+
+    fn has_return_objects_option(&self, call: &CallExpr) -> bool {
+        let Some(obj) = self.options_object(call) else {
+            return false;
+        };
+        self.find_bool_prop(obj, "returnObjects").unwrap_or(false)
+    }
+
+    fn has_ordinal_option(&self, call: &CallExpr) -> bool {
+        let Some(obj) = self.options_object(call) else {
+            return false;
+        };
+        self.find_bool_prop(obj, "ordinal").unwrap_or(false)
     }
 
     /// Get a string option value from the second argument object
@@ -756,6 +934,32 @@ impl TranslationVisitor {
         None
     }
 
+    fn find_bool_prop(&self, obj: &ObjectLit, key: &str) -> Option<bool> {
+        for prop in &obj.props {
+            if let PropOrSpread::Prop(prop) = prop {
+                match prop.as_ref() {
+                    Prop::KeyValue(kv) => {
+                        let prop_key = match &kv.key {
+                            PropName::Ident(ident) => Some(ident.sym.to_string()),
+                            PropName::Str(s) => s.value.as_str().map(|s| s.to_string()),
+                            _ => None,
+                        };
+                        if prop_key.as_deref() != Some(key) {
+                            continue;
+                        }
+                        if let Expr::Lit(Lit::Bool(b)) = kv.value.as_ref() {
+                            return Some(b.value);
+                        }
+                        return Some(true);
+                    }
+                    Prop::Shorthand(ident) if ident.sym.as_ref() == key => return Some(true),
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
     /// Check if an object has a property (for count detection)
     fn has_prop(&self, obj: &ObjectLit, key: &str) -> bool {
         for prop in &obj.props {
@@ -781,48 +985,61 @@ impl TranslationVisitor {
         false
     }
 
-    /// Extract nested translation keys from a string value
-    /// Detects patterns like $t(key), $t('key'), or $t(key, { options })
+    /// Extract nested translation keys from a string value.
+    /// Detects patterns like $t(key), $t('key'), or configurable nestingPrefix/suffix forms.
     fn extract_nested_translations(&self, text: &str) -> Vec<ExtractedKey> {
         let mut keys = Vec::new();
+        let mut cursor = 0usize;
 
-        // Use static regex patterns (compiled once, reused across all calls)
-        let quoted_pattern = get_nested_quoted_regex();
-        let unquoted_pattern = get_nested_unquoted_regex();
+        while let Some(start_rel) = text[cursor..].find(&self.nesting_prefix) {
+            let inner_start = cursor + start_rel + self.nesting_prefix.len();
+            let Some(end_rel) = text[inner_start..].find(&self.nesting_suffix) else {
+                break;
+            };
+            let inner_end = inner_start + end_rel;
+            let inner = text[inner_start..inner_end].trim();
 
-        // Extract quoted patterns
-        for cap in quoted_pattern.captures_iter(text) {
-            if let Some(key_match) = cap.get(1) {
-                let key = key_match.as_str();
-                let (namespace, base_key) = self.parse_key_with_namespace(key);
+            let (raw_key_part, raw_options_part) =
+                split_top_level_once(inner, self.nesting_options_separator.as_str())
+                    .unwrap_or((inner, ""));
+
+            let Some(raw_key) = parse_nested_key_token(raw_key_part.trim()) else {
+                cursor = inner_end + self.nesting_suffix.len();
+                continue;
+            };
+
+            let options = CommentOptionsData::from_text(raw_options_part);
+            let (namespace, base_key) = self.parse_key_with_namespace(raw_key);
+
+            if options.has_count {
+                keys.extend(self.generate_plural_keys(
+                    &base_key,
+                    options.context.as_deref(),
+                    namespace,
+                    None,
+                    options.has_ordinal,
+                ));
+            } else if let Some(ctx) = options.context {
+                keys.push(ExtractedKey {
+                    key: format!("{}{}{}", base_key, self.context_separator, ctx),
+                    namespace,
+                    default_value: None,
+                });
+            } else {
                 keys.push(ExtractedKey {
                     key: base_key,
                     namespace,
                     default_value: None,
                 });
             }
+
+            cursor = inner_end + self.nesting_suffix.len();
         }
 
-        // Extract unquoted patterns
-        for cap in unquoted_pattern.captures_iter(text) {
-            if let Some(key_match) = cap.get(1) {
-                let key = key_match.as_str();
-                let (namespace, base_key) = self.parse_key_with_namespace(key);
-                // Avoid duplicates
-                if !keys
-                    .iter()
-                    .any(|k| k.key == base_key && k.namespace == namespace)
-                {
-                    keys.push(ExtractedKey {
-                        key: base_key,
-                        namespace,
-                        default_value: None,
-                    });
-                }
-            }
-        }
-
-        keys
+        let mut dedup = HashSet::new();
+        keys.into_iter()
+            .filter(|k| dedup.insert((k.namespace.clone(), k.key.clone())))
+            .collect()
     }
 
     /// Parse namespace:key format with Unicode normalization
@@ -1055,41 +1272,48 @@ impl TranslationVisitor {
 
     /// Check if a call is useTranslation and extract scope info
     fn parse_use_translation_call(&self, call: &CallExpr) -> Option<ScopeInfo> {
-        // Check if this is useTranslation()
-        if let Callee::Expr(expr) = &call.callee {
-            if let Expr::Ident(ident) = expr.as_ref() {
-                if ident.sym.as_ref() != "useTranslation" {
-                    return None;
+        let (ns_arg_idx, key_prefix_arg_idx) = match &call.callee {
+            Callee::Expr(expr) => match expr.as_ref() {
+                Expr::Ident(ident) => {
+                    let entry = self
+                        .use_translation_names
+                        .iter()
+                        .find(|entry| entry.name() == ident.sym.as_ref())?;
+                    (entry.ns_arg(), entry.key_prefix_arg())
                 }
-            } else {
-                return None;
-            }
-        } else {
-            return None;
-        }
+                _ => return None,
+            },
+            _ => return None,
+        };
 
         let mut scope_info = ScopeInfo::default();
-
-        // Parse arguments
         for (i, arg) in call.args.iter().enumerate() {
-            match i {
-                0 => {
-                    // First arg: namespace (string or array)
-                    if let Expr::Lit(Lit::Str(s)) = arg.expr.as_ref() {
-                        scope_info.namespace = s.value.as_str().map(|s| s.to_string());
-                    }
-                    // Second form: useTranslation({ keyPrefix: '...' })
-                    if let Expr::Object(obj) = arg.expr.as_ref() {
-                        scope_info.key_prefix = self.find_string_prop(obj, "keyPrefix");
+            if i == ns_arg_idx {
+                if let Expr::Lit(Lit::Str(s)) = arg.expr.as_ref() {
+                    scope_info.namespace = s.value.as_str().map(|s| s.to_string());
+                } else if let Expr::Object(obj) = arg.expr.as_ref() {
+                    if let Some(ns) = self.find_string_prop(obj, "ns") {
+                        scope_info.namespace = Some(ns);
                     }
                 }
-                1 => {
-                    // Second arg: options object
-                    if let Expr::Object(obj) = arg.expr.as_ref() {
-                        scope_info.key_prefix = self.find_string_prop(obj, "keyPrefix");
-                    }
+            }
+            if i == key_prefix_arg_idx {
+                if let Expr::Object(obj) = arg.expr.as_ref() {
+                    scope_info.key_prefix = self.find_string_prop(obj, "keyPrefix");
+                } else if let Expr::Lit(Lit::Str(s)) = arg.expr.as_ref() {
+                    scope_info.key_prefix = s.value.as_str().map(|s| s.to_string());
                 }
-                _ => {}
+            }
+        }
+
+        if call.args.len() == 1 {
+            if let Expr::Object(obj) = call.args[0].expr.as_ref() {
+                if let Some(prefix) = self.find_string_prop(obj, "keyPrefix") {
+                    scope_info.key_prefix = Some(prefix);
+                }
+                if let Some(ns) = self.find_string_prop(obj, "ns") {
+                    scope_info.namespace = Some(ns);
+                }
             }
         }
 
@@ -1287,6 +1511,7 @@ impl TranslationVisitor {
                             namespace: namespace_override,
                             context,
                             has_count,
+                            has_ordinal,
                         } = CommentOptionsData::from_text(&options_text);
 
                         let (namespace_from_key, base_key) = self.parse_key_with_namespace(key);
@@ -1298,6 +1523,7 @@ impl TranslationVisitor {
                                 context.as_deref(),
                                 namespace.clone(),
                                 default_value.clone(),
+                                has_ordinal,
                             );
                             self.keys.extend(plural_keys);
                             continue;
@@ -1305,7 +1531,7 @@ impl TranslationVisitor {
 
                         if let Some(ctx) = context {
                             self.keys.push(ExtractedKey {
-                                key: format!("{}_{}", base_key, ctx),
+                                key: format!("{}{}{}", base_key, self.context_separator, ctx),
                                 namespace,
                                 default_value,
                             });
@@ -1417,10 +1643,16 @@ impl Visit for TranslationVisitor {
                 };
 
                 // Check for context option
-                let context = self.get_context_option(call);
+                let context_info = self.get_context_info(call);
+
+                // Check for ordinal option (plural variant naming)
+                let is_ordinal = self.has_ordinal_option(call);
 
                 // Check for defaultValue option
                 let default_value = self.get_default_value_option(call);
+
+                // returnObjects=true means this key is an object root and should preserve children.
+                let has_return_objects = self.has_return_objects_option(call);
 
                 // Extract nested translations from defaultValue (e.g., $t('key'))
                 if let Some(ref dv) = default_value {
@@ -1430,22 +1662,44 @@ impl Visit for TranslationVisitor {
                     }
                 }
 
-                if has_count {
+                if has_return_objects {
+                    self.keys.push(ExtractedKey {
+                        key: format!("{}.*", base_key),
+                        namespace: namespace_from_scope,
+                        default_value: None,
+                    });
+                } else if has_count {
                     // Generate plural keys based on configuration
-                    let plural_keys = self.generate_plural_keys(
+                    self.generate_plural_keys_with_context(
                         &base_key,
-                        context.as_deref(),
                         namespace_from_scope,
                         default_value,
+                        context_info.as_ref(),
+                        is_ordinal,
                     );
-                    self.keys.extend(plural_keys);
-                } else if let Some(ctx) = context {
-                    // Context without count
-                    self.keys.push(ExtractedKey {
-                        key: format!("{}_{}", base_key, ctx),
-                        namespace: namespace_from_scope,
-                        default_value,
-                    });
+                } else if let Some(info) = context_info {
+                    if info.values.is_empty() {
+                        self.keys.push(ExtractedKey {
+                            key: base_key,
+                            namespace: namespace_from_scope,
+                            default_value,
+                        });
+                    } else {
+                        for ctx in &info.values {
+                            self.keys.push(ExtractedKey {
+                                key: format!("{}{}{}", base_key, self.context_separator, ctx),
+                                namespace: namespace_from_scope.clone(),
+                                default_value: default_value.clone(),
+                            });
+                        }
+                        if info.is_dynamic {
+                            self.keys.push(ExtractedKey {
+                                key: base_key,
+                                namespace: namespace_from_scope,
+                                default_value,
+                            });
+                        }
+                    }
                 } else {
                     // Regular key
                     self.keys.push(ExtractedKey {
@@ -1525,6 +1779,7 @@ impl Visit for TranslationVisitor {
                         namespace.clone(),
                         default_value.clone(),
                         context_info.as_ref(),
+                        false,
                     );
                 } else if let Some(info) = context_info {
                     if info.values.is_empty() {
@@ -1536,7 +1791,7 @@ impl Visit for TranslationVisitor {
                     } else {
                         for ctx in &info.values {
                             self.keys.push(ExtractedKey {
-                                key: format!("{}_{}", base_key, ctx),
+                                key: format!("{}{}{}", base_key, self.context_separator, ctx),
                                 namespace: namespace.clone(),
                                 default_value: default_value.clone(),
                             });
@@ -1575,22 +1830,34 @@ enum ExtractorStrategy {
 struct StrategyContext<'a> {
     functions: &'a [String],
     trans_components: &'a [String],
+    use_translation_names: &'a [UseTranslationName],
     extract_from_comments: bool,
     plural_config: &'a PluralConfig,
+    nesting_prefix: &'a str,
+    nesting_suffix: &'a str,
+    nesting_options_separator: &'a str,
 }
 
 impl<'a> StrategyContext<'a> {
     fn new(
         functions: &'a [String],
         trans_components: &'a [String],
+        use_translation_names: &'a [UseTranslationName],
         extract_from_comments: bool,
         plural_config: &'a PluralConfig,
+        nesting_prefix: &'a str,
+        nesting_suffix: &'a str,
+        nesting_options_separator: &'a str,
     ) -> Self {
         Self {
             functions,
             trans_components,
+            use_translation_names,
             extract_from_comments,
             plural_config,
+            nesting_prefix,
+            nesting_suffix,
+            nesting_options_separator,
         }
     }
 
@@ -1631,8 +1898,12 @@ impl ExtractorStrategy {
                 path,
                 ctx.functions,
                 ctx.trans_components,
+                ctx.use_translation_names,
                 ctx.extract_from_comments,
                 ctx.plural_config,
+                ctx.nesting_prefix,
+                ctx.nesting_suffix,
+                ctx.nesting_options_separator,
             ),
             ExtractorStrategy::Vue => extract_vue_component(path, source_code, ctx),
             ExtractorStrategy::Svelte => extract_svelte_component(path, source_code, ctx),
@@ -1648,12 +1919,18 @@ pub fn extract_from_file<P: AsRef<Path>>(
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_use_translation_names =
+        vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_file_with_warnings(
         path,
         functions,
         &default_trans_components,
+        &default_use_translation_names,
         true,
         plural_config,
+        "$t(",
+        ")",
+        ",",
     )?;
     Ok(keys)
 }
@@ -1666,12 +1943,18 @@ pub fn extract_from_file_with_options<P: AsRef<Path>>(
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_use_translation_names =
+        vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_file_with_warnings(
         path,
         functions,
         &default_trans_components,
+        &default_use_translation_names,
         extract_from_comments,
         plural_config,
+        "$t(",
+        ")",
+        ",",
     )?;
     Ok(keys)
 }
@@ -1680,8 +1963,12 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     trans_components: &[String],
+    use_translation_names: &[UseTranslationName],
     extract_from_comments: bool,
     plural_config: &PluralConfig,
+    nesting_prefix: &str,
+    nesting_suffix: &str,
+    nesting_options_separator: &str,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let source_code = std::fs::read_to_string(path)
@@ -1690,8 +1977,12 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
     let ctx = StrategyContext::new(
         functions,
         trans_components,
+        use_translation_names,
         extract_from_comments,
         plural_config,
+        nesting_prefix,
+        nesting_suffix,
+        nesting_options_separator,
     );
     strategy.extract(path, &source_code, &ctx)
 }
@@ -1706,13 +1997,19 @@ pub fn extract_from_source<P: AsRef<Path>>(
 ) -> Result<Vec<ExtractedKey>> {
     let plural_config = PluralConfig::default();
     let default_trans_components = vec!["Trans".to_string()];
+    let default_use_translation_names =
+        vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_source_with_warnings(
         source,
         path,
         functions,
         &default_trans_components,
+        &default_use_translation_names,
         true,
         &plural_config,
+        "$t(",
+        ")",
+        ",",
     )?;
     Ok(keys)
 }
@@ -1726,13 +2023,19 @@ pub fn extract_from_source_with_options<P: AsRef<Path>>(
     plural_config: &PluralConfig,
 ) -> Result<Vec<ExtractedKey>> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_use_translation_names =
+        vec![UseTranslationName::Name("useTranslation".to_string())];
     let (keys, _) = extract_from_source_with_warnings(
         source,
         path,
         functions,
         &default_trans_components,
+        &default_use_translation_names,
         extract_from_comments,
         plural_config,
+        "$t(",
+        ")",
+        ",",
     )?;
     Ok(keys)
 }
@@ -1742,8 +2045,12 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     trans_components: &[String],
+    use_translation_names: &[UseTranslationName],
     should_extract_from_comments: bool,
     plural_config: &PluralConfig,
+    nesting_prefix: &str,
+    nesting_suffix: &str,
+    nesting_options_separator: &str,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
@@ -1802,9 +2109,13 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     let mut visitor = TranslationVisitor::new(
         functions.to_vec(),
         trans_components.to_vec(),
+        use_translation_names.to_vec(),
         cm,
         Some(comments),
         plural_config.clone(),
+        nesting_prefix.to_string(),
+        nesting_suffix.to_string(),
+        nesting_options_separator.to_string(),
     );
     visitor.file_path = Some(path.display().to_string());
     module.visit_with(&mut visitor);
@@ -1833,8 +2144,12 @@ fn extract_vue_component(
             &virtual_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
+            ctx.nesting_prefix,
+            ctx.nesting_suffix,
+            ctx.nesting_options_separator,
         )?;
         keys.append(&mut script_keys);
         warnings += block_warnings;
@@ -1862,8 +2177,12 @@ fn extract_vue_component(
                     &virtual_path,
                     &template_functions,
                     ctx.trans_components,
+                    ctx.use_translation_names,
                     false,
                     ctx.plural_config,
+                    ctx.nesting_prefix,
+                    ctx.nesting_suffix,
+                    ctx.nesting_options_separator,
                 )?;
                 keys.append(&mut tpl_keys);
                 warnings += tpl_warnings;
@@ -1877,8 +2196,12 @@ fn extract_vue_component(
             file_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
+            ctx.nesting_prefix,
+            ctx.nesting_suffix,
+            ctx.nesting_options_separator,
         );
     }
 
@@ -1901,8 +2224,12 @@ fn extract_svelte_component(
             &virtual_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
+            ctx.nesting_prefix,
+            ctx.nesting_suffix,
+            ctx.nesting_options_separator,
         )?;
         keys.append(&mut script_keys);
         warnings += block_warnings;
@@ -1936,8 +2263,12 @@ fn extract_svelte_component(
             &virtual_path,
             &template_functions,
             ctx.trans_components,
+            ctx.use_translation_names,
             false,
             ctx.plural_config,
+            ctx.nesting_prefix,
+            ctx.nesting_suffix,
+            ctx.nesting_options_separator,
         )?;
         keys.append(&mut tpl_keys);
         warnings += tpl_warnings;
@@ -1949,8 +2280,12 @@ fn extract_svelte_component(
             file_path,
             ctx.functions,
             ctx.trans_components,
+            ctx.use_translation_names,
             ctx.extract_from_comments,
             ctx.plural_config,
+            ctx.nesting_prefix,
+            ctx.nesting_suffix,
+            ctx.nesting_options_separator,
         );
     }
 
@@ -1984,6 +2319,8 @@ pub fn extract_from_glob(
     plural_config: &PluralConfig,
 ) -> Result<ExtractionResult> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_use_translation_names =
+        vec![UseTranslationName::Name("useTranslation".to_string())];
     extract_from_glob_with_options(
         patterns,
         ignore_patterns,
@@ -1991,6 +2328,10 @@ pub fn extract_from_glob(
         true,
         plural_config,
         &default_trans_components,
+        &default_use_translation_names,
+        "$t(",
+        ")",
+        ",",
     )
 }
 
@@ -2002,12 +2343,20 @@ pub fn extract_from_glob_with_options(
     extract_from_comments: bool,
     plural_config: &PluralConfig,
     trans_components: &[String],
+    use_translation_names: &[UseTranslationName],
+    nesting_prefix: &str,
+    nesting_suffix: &str,
+    nesting_options_separator: &str,
 ) -> Result<ExtractionResult> {
     use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
 
     let ignore_matchers = Arc::new(compile_ignore_patterns(ignore_patterns)?);
     let trans_components = Arc::new(trans_components.to_vec());
+    let use_translation_names = Arc::new(use_translation_names.to_vec());
+    let nesting_prefix = Arc::new(nesting_prefix.to_string());
+    let nesting_suffix = Arc::new(nesting_suffix.to_string());
+    let nesting_options_separator = Arc::new(nesting_options_separator.to_string());
 
     // Create a streaming iterator that chains all glob patterns
     // This avoids collecting all file paths into memory upfront
@@ -2058,14 +2407,22 @@ pub fn extract_from_glob_with_options(
         .par_bridge() // Stream directly into parallel processing
         .map({
             let trans_components = Arc::clone(&trans_components);
+            let use_translation_names = Arc::clone(&use_translation_names);
+            let nesting_prefix = Arc::clone(&nesting_prefix);
+            let nesting_suffix = Arc::clone(&nesting_suffix);
+            let nesting_options_separator = Arc::clone(&nesting_options_separator);
             move |item| match item {
                 GlobItem::Path(path) => {
                     match extract_from_file_with_warnings(
                         &path,
                         functions,
                         &trans_components,
+                        &use_translation_names,
                         extract_from_comments,
                         plural_config,
+                        &nesting_prefix,
+                        &nesting_suffix,
+                        &nesting_options_separator,
                     ) {
                         Ok((keys, warnings)) => {
                             if keys.is_empty() {
@@ -2143,6 +2500,8 @@ pub fn extract_from_glob_deduplicated(
     plural_config: &PluralConfig,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
     let default_trans_components = vec!["Trans".to_string()];
+    let default_use_translation_names =
+        vec![UseTranslationName::Name("useTranslation".to_string())];
     extract_from_glob_deduplicated_with_options(
         patterns,
         ignore_patterns,
@@ -2150,6 +2509,10 @@ pub fn extract_from_glob_deduplicated(
         true,
         plural_config,
         &default_trans_components,
+        &default_use_translation_names,
+        "$t(",
+        ")",
+        ",",
     )
 }
 
@@ -2161,6 +2524,10 @@ pub fn extract_from_glob_deduplicated_with_options(
     extract_from_comments: bool,
     plural_config: &PluralConfig,
     trans_components: &[String],
+    use_translation_names: &[UseTranslationName],
+    nesting_prefix: &str,
+    nesting_suffix: &str,
+    nesting_options_separator: &str,
 ) -> Result<(HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>)> {
     use rayon::prelude::*;
 
@@ -2195,18 +2562,30 @@ pub fn extract_from_glob_deduplicated_with_options(
 
     let initial: AccumulatorType = (HashMap::new(), 0, Vec::new());
     let trans_components = Arc::new(trans_components.to_vec());
+    let use_translation_names = Arc::new(use_translation_names.to_vec());
+    let nesting_prefix = Arc::new(nesting_prefix.to_string());
+    let nesting_suffix = Arc::new(nesting_suffix.to_string());
+    let nesting_options_separator = Arc::new(nesting_options_separator.to_string());
 
     let (unique_keys, warning_count, mut errors) = all_files
         .par_iter()
         .fold(|| initial.clone(), {
             let trans_components = Arc::clone(&trans_components);
+            let use_translation_names = Arc::clone(&use_translation_names);
+            let nesting_prefix = Arc::clone(&nesting_prefix);
+            let nesting_suffix = Arc::clone(&nesting_suffix);
+            let nesting_options_separator = Arc::clone(&nesting_options_separator);
             move |mut acc: AccumulatorType, path: &std::path::PathBuf| {
                 match extract_from_file_with_warnings(
                     path,
                     functions,
                     &trans_components,
+                    &use_translation_names,
                     extract_from_comments,
                     plural_config,
+                    &nesting_prefix,
+                    &nesting_suffix,
+                    &nesting_options_separator,
                 ) {
                     Ok((keys, warnings)) => {
                         acc.1 += warnings;
@@ -2733,6 +3112,103 @@ mod tests {
     }
 
     #[test]
+    fn test_selector_api_extracts_key_path() {
+        let source = r#"
+            function Component() {
+                return t($ => $.user.profile.name);
+            }
+        "#;
+
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "user.profile.name");
+    }
+
+    #[test]
+    fn test_use_translation_names_custom_hook() {
+        let source = r#"
+            function Component() {
+                const { t } = loadPageTranslations('common', { keyPrefix: 'user' });
+                return t('name');
+            }
+        "#;
+        let plural_config = PluralConfig::default();
+        let trans_components = vec!["Trans".to_string()];
+        let hooks = vec![UseTranslationName::Detailed(
+            crate::config::UseTranslationNameDetails {
+                name: "loadPageTranslations".to_string(),
+                ns_arg: 0,
+                key_prefix_arg: 1,
+            },
+        )];
+
+        let (keys, _) = extract_from_source_with_warnings(
+            source,
+            "test.tsx",
+            &["t".to_string()],
+            &trans_components,
+            &hooks,
+            true,
+            &plural_config,
+            "$t(",
+            ")",
+            ",",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].namespace, Some("common".to_string()));
+        assert_eq!(keys[0].key, "user.name");
+    }
+
+    #[test]
+    fn test_nested_translation_with_custom_nesting_syntax() {
+        let source = r#"
+            t('outer', { defaultValue: 'Nested: __nest__("inner.key")' });
+        "#;
+        let plural_config = PluralConfig::default();
+        let trans_components = vec!["Trans".to_string()];
+        let hooks = vec![UseTranslationName::Name("useTranslation".to_string())];
+        let (keys, _) = extract_from_source_with_warnings(
+            source,
+            "test.ts",
+            &["t".to_string()],
+            &trans_components,
+            &hooks,
+            true,
+            &plural_config,
+            "__nest__(",
+            ")",
+            ",",
+        )
+        .unwrap();
+
+        assert!(keys.iter().any(|k| k.key == "outer"));
+        assert!(keys.iter().any(|k| k.key == "inner.key"));
+    }
+
+    #[test]
+    fn test_ordinal_plural_generation() {
+        let source = r#"
+            t('rank', { count: n, ordinal: true });
+        "#;
+
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        assert!(keys.iter().any(|k| k.key == "rank_ordinal_one"));
+        assert!(keys.iter().any(|k| k.key == "rank_ordinal_other"));
+    }
+
+    #[test]
+    fn test_return_objects_generates_preserve_marker() {
+        let source = r#"
+            t('countries', { returnObjects: true });
+        "#;
+
+        let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
+        assert!(keys.iter().any(|k| k.key == "countries.*"));
+        assert!(!keys.iter().any(|k| k.key == "countries"));
+    }
+
+    #[test]
     fn test_get_fixed_t_with_key_prefix() {
         let source = r#"
             const t = getFixedT('en', 'ns', 'user.profile');
@@ -2951,9 +3427,10 @@ mod tests {
 
         let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
-        assert_eq!(keys.len(), 2);
+        assert_eq!(keys.len(), 3);
         assert!(keys.iter().any(|k| k.key == "count_msg"));
-        assert!(keys.iter().any(|k| k.key == "item"));
+        assert!(keys.iter().any(|k| k.key == "item_one"));
+        assert!(keys.iter().any(|k| k.key == "item_other"));
     }
 
     #[test]
@@ -3029,27 +3506,13 @@ mod tests {
         assert!(keys.iter().any(|k| k.key == "template.header"));
     }
 
-    /// Test that all regex patterns compile successfully.
-    /// This test ensures we catch regex syntax errors at test time (CI),
-    /// not at runtime when a user runs the tool.
+    /// Test that regex-based comment extractors compile successfully.
     #[test]
     fn test_regex_initialization() {
-        // Force initialization of all regex patterns
-        // If any pattern is invalid, this will panic and the test will fail
-        let _ = get_nested_quoted_regex();
-        let _ = get_nested_unquoted_regex();
+        // Force initialization
         let _ = get_comment_single_arg_regex();
         let _ = get_comment_with_default_regex();
         let _ = get_comment_with_options_regex();
-
-        // Verify patterns actually match expected inputs
-        assert!(get_nested_quoted_regex().is_match("$t('hello')"));
-        assert!(get_nested_quoted_regex().is_match("$t(\"world\")"));
-        assert!(get_nested_quoted_regex().is_match("$t( 'spaced' )"));
-
-        assert!(get_nested_unquoted_regex().is_match("$t(key)"));
-        assert!(get_nested_unquoted_regex().is_match("$t(some.key.path)"));
-        assert!(get_nested_unquoted_regex().is_match("$t(ns:key)"));
 
         assert!(get_comment_single_arg_regex().is_match("t('key')"));
         assert!(get_comment_single_arg_regex().is_match("t(\"key\")"));

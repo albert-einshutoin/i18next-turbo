@@ -4,13 +4,68 @@
 
 ## 📊 実装状況サマリー
 
-- ✅ **完了**: Phase 2の大部分（Trans完全対応、useTranslation/getFixedTスコープ解決）
+- ✅ **完了**: Phase 2の大部分（Trans完全対応、useTranslation/getFixedT/selectorスコープ解決）
 - ✅ **完了**: Phase 3の主要コマンド（status, sync, lint, check, typegen, init, rename-key）
-- ✅ **完了**: ネストされた翻訳（$t パターン）、フラットキー、コメントからの抽出
+- ✅ **完了**: ネストされた翻訳（設定可能な nestingPrefix/suffix/separator）、フラットキー、コメントからの抽出
 - ✅ **完了**: 技術的改善（tempfile原子的書込、キー競合レポート、globストリーミング、NFC最適化、インデント検知・保持、FileSystemトレイト統合）
 - ✅ **完了**: 堅牢性改善（エラーメッセージ行列表示、Silent Failure排除、既存JSONスタイル維持、モックテスト可能なFS抽象化）
-- ⚠️ **部分的実装**: 言語別複数形カテゴリ（現在は英語ルールのみ、pluralSuffixes設定対応済み）
+- ✅ **完了**: 言語別複数形カテゴリ（ICUベース）と ordinal 複数形キー生成
+- ✅ **完了**: returnObjects 保護（`key.*` マーカーで子キー保持）
 - ⚠️ **部分的実装**: Phase 1（npm配布の基盤は整備済み、CI/CDは未実装）
+
+---
+
+## 🎯 i18next-turbo のスコープ再定義（2026-02-10）
+
+i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「高速抽出 + 安全同期 + 実運用CLI」をコア価値とする。
+
+### 100%の定義（Turbo Core v1）
+
+以下を **100%** の基準とする（25項目）:
+
+1. `t('...')` / `i18n.t('...')` 抽出
+2. namespace / keySeparator / flat key 対応
+3. `<Trans>` の `i18nKey/ns/defaults/children` 抽出
+4. `<Trans>` の `count/context`（動的 context 含む）対応
+5. `useTranslation` 系スコープ解決（`useTranslationNames` 含む）
+6. `getFixedT` スコープ解決
+7. selector API（`t($ => $.a.b)`）抽出
+8. template literal（静的）抽出
+9. nested translation 抽出（設定可能 prefix/suffix/separator）
+10. nested translation 内 options（`count/context/ordinal`）反映
+11. 言語別 cardinal plurals（ICU）
+12. ordinal plurals
+13. `returnObjects: true` の保持マーカー生成（`key.*`）
+14. コメント抽出と無効化コメント
+15. ignore パターン
+16. preservePatterns + removeUnusedKeys
+17. JSON同期で既存翻訳保持（非破壊）
+18. 競合検出と警告
+19. outputFormat（json/json5/js/ts）
+20. インデント/スタイル保持 + atomic write
+21. `extract` / `watch`
+22. `status` / `check` / `sync`
+23. `lint` / `rename-key`
+24. `typegen` / `init` / `migrate`
+25. JS/TS 設定読み込み（Node wrapper + Rust 連携）
+
+### 現在の実装率（Turbo Core v1）
+
+- **23 / 25 = 92%**
+- 未完了（Core v1基準）:
+1. `transKeepBasicHtmlNodesFor` の設定値を抽出ロジックへ完全反映
+2. `defaultNS: false`（namespace-less）運用の正式サポート
+
+### Core v1 に含めない項目（比較用）
+
+以下は「i18next-cli互換のための拡張」であり、Turbo Core v1 の達成率には含めない:
+
+1. プラグインシステム
+2. ヒューリスティック自動設定検出（設定ファイルなし運用）
+3. `output` / `defaultValue` の関数形式
+4. `mergeNamespaces`
+5. 高度な Locize オプション群
+6. 型生成の selector 最適化モード
 
 ---
 
@@ -46,7 +101,7 @@
 - [x] `bin/cli.js` を作成（Rust バイナリを呼び出すラッパー）
 - [x] `lib/index.js` を作成（Node.js API のエントリーポイント）
 - [x] NAPI関数を呼び出す処理を実装（`extract`, `watch`）
-- [ ] JS/TS 設定ファイルの読み込み処理を実装
+- [x] JS/TS 設定ファイルの読み込み処理を実装
   - `i18next-parser.config.js` の読み込み
   - `i18next.config.ts` の読み込み（`jiti` または `ts-node` を使用）
   - 設定オブジェクトを JSON 文字列に変換して Rust バイナリに渡す
@@ -168,9 +223,9 @@
 - [x] 単一カテゴリ（`other` のみ）の言語ではベースキーを使用
 
 #### 2.2.2: Ordinal 複数形の対応
-- [ ] `ordinal` タイプの複数形を検出
-- [ ] `key_ordinal_one`, `key_ordinal_other` などのキーを生成
-- [ ] 設定オプションで Ordinal を有効/無効化
+- [x] `ordinal` タイプの複数形を検出
+- [x] `key_ordinal_one`, `key_ordinal_other` などのキーを生成
+- [x] 設定オプションで Ordinal を有効/無効化（`ordinal: true` オプション検出）
 
 #### 2.2.3: コンテキストと複数形の組み合わせ ✅
 - [x] `context` と `count` の両方が存在する場合の処理
@@ -202,9 +257,9 @@
 - [x] `const t = getFixedT('en', 'ns', 'prefix')` の処理
 
 #### 2.3.3: セレクター API のサポート
-- [ ] `t($ => $.key.path)` パターンの検出
-- [ ] アロー関数の引数からキーパスを抽出
-- [ ] 型安全なキー選択のサポート
+- [x] `t($ => $.key.path)` パターンの検出
+- [x] アロー関数の引数からキーパスを抽出
+- [ ] 型安全なキー選択のサポート（型生成との統合は未完）
 
 #### 2.3.4: 関数のエイリアス追跡
 - [ ] `const translate = t` のようなエイリアスの検出
@@ -212,24 +267,24 @@
 - [ ] スコープ情報の継承
 
 #### 2.3.5: 動的コンテキスト値の解決
-- [ ] 三項演算子の解析: `context: isMale ? 'male' : 'female'`
-- [ ] 可能な値を列挙して複数のキーを生成
+- [x] 三項演算子の解析: `context: isMale ? 'male' : 'female'`
+- [x] 可能な値を列挙して複数のキーを生成
 - [ ] 解決不可能な場合は警告を出力
 
 #### 2.3.6: ネストされた翻訳（Nested Translations）のサポート ✅
 - [x] `$t(key)` パターンの検出（文字列内のネストされた翻訳）
-- [ ] `nestingPrefix` と `nestingSuffix` の設定サポート（デフォルト: `$t(` と `)`）
-- [ ] `nestingOptionsSeparator` の設定サポート（デフォルト: `,`）
+- [x] `nestingPrefix` と `nestingSuffix` の設定サポート（デフォルト: `$t(` と `)`）
+- [x] `nestingOptionsSeparator` の設定サポート（デフォルト: `,`）
 - [x] 文字列内の `$t(key, { options })` パターンの解析
-- [ ] ネストされたキーから複数形やコンテキストを抽出
+- [x] ネストされたキーから複数形やコンテキストを抽出
 - [x] デフォルト値内のネストされた翻訳の抽出
 - [x] Trans コンポーネントの defaults 属性からの抽出
 
 #### 2.3.7: returnObjects のサポート
-- [ ] `t('key', { returnObjects: true })` の検出
-- [ ] 構造化コンテンツ（オブジェクト）の保持
-- [ ] `objectKeys` セットの管理
-- [ ] オブジェクトキーの子要素を自動的に保持するパターン生成（`key.*`）
+- [x] `t('key', { returnObjects: true })` の検出
+- [x] 構造化コンテンツ（オブジェクト）の保持
+- [x] `objectKeys` セット相当の管理（`key.*` マーカー）
+- [x] オブジェクトキーの子要素を自動的に保持するパターン生成（`key.*`）
 
 #### 2.3.8: テンプレートリテラル（Template Literals）のサポート ✅
 - [x] `t(\`key\`)` パターンの検出（バッククォートで囲まれた文字列）
@@ -244,9 +299,9 @@
 #### 達成基準
 - [x] `const { t } = useTranslation('common', { keyPrefix: 'user' }); t('name')` が `common:user.name` として抽出される
 - [x] `const t = getFixedT('en', 'ns', 'prefix'); t('key')` が `ns:prefix.key` として抽出される
-- [ ] `t($ => $.user.profile)` が `user.profile` として抽出される
-- [ ] `t('You have $t(item_count, {"count": {{count}} })')` から `item_count_one`, `item_count_other` が抽出される
-- [ ] `t('countries', { returnObjects: true })` で既存の `countries` オブジェクトが保持される
+- [x] `t($ => $.user.profile)` が `user.profile` として抽出される
+- [x] `t('You have $t(item_count, {"count": {{count}} })')` から `item_count_one`, `item_count_other` が抽出される
+- [x] `t('countries', { returnObjects: true })` で既存の `countries` オブジェクトが保持される
 
 ---
 
@@ -334,10 +389,10 @@
 - [ ] プロジェクト構造の自動検出
 
 #### 3.1.6: `migrate-config` コマンド
-- [ ] レガシー設定ファイルの検出
-- [ ] 設定の変換ロジック
-- [ ] 新しい形式への移行
-- [ ] 警告メッセージの表示
+- [x] レガシー設定ファイルの検出
+- [x] 設定の変換ロジック
+- [x] 新しい形式への移行
+- [x] 警告メッセージの表示
 
 ---
 
@@ -352,8 +407,8 @@
 #### 3.2.2: 設定ファイルの拡張（基本オプション）
 - [x] `preservePatterns`: 動的キーのパターン保持（glob パターン配列）✅
 - [ ] `preserveContextVariants`: コンテキスト変種の保持
-- [ ] `generateBasePluralForms`: ベース複数形の生成制御
-- [ ] `disablePlurals`: 複数形の完全無効化
+- [x] `generateBasePluralForms`: ベース複数形の生成制御 ✅
+- [x] `disablePlurals`: 複数形の完全無効化 ✅
 - [x] `extractFromComments`: コメントからの抽出 ✅
 - [x] `removeUnusedKeys`: 未使用キーの削除（デフォルト: `true`）✅
 - [x] `ignore`: 抽出対象から除外するファイルパターン（glob 配列）✅
@@ -367,9 +422,9 @@
 - [x] `nsSeparator: false` で無効化
 - [ ] `interpolationPrefix`: 補間プレフィックス（デフォルト: `'{{'`）
 - [ ] `interpolationSuffix`: 補間サフィックス（デフォルト: `'}}'`）
-- [ ] `nestingPrefix`: ネスト翻訳プレフィックス（デフォルト: `'$t('`）
-- [ ] `nestingSuffix`: ネスト翻訳サフィックス（デフォルト: `')'`）
-- [ ] `nestingOptionsSeparator`: ネスト翻訳オプションセパレータ（デフォルト: `','`）
+- [x] `nestingPrefix`: ネスト翻訳プレフィックス（デフォルト: `'$t('`）✅
+- [x] `nestingSuffix`: ネスト翻訳サフィックス（デフォルト: `')'`）✅
+- [x] `nestingOptionsSeparator`: ネスト翻訳オプションセパレータ（デフォルト: `','`）✅
 
 #### 3.2.4: 言語とデフォルト値の設定
 - [x] `primaryLanguage`: プライマリ言語の指定（デフォルト: `locales[0]`）
@@ -389,7 +444,7 @@
 
 #### 3.2.6: Trans コンポーネント設定
 - [ ] `transKeepBasicHtmlNodesFor`: Trans コンポーネントで保持する HTML タグ（デフォルト: `['br', 'strong', 'i']`）
-- [ ] `transComponents`: 抽出対象の Trans コンポーネント名（デフォルト: `['Trans']`）
+- [x] `transComponents`: 抽出対象の Trans コンポーネント名（デフォルト: `['Trans']`）✅
 
 #### 3.2.7: 出力パスの関数形式サポート
 - [ ] `output`: 関数形式のサポート
@@ -451,18 +506,18 @@
 #### 3.5.1: Locize CLI の統合
 - [ ] `locize-cli` の依存関係チェック
 - [ ] `locize-sync` コマンドの実装
-- [ ] `locize-download` コマンドの実装
+- [x] `locize-download` コマンドの実装
 - [ ] `locize-migrate` コマンドの実装
 
 #### 3.5.2: 認証情報の管理
 - [ ] インタラクティブな認証情報設定
-- [ ] 環境変数からの読み込み
+- [x] 環境変数からの読み込み
 - [ ] 設定ファイルへの保存
 
 #### 3.5.3: Locize 設定オプション
-- [ ] `locize.projectId`: プロジェクト ID
-- [ ] `locize.apiKey`: API キー（環境変数推奨）
-- [ ] `locize.version`: バージョン（デフォルト: `'latest'`）
+- [x] `locize.projectId`: プロジェクト ID
+- [x] `locize.apiKey`: API キー（環境変数推奨）
+- [x] `locize.version`: バージョン（デフォルト: `'latest'`）
 - [ ] `locize.updateValues`: 既存翻訳値の更新
 - [ ] `locize.sourceLanguageOnly`: ソース言語のみ同期
 - [ ] `locize.compareModificationTime`: 変更時刻の比較
@@ -475,7 +530,7 @@
 
 #### 3.6.1: 型生成設定の詳細
 - [ ] `types.input`: 型生成元の翻訳ファイルパターン
-- [ ] `types.output`: メインの型定義ファイルパス
+- [x] `types.output`: メインの型定義ファイルパス
 - [ ] `types.resourcesFile`: リソースインターフェースファイルのパス
 - [ ] `types.enableSelector`: セレクター API の有効化（`true`, `false`, `'optimize'`）
 - [ ] `types.indentation`: 型定義ファイルのインデント
@@ -572,11 +627,11 @@
 - ✅ **実装済み機能のCLI接続**（typegen、check、status コマンド追加完了）
 - ✅ テンプレートリテラル（`t(\`key\`)`）のサポート
 - ✅ ネストされた翻訳（`$t(...)` パターン）
-- ❌ `returnObjects` のサポート
+- ✅ `returnObjects` のサポート（`key.*` による保持）
 - ✅ フラットキー（`keySeparator: ""`）
 - ✅ セパレータの設定（`nsSeparator`, `contextSeparator`, `pluralSeparator`）
 - ❌ 補間構文の設定（`interpolationPrefix`, `interpolationSuffix`）
-- ❌ ネスト翻訳の設定（`nestingPrefix`, `nestingSuffix`, `nestingOptionsSeparator`）
+- ✅ ネスト翻訳の設定（`nestingPrefix`, `nestingSuffix`, `nestingOptionsSeparator`）
 - ✅ プライマリ言語の設定（`primaryLanguage`）
 - ❌ セカンダリ言語の設定（`secondaryLanguages`）
 - ❌ `defaultValue` の関数形式
@@ -587,7 +642,7 @@
 - ❌ `transKeepBasicHtmlNodesFor` の設定
 - ❌ プラグインシステム
 - ❌ ヒューリスティック設定検出
-- ❌ JavaScript ファイル出力（`js`, `js-esm`, `js-cjs`）
+- ✅ JavaScript ファイル出力（`js`, `js-esm`, `js-cjs`）
 - ❌ 型生成の詳細設定（`enableSelector`, `resourcesFile`）
 - ❌ Lint 設定の詳細（`acceptedAttributes`, `acceptedTags`）
 

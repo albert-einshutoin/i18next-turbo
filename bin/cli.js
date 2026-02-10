@@ -306,6 +306,10 @@ function mapCliExtractConfig(rawConfig) {
     mapped.functions = extract.functions;
   }
 
+  if (Array.isArray(extract.useTranslationNames)) {
+    mapped.useTranslationNames = extract.useTranslationNames;
+  }
+
   if (typeof extract.defaultNS === 'string') {
     mapped.defaultNamespace = extract.defaultNS;
   } else if (extract.defaultNS === false) {
@@ -330,6 +334,46 @@ function mapCliExtractConfig(rawConfig) {
 
   if (typeof extract.pluralSeparator === 'string') {
     mapped.pluralSeparator = extract.pluralSeparator;
+  }
+
+  if (Array.isArray(extract.transComponents)) {
+    mapped.transComponents = extract.transComponents;
+  }
+
+  if (Array.isArray(extract.ignore)) {
+    mapped.ignore = extract.ignore;
+  }
+
+  if (Array.isArray(extract.preservePatterns)) {
+    mapped.preservePatterns = extract.preservePatterns;
+  }
+
+  if (typeof extract.removeUnusedKeys === 'boolean') {
+    mapped.removeUnusedKeys = extract.removeUnusedKeys;
+  }
+
+  if (typeof extract.defaultValue === 'string') {
+    mapped.defaultValue = extract.defaultValue;
+  }
+
+  if (typeof extract.generateBasePluralForms === 'boolean') {
+    mapped.generateBasePluralForms = extract.generateBasePluralForms;
+  }
+
+  if (typeof extract.disablePlurals === 'boolean') {
+    mapped.disablePlurals = extract.disablePlurals;
+  }
+
+  if (typeof extract.nestingPrefix === 'string') {
+    mapped.nestingPrefix = extract.nestingPrefix;
+  }
+
+  if (typeof extract.nestingSuffix === 'string') {
+    mapped.nestingSuffix = extract.nestingSuffix;
+  }
+
+  if (typeof extract.nestingOptionsSeparator === 'string') {
+    mapped.nestingOptionsSeparator = extract.nestingOptionsSeparator;
   }
 
   return mapped;
