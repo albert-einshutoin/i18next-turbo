@@ -2,11 +2,14 @@ use crate::config::{PluralConfig, UseTranslationName};
 use anyhow::{Context, Result};
 use glob::Pattern;
 use regex::Regex;
+use serde_json::{json, Value as JsonValue};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::ops::Range;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
 
 /// Normalize a string to NFC form for consistent key handling.
@@ -49,6 +52,9 @@ static COMMENT_WITH_OPTIONS_REGEX: OnceLock<Regex> = OnceLock::new();
 static SCRIPT_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
 static TEMPLATE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
 static STYLE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
+static AST_EVENT_WRITER: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+
+const AST_EVENT_PATH_ENV: &str = "I18NEXT_TURBO_AST_EVENTS_PATH";
 
 /// Returns regex for t() calls in comments with single argument
 fn get_comment_single_arg_regex() -> &'static Regex {
@@ -96,6 +102,36 @@ fn get_style_block_regex() -> &'static Regex {
         Regex::new(r#"(?is)<style\b[^>]*>.*?</style>"#)
             .expect("STYLE_BLOCK_REGEX pattern is invalid - this is a bug")
     })
+}
+
+fn get_ast_event_writer() -> Option<&'static Mutex<std::fs::File>> {
+    AST_EVENT_WRITER
+        .get_or_init(|| {
+            let path = std::env::var(AST_EVENT_PATH_ENV).ok()?;
+            if path.trim().is_empty() {
+                return None;
+            }
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok()?;
+            Some(Mutex::new(file))
+        })
+        .as_ref()
+}
+
+fn write_ast_event_line(event: &JsonValue) {
+    let Some(writer) = get_ast_event_writer() else {
+        return;
+    };
+    let Ok(mut file) = writer.lock() else {
+        return;
+    };
+    let Ok(line) = serde_json::to_string(event) else {
+        return;
+    };
+    let _ = writeln!(file, "{}", line);
 }
 
 #[derive(Debug, Clone)]
@@ -430,7 +466,7 @@ fn parse_nested_key_token(token: &str) -> Option<&str> {
 
 use swc_common::comments::SingleThreadedComments;
 use swc_common::sync::Lrc;
-use swc_common::{FileName, SourceMap, Span, Spanned};
+use swc_common::{FileName, SourceMap, SourceMapper, Span, Spanned};
 use swc_ecma_ast::{
     BinaryOp, CallExpr, Callee, CondExpr, Expr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue,
     JSXElement, JSXElementChild, JSXElementName, JSXExpr, JSXOpeningElement, Lit, MemberProp,
@@ -731,6 +767,39 @@ impl TranslationVisitor {
             loc.line,
             loc.col_display + 1
         );
+    }
+
+    fn emit_ast_visit_event(
+        &self,
+        span: Span,
+        node_type: &str,
+        callee: Option<&str>,
+        component: Option<&str>,
+        extracted_key: Option<&str>,
+    ) {
+        let loc = self.source_map.lookup_char_pos(span.lo);
+        let file_path = self.file_path.as_deref().unwrap_or("<unknown>");
+        let snippet = self.source_map.span_to_snippet(span).ok().map(|s| {
+            let trimmed = s.trim().replace('\n', " ");
+            if trimmed.len() > 240 {
+                format!("{}...", &trimmed[..240])
+            } else {
+                trimmed
+            }
+        });
+
+        let event = json!({
+            "type": "AstNodeVisit",
+            "nodeType": node_type,
+            "filePath": file_path,
+            "line": loc.line,
+            "column": loc.col_display + 1,
+            "callee": callee,
+            "component": component,
+            "key": extracted_key,
+            "snippet": snippet,
+        });
+        write_ast_event_line(&event);
     }
 
     /// Check if call has count option (for plurals)
@@ -1710,14 +1779,28 @@ impl Visit for TranslationVisitor {
         }
 
         if self.is_translation_call(&call.callee) {
+            let callee_name = self.get_callee_name(&call.callee);
+            self.emit_ast_visit_event(
+                call.span,
+                "CallExpression",
+                callee_name.as_deref(),
+                None,
+                None,
+            );
             if let Some(key) = self.extract_key_from_args(call) {
                 // Check if the callee is bound to a scope
-                let callee_name = self.get_callee_name(&call.callee);
                 let (namespace_from_scope, base_key) = if let Some(name) = &callee_name {
                     self.apply_scope_to_key(&key, name)
                 } else {
                     self.parse_key_with_namespace(&key)
                 };
+                self.emit_ast_visit_event(
+                    call.span,
+                    "TranslationKey",
+                    callee_name.as_deref(),
+                    None,
+                    Some(base_key.as_str()),
+                );
 
                 // Check for count option (plurals)
                 let has_count = if call.args.len() >= 2 {
@@ -1816,6 +1899,13 @@ impl Visit for TranslationVisitor {
         // Check if this is a Trans component
         if let JSXElementName::Ident(ident) = &elem.opening.name {
             if self.trans_components.contains(ident.sym.as_ref()) {
+                self.emit_ast_visit_event(
+                    elem.span,
+                    "JSXElement",
+                    None,
+                    Some(ident.sym.as_ref()),
+                    None,
+                );
                 // Extract i18nKey attribute (primary key source)
                 let i18n_key = self.extract_trans_key(&elem.opening);
 
@@ -1859,6 +1949,13 @@ impl Visit for TranslationVisitor {
 
                 // Parse namespace from key (e.g., "common:greeting")
                 let (namespace_from_key, base_key) = self.parse_key_with_namespace(&key);
+                self.emit_ast_visit_event(
+                    elem.span,
+                    "TranslationKey",
+                    None,
+                    Some(ident.sym.as_ref()),
+                    Some(base_key.as_str()),
+                );
 
                 // Use ns attribute if present, otherwise use namespace from key
                 let namespace = ns_from_attr.or(namespace_from_key);
@@ -2515,6 +2612,10 @@ pub fn extract_from_glob_with_options(
     use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
 
+    let expanded_patterns: Vec<String> = patterns
+        .iter()
+        .flat_map(|pattern| expand_brace_patterns(pattern))
+        .collect();
     let ignore_matchers = Arc::new(compile_ignore_patterns(ignore_patterns)?);
     let trans_components = Arc::new(trans_components.to_vec());
     let trans_keep_basic_html_nodes_for = Arc::new(trans_keep_basic_html_nodes_for.to_vec());
@@ -2527,7 +2628,7 @@ pub fn extract_from_glob_with_options(
 
     // Create a streaming iterator that chains all glob patterns
     // This avoids collecting all file paths into memory upfront
-    let pattern_refs: Vec<&str> = patterns.iter().map(|s| s.as_str()).collect();
+    let pattern_refs: Vec<&str> = expanded_patterns.iter().map(|s| s.as_str()).collect();
 
     // Enum to represent either a valid path or an error during glob iteration
     enum GlobItem {
@@ -2714,9 +2815,13 @@ pub fn extract_from_glob_deduplicated_with_options(
 
     let mut all_files: Vec<std::path::PathBuf> = Vec::new();
     let mut glob_errors: Vec<ExtractionError> = Vec::new();
+    let expanded_patterns: Vec<String> = patterns
+        .iter()
+        .flat_map(|pattern| expand_brace_patterns(pattern))
+        .collect();
     let ignore_matchers = compile_ignore_patterns(ignore_patterns)?;
 
-    for pattern in patterns {
+    for pattern in &expanded_patterns {
         let matches =
             glob::glob(pattern).with_context(|| format!("Invalid glob pattern: {}", pattern))?;
 
@@ -2810,6 +2915,73 @@ pub fn extract_from_glob_deduplicated_with_options(
     errors.extend(glob_errors);
 
     Ok((unique_keys, warning_count, errors))
+}
+
+fn expand_brace_patterns(pattern: &str) -> Vec<String> {
+    let bytes = pattern.as_bytes();
+    let mut start = None;
+    let mut depth = 0usize;
+
+    for (idx, b) in bytes.iter().enumerate() {
+        if *b == b'{' {
+            if depth == 0 {
+                start = Some(idx);
+            }
+            depth += 1;
+            continue;
+        }
+        if *b == b'}' {
+            if depth == 0 {
+                continue;
+            }
+            depth -= 1;
+            if depth == 0 {
+                let Some(open_idx) = start else {
+                    break;
+                };
+                let prefix = &pattern[..open_idx];
+                let inner = &pattern[open_idx + 1..idx];
+                let suffix = &pattern[idx + 1..];
+
+                let options = split_brace_options(inner);
+                if options.len() <= 1 {
+                    return vec![pattern.to_string()];
+                }
+
+                let suffix_expanded = expand_brace_patterns(suffix);
+                let mut out = Vec::new();
+                for option in options {
+                    for tail in &suffix_expanded {
+                        out.push(format!("{}{}{}", prefix, option, tail));
+                    }
+                }
+                return out;
+            }
+        }
+    }
+
+    vec![pattern.to_string()]
+}
+
+fn split_brace_options(inner: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+
+    for (idx, ch) in inner.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(&inner[start..idx]);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+
+    out.push(&inner[start..]);
+    out
 }
 
 fn matches_ignore_path(path: &Path, patterns: &[Pattern]) -> bool {
@@ -3867,6 +4039,51 @@ mod tests {
             .expect("script key");
         assert_eq!(script_key.default_value.as_deref(), Some("Value"));
         assert!(keys.iter().any(|k| k.key == "template.header"));
+    }
+
+    #[test]
+    fn test_expand_brace_patterns_simple() {
+        let expanded = expand_brace_patterns("src/**/*.{ts,tsx}");
+        assert_eq!(
+            expanded,
+            vec!["src/**/*.ts".to_string(), "src/**/*.tsx".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_extract_from_glob_supports_brace_patterns() {
+        let dir = tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("a.ts"), "t('a.key')").unwrap();
+        fs::write(src_dir.join("b.tsx"), "const b = t('b.key');").unwrap();
+
+        let pattern = format!("{}/**/*.{{ts,tsx}}", src_dir.display());
+        let functions = vec!["t".to_string()];
+        let result = extract_from_glob_with_options(
+            &[pattern],
+            &[],
+            &functions,
+            true,
+            &PluralConfig::default(),
+            &[],
+            &[],
+            &[],
+            "$t(",
+            ")",
+            ",",
+            "{{",
+            "}}",
+        )
+        .unwrap();
+
+        let extracted: Vec<&ExtractedKey> = result
+            .files
+            .iter()
+            .flat_map(|(_, keys)| keys.iter())
+            .collect();
+        assert!(extracted.iter().any(|k| k.key == "a.key"));
+        assert!(extracted.iter().any(|k| k.key == "b.key"));
     }
 
     /// Test that regex-based comment extractors compile successfully.
