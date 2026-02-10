@@ -1,9 +1,11 @@
 use anyhow::{bail, Result};
 use std::collections::BTreeSet;
+use std::io::{self, Write};
 use std::path::Path;
 
 pub fn run(
     force: bool,
+    interactive: bool,
     input: &str,
     output: &str,
     locales: &str,
@@ -47,23 +49,30 @@ pub fn run(
         }
     }
 
+    let mut resolved_namespace = namespace.to_string();
+    let mut resolved_functions = functions.to_string();
+
+    if interactive {
+        println!("\nInteractive setup wizard (press Enter to keep default):");
+        resolved_input = prompt_with_default("Input patterns (comma-separated)", &resolved_input)?;
+        resolved_output = prompt_with_default("Output directory", &resolved_output)?;
+        resolved_locales = prompt_with_default("Locales (comma-separated)", &resolved_locales)?;
+        resolved_namespace = prompt_with_default("Default namespace", &resolved_namespace)?;
+        resolved_functions =
+            prompt_with_default("Functions (comma-separated)", &resolved_functions)?;
+    }
+
     // Parse comma-separated values
-    let input_patterns: Vec<String> = resolved_input
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
-    let locales_vec: Vec<String> = resolved_locales
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
-    let functions_vec: Vec<String> = functions.split(',').map(|s| s.trim().to_string()).collect();
+    let input_patterns = split_csv(&resolved_input);
+    let locales_vec = split_csv(&resolved_locales);
+    let functions_vec = split_csv(&resolved_functions);
 
     // Create config JSON
     let config = serde_json::json!({
         "input": input_patterns,
         "output": resolved_output,
         "locales": locales_vec,
-        "defaultNamespace": namespace,
+        "defaultNamespace": resolved_namespace,
         "functions": functions_vec,
         "keySeparator": ".",
         "nsSeparator": ":"
@@ -78,7 +87,7 @@ pub fn run(
     println!("  Input patterns: {:?}", input_patterns);
     println!("  Output: {}", resolved_output);
     println!("  Locales: {:?}", locales_vec);
-    println!("  Default namespace: {}", namespace);
+    println!("  Default namespace: {}", resolved_namespace);
     println!("  Functions: {:?}", functions_vec);
 
     println!("\nNext steps:");
@@ -98,6 +107,27 @@ pub fn run(
 
     println!("\nDone!");
     Ok(())
+}
+
+fn prompt_with_default(label: &str, default_value: &str) -> Result<String> {
+    print!("{} [{}]: ", label, default_value);
+    io::stdout().flush()?;
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf)?;
+    let v = buf.trim();
+    if v.is_empty() {
+        Ok(default_value.to_string())
+    } else {
+        Ok(v.to_string())
+    }
+}
+
+fn split_csv(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn detect_output_dir() -> Option<String> {
@@ -204,6 +234,31 @@ fn detect_input_glob() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
+
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn change_to(path: &Path) -> Self {
+            let original = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    fn cwd_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn looks_like_locale_accepts_common_patterns() {
@@ -224,5 +279,34 @@ mod tests {
 
         let detected = detect_locales_csv(tmp.path().to_str().unwrap()).unwrap();
         assert_eq!(detected, "en,ja");
+    }
+
+    #[test]
+    fn detect_output_dir_prefers_existing_public_locales() {
+        let _lock = cwd_test_lock().lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = CwdGuard::change_to(tmp.path());
+        std::fs::create_dir_all("public/locales/en").unwrap();
+        std::fs::write("public/locales/en/translation.json", "{}").unwrap();
+
+        let detected = detect_output_dir();
+        assert_eq!(detected.as_deref(), Some("public/locales"));
+    }
+
+    #[test]
+    fn detect_input_glob_falls_back_to_app_when_no_src() {
+        let _lock = cwd_test_lock().lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = CwdGuard::change_to(tmp.path());
+        std::fs::create_dir_all("app").unwrap();
+
+        let detected = detect_input_glob();
+        assert_eq!(detected.as_deref(), Some("app/**/*.{ts,tsx,js,jsx}"));
+    }
+
+    #[test]
+    fn split_csv_trims_and_skips_empty_entries() {
+        let values = split_csv(" t , ,i18n.t ,");
+        assert_eq!(values, vec!["t".to_string(), "i18n.t".to_string()]);
     }
 }

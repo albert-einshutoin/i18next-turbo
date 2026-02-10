@@ -113,6 +113,11 @@ pub struct Config {
     #[serde(default)]
     pub merge_namespaces: bool,
 
+    /// Output filename (without extension) used when `mergeNamespaces` is enabled.
+    /// Example: "translation" writes `<output>/<locale>/translation.<ext>`
+    #[serde(default)]
+    pub merged_namespace_filename: Option<String>,
+
     /// Default value to use when no explicit defaultValue is provided
     #[serde(default)]
     pub default_value: Option<String>,
@@ -538,6 +543,7 @@ pub struct NapiConfig {
     pub preserveContextVariants: Option<bool>,
     pub removeUnusedKeys: Option<bool>,
     pub mergeNamespaces: Option<bool>,
+    pub mergedNamespaceFilename: Option<String>,
     pub defaultValue: Option<String>,
     pub transComponents: Option<Vec<String>>,
     pub transKeepBasicHtmlNodesFor: Option<Vec<String>>,
@@ -835,6 +841,7 @@ impl Default for Config {
             preserve_context_variants: false,
             remove_unused_keys: default_remove_unused_keys(),
             merge_namespaces: false,
+            merged_namespace_filename: None,
             default_value: None,
             types: TypesConfig::default(),
             trans_components: default_trans_components(),
@@ -1024,6 +1031,19 @@ impl Config {
             }
         }
 
+        if let Some(file_stem) = &self.merged_namespace_filename {
+            if file_stem.trim().is_empty() {
+                bail!(
+                    "Configuration error: 'mergedNamespaceFilename' must be a non-empty string when specified."
+                );
+            }
+            if file_stem.contains('/') || file_stem.contains('\\') {
+                bail!(
+                    "Configuration error: 'mergedNamespaceFilename' must be a filename stem, not a path."
+                );
+            }
+        }
+
         // Check functions is not empty
         if self.functions.is_empty() {
             bail!(
@@ -1157,7 +1177,7 @@ impl Config {
             output_format: config
                 .outputFormat
                 .as_deref()
-                .map(OutputFormat::from_str)
+                .map(OutputFormat::parse_str)
                 .transpose()?
                 .unwrap_or(defaults.output_format),
             locales: config.locales.unwrap_or_else(|| defaults.locales.clone()),
@@ -1205,6 +1225,9 @@ impl Config {
                 .removeUnusedKeys
                 .unwrap_or(default_remove_unused_keys()),
             merge_namespaces: config.mergeNamespaces.unwrap_or(defaults.merge_namespaces),
+            merged_namespace_filename: config
+                .mergedNamespaceFilename
+                .or_else(|| defaults.merged_namespace_filename.clone()),
             default_value: config
                 .defaultValue
                 .or_else(|| defaults.default_value.clone()),

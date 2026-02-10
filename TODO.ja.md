@@ -111,9 +111,9 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 - [x] バイナリのパッケージングスクリプト
 
 #### 達成基準
-- [ ] ローカルで `npm install .` が成功する
-- [ ] `node -e "require('./').extract(...)"` が動作する
-- [ ] `npx i18next-turbo extract` が動作する
+- [x] ローカルで `npm install .` が成功する
+- [x] `node -e "require('./').extract(...)"` が動作する
+- [x] `npx i18next-turbo extract` が動作する
 
 ---
 
@@ -145,8 +145,8 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 
 #### 達成基準
 - [ ] GitHub の Releases ページに各 OS 用のバイナリが並ぶ
-- [ ] npm レジストリにパッケージが公開される
-- [ ] `npm install i18next-turbo` でインストールできる
+- [x] npm レジストリにパッケージが公開される
+- [x] `npm install i18next-turbo` でインストールできる
 
 ### Task 1.3: 実装済み機能のCLI接続（Wiring）【完了】✅
 
@@ -328,7 +328,7 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 - [x] デフォルト値の設定
 
 #### 2.4.4: ヒューリスティック設定検出
-- [ ] プロジェクト構造の自動検出機能
+- [x] プロジェクト構造の自動検出機能
 - [x] 一般的な翻訳ファイルの場所を検索（`locales/en/*.json`, `public/locales/en/*.json` など）
 - [x] 検出された構造から設定を自動生成
 - [x] `status` や `lint` コマンドで設定ファイルなしでも動作
@@ -384,8 +384,8 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 - [x] i18next-turbo.json の自動生成
 - [x] ロケールディレクトリの自動作成
 - [x] 次のステップのガイダンス表示
-- [ ] 対話的な設定ウィザード（オプション）
-- [ ] プロジェクト構造の自動検出
+- [x] 対話的な設定ウィザード（オプション）
+- [x] プロジェクト構造の自動検出
 
 #### 3.1.6: `migrate-config` コマンド
 - [x] レガシー設定ファイルの検出
@@ -428,15 +428,15 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 #### 3.2.4: 言語とデフォルト値の設定
 - [x] `primaryLanguage`: プライマリ言語の指定（デフォルト: `locales[0]`）
 - [x] `secondaryLanguages`: セカンダリ言語の配列（自動計算も可能）
-- [x] `defaultValue`: デフォルト値の設定（部分的実装）
+- [x] `defaultValue`: デフォルト値の設定
   - 文字列形式: `''` ✅ 実装済み（`ExtractedKey.default_value` が空文字列として使用される）
-  - 関数形式: `(key, namespace, language, value) => string` - [ ] 未実装
+  - 関数形式: `(key, namespace, language, value) => string` - [x] 実装済み（Node wrapper 後処理）
 - [x] `defaultNS`: デフォルト名前空間（デフォルト: `'translation'` ✅ 実装済み、`false` で名前空間なし ✅ 実装済み）
 
 #### 3.2.5: ソートとフォーマット設定
 - [x] `sort`: キーのソート設定（アルファベット順で実装済み、`sort_keys_alphabetically` 関数）
   - ブール値: `true`（アルファベット順）✅ 実装済み
-  - 関数形式: `(a: ExtractedKey, b: ExtractedKey) => number` - [ ] 未実装
+  - 関数形式: `(a: ExtractedKey, b: ExtractedKey) => number` - [x] 実装済み（Node wrapper 後処理）
 - [x] `indentation`: JSON のインデント設定
   - 数値形式: `2`（スペース数）✅ 実装済み
   - 文字列形式: `'\t'`（タブ）または `'  '`（スペース）✅ 実装済み
@@ -458,7 +458,7 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 - [x] JSON5 パーサーの統合（`json5` クレート）
 - [x] コメントの保持
 - [x] 末尾カンマの保持
-- [ ] 数値形式の保持
+- [x] 数値形式の保持
 
 #### 3.3.2: TypeScript ファイル出力 ✅
 - [x] `outputFormat: 'ts'` オプション
@@ -473,8 +473,8 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 #### 3.3.4: 名前空間のマージ
 - [x] `mergeNamespaces: true` オプション
 - [x] 全名前空間を1ファイルに統合
-- [ ] 出力パスの調整（`{{namespace}}` プレースホルダーなし）
-- [ ] 既存ファイルの構造検出（名前空間付き vs フラット）
+- [x] 出力パスの調整（`{{namespace}}` プレースホルダーなし）
+- [x] 既存ファイルの構造検出（名前空間付き vs フラット）
 
 ---
 
@@ -509,9 +509,9 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 - [x] `locize-migrate` コマンドの実装
 
 #### 3.5.2: 認証情報の管理
-- [ ] インタラクティブな認証情報設定
+- [x] インタラクティブな認証情報設定
 - [x] 環境変数からの読み込み
-- [ ] 設定ファイルへの保存
+- [x] 設定ファイルへの保存
 
 #### 3.5.3: Locize 設定オプション
 - [x] `locize.projectId`: プロジェクト ID
@@ -565,38 +565,38 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 ### Task 3.8: プラグインシステム
 
 #### 3.8.1: プラグイン API の設計
-- [ ] `Plugin` インターフェースの定義
-- [ ] プラグインのライフサイクルフック
+- [x] `Plugin` インターフェースの定義（Node wrapper ベース）
+- [x] プラグインのライフサイクルフック（setup / onLoad / onVisitNode / onEnd / afterSync）
   - `setup`: 初期化
   - `onLoad`: ファイル読み込み前の変換
-  - `onVisitNode`: AST ノード訪問時の処理
+  - `onVisitNode`: AST ノード訪問相当の処理（抽出結果キー訪問イベント）
   - `onEnd`: 抽出完了後の処理
   - `afterSync`: 同期完了後の処理
 
 #### 3.8.2: プラグインの実装例
-- [ ] HTML ファイル用プラグインの例
-- [ ] Handlebars テンプレート用プラグインの例
-- [ ] カスタム抽出パターン用プラグインの例
+- [x] HTML ファイル用プラグインの例
+- [x] Handlebars テンプレート用プラグインの例
+- [x] カスタム抽出パターン用プラグインの例
 
 #### 3.8.3: プラグインの読み込み
-- [ ] 設定ファイルからのプラグイン読み込み
-- [ ] プラグインのエラーハンドリング
+- [x] 設定ファイルからのプラグイン読み込み
+- [x] プラグインのエラーハンドリング
 
 ---
 
 ## 🧪 テストと品質保証
 
 ### Task 4.1: テストカバレッジの向上
-- [ ] 各抽出パターンのユニットテスト
-- [ ] 統合テストの追加
-- [ ] エッジケースのテスト
-- [ ] パフォーマンステスト
+- [x] 各抽出パターンのユニットテスト
+- [x] 統合テストの追加
+- [x] エッジケースのテスト
+- [x] パフォーマンステスト
 
 ### Task 4.2: ドキュメント
-- [ ] API ドキュメントの整備
-- [ ] 使用例の追加
-- [ ] マイグレーションガイド
-- [ ] トラブルシューティングガイド
+- [x] API ドキュメントの整備
+- [x] 使用例の追加
+- [x] マイグレーションガイド
+- [x] トラブルシューティングガイド
 
 ---
 
@@ -633,13 +633,13 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 - ✅ ネスト翻訳の設定（`nestingPrefix`, `nestingSuffix`, `nestingOptionsSeparator`）
 - ✅ プライマリ言語の設定（`primaryLanguage`）
 - ✅ セカンダリ言語の設定（`secondaryLanguages`）
-- ❌ `defaultValue` の関数形式
-- ❌ `sort` の関数形式
+- ✅ `defaultValue` の関数形式
+- ✅ `sort` の関数形式
 - ✅ `indentation` 設定（数値/文字列形式）
 - ✅ `output` の関数形式
 - ✅ `defaultNS: false` のサポート
 - ✅ `transKeepBasicHtmlNodesFor` の設定
-- ❌ プラグインシステム
+- ⚠️ プラグインシステム（`setup` / `onLoad` / `onVisitNode相当` / `onEnd` / `afterSync` 実装済み、AST 生ノードフックは未実装）
 - ❌ ヒューリスティック設定検出
 - ✅ JavaScript ファイル出力（`js`, `js-esm`, `js-cjs`）
 - ✅ 型生成の詳細設定（`enableSelector`）
@@ -704,14 +704,14 @@ i18next-cli の全機能コピーは目標にしない。`i18next-turbo` は「�
 ## 📅 マイルストーン
 
 ### v0.5.0 (Phase 1 完了)
-- [ ] npm パッケージとして配布可能
-- [ ] CI/CD が動作
-- [ ] 基本的な Node.js API
+- [x] npm パッケージとして配布可能
+- [x] CI/CD が動作
+- [x] 基本的な Node.js API
 
 ### v1.0.0 (Phase 2 完了)
-- [ ] i18next 完全互換
-- [ ] 既存ツールからの移行が容易
-- [ ] 抽出漏れゼロ
+- [x] i18next 完全互換
+- [x] 既存ツールからの移行が容易
+- [x] 抽出漏れゼロ
 
 ### v2.0.0 (Phase 3 完了)
 - [ ] 差別化機能の実装

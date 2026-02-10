@@ -109,7 +109,14 @@ pub fn run(
                 }
 
                 if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                    count_json_keys(&json, namespace, "", namespace_less_mode, &mut locale_keys);
+                    count_json_keys(
+                        &json,
+                        namespace,
+                        "",
+                        namespace_less_mode,
+                        config.merge_namespaces,
+                        &mut locale_keys,
+                    );
                 }
             }
         }
@@ -123,6 +130,7 @@ pub fn run(
         &all_keys,
         config.effective_default_namespace(),
         namespace_less_mode,
+        config.merge_namespaces,
         config.preserve_context_variants,
         &config.context_separator,
         check_locale,
@@ -189,17 +197,24 @@ fn count_json_keys(
     namespace: &str,
     prefix: &str,
     namespace_less_mode: bool,
+    merge_namespaces: bool,
     keys: &mut HashSet<String>,
 ) {
     match value {
         Value::Object(obj) => {
+            if merge_namespaces && !namespace_less_mode && prefix.is_empty() {
+                for (root_ns, nested) in obj {
+                    count_json_keys(nested, root_ns, "", namespace_less_mode, false, keys);
+                }
+                return;
+            }
             for (k, v) in obj {
                 let path = if prefix.is_empty() {
                     k.clone()
                 } else {
                     format!("{}.{}", prefix, k)
                 };
-                count_json_keys(v, namespace, &path, namespace_less_mode, keys);
+                count_json_keys(v, namespace, &path, namespace_less_mode, false, keys);
             }
         }
         Value::String(_) => {
@@ -224,4 +239,23 @@ fn format_progress_bar(completed: usize, total: usize) -> String {
     let filled = ((ratio * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
     let bar = format!("[{}{}]", "#".repeat(filled), "-".repeat(BAR_WIDTH - filled));
     format!("{} {:>5.1}% ({}/{})", bar, ratio * 100.0, completed, total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn count_json_keys_supports_merged_namespace_object_shape() {
+        let value = json!({
+            "common": { "hello": "x" },
+            "home": { "title": "y" }
+        });
+        let mut keys = HashSet::new();
+        count_json_keys(&value, "translation", "", false, true, &mut keys);
+        assert!(keys.contains("common:hello"));
+        assert!(keys.contains("home:title"));
+        assert_eq!(keys.len(), 2);
+    }
 }

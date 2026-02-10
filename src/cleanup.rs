@@ -26,6 +26,7 @@ pub fn find_dead_keys(
     extracted_keys: &[ExtractedKey],
     default_namespace: &str,
     namespace_less_mode: bool,
+    merge_namespaces: bool,
     preserve_context_variants: bool,
     context_separator: &str,
     locale: &str,
@@ -75,18 +76,50 @@ pub fn find_dead_keys(
 
             if let Value::Object(obj) = json {
                 let file_path = path.display().to_string();
-                find_dead_keys_in_object(
-                    &obj,
-                    &namespace,
-                    "",
-                    &extracted_set,
-                    &object_root_set,
-                    namespace_less_mode,
-                    preserve_context_variants,
-                    context_separator,
-                    &file_path,
-                    &mut dead_keys,
-                );
+                if merge_namespaces && !namespace_less_mode {
+                    for (root_ns, value) in obj {
+                        match value {
+                            Value::Object(nested) => {
+                                find_dead_keys_in_object(
+                                    &nested,
+                                    &root_ns,
+                                    "",
+                                    &extracted_set,
+                                    &object_root_set,
+                                    namespace_less_mode,
+                                    preserve_context_variants,
+                                    context_separator,
+                                    &file_path,
+                                    &mut dead_keys,
+                                );
+                            }
+                            Value::String(_) => {
+                                let full_key = format_key_id(&root_ns, "", namespace_less_mode);
+                                if !extracted_set.contains(&full_key) {
+                                    dead_keys.push(DeadKey {
+                                        file_path: file_path.clone(),
+                                        key_path: root_ns.clone(),
+                                        namespace: root_ns.clone(),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    find_dead_keys_in_object(
+                        &obj,
+                        &namespace,
+                        "",
+                        &extracted_set,
+                        &object_root_set,
+                        namespace_less_mode,
+                        preserve_context_variants,
+                        context_separator,
+                        &file_path,
+                        &mut dead_keys,
+                    );
+                }
             }
         }
     }
@@ -306,5 +339,49 @@ mod tests {
             false,
             "_",
         ));
+    }
+
+    #[test]
+    fn test_find_dead_keys_with_merge_namespaces_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let locale_dir = tmp.path().join("en");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        std::fs::write(
+            locale_dir.join("all.json"),
+            r#"{
+  "common": { "hello": "Hello", "stale": "Old" },
+  "home": { "title": "Title" }
+}"#,
+        )
+        .unwrap();
+
+        let extracted_keys = vec![
+            ExtractedKey {
+                key: "hello".to_string(),
+                namespace: Some("common".to_string()),
+                default_value: None,
+            },
+            ExtractedKey {
+                key: "title".to_string(),
+                namespace: Some("home".to_string()),
+                default_value: None,
+            },
+        ];
+
+        let dead = find_dead_keys(
+            tmp.path(),
+            &extracted_keys,
+            "translation",
+            false,
+            true,
+            false,
+            "_",
+            "en",
+        )
+        .unwrap();
+
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].namespace, "common");
+        assert_eq!(dead[0].key_path, "stale");
     }
 }

@@ -56,6 +56,7 @@ pub fn run(config: &Config, remove: bool, dry_run: bool, locale: Option<String>)
         &all_keys,
         config.effective_default_namespace(),
         config.namespace_less_mode(),
+        config.merge_namespaces,
         config.preserve_context_variants,
         &config.context_separator,
         check_locale,

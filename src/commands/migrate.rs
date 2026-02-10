@@ -95,3 +95,63 @@ fn prompt_yes_no(message: &str) -> Result<bool> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_fails_when_inline_source_without_detected_path() {
+        let config = Config::default();
+        let err = run(&config, None, true, false, None, true).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("設定ファイルのパス情報が取得できませんでした"),
+            "{}",
+            err
+        );
+    }
+
+    #[test]
+    fn run_dry_run_does_not_write_output_file() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let config = Config::default();
+        let source = tmp.path().join("i18next-parser.config.js");
+        let output = tmp.path().join("generated.json");
+
+        run(
+            &config,
+            Some(output.clone()),
+            true,
+            true,
+            Some(source.as_path()),
+            false,
+        )
+        .unwrap();
+        assert!(!output.exists(), "dry-run should not write output file");
+    }
+
+    #[test]
+    fn run_writes_output_file_with_auto_confirm() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let config = Config::default();
+        let source = tmp.path().join("i18next-parser.config.js");
+        let output = tmp.path().join("i18next-turbo.json");
+
+        run(
+            &config,
+            Some(output.clone()),
+            true,  // auto confirm
+            false, // not dry-run
+            Some(source.as_path()),
+            false,
+        )
+        .unwrap();
+
+        let written = std::fs::read_to_string(&output).unwrap();
+        assert!(written.contains("\"input\""));
+        assert!(written.ends_with('\n'));
+    }
+}

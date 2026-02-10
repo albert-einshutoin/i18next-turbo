@@ -154,3 +154,24 @@ fn compute_watch_dirs(patterns: &[String]) -> Vec<PathBuf> {
     }
     dirs.into_iter().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn compute_watch_dirs_extracts_existing_prefix() {
+        let dirs = compute_watch_dirs(&["./**/*.ts".to_string()]);
+        assert!(dirs.contains(&PathBuf::from(".")));
+    }
+
+    #[test]
+    fn handle_watch_events_accepts_error_result() {
+        let config = Config::default();
+        let result: DebounceEventResult =
+            Err(notify_debouncer_mini::notify::Error::generic("watch error"));
+        let handled = handle_watch_events(result, &config, false);
+        assert!(handled.is_ok());
+    }
+}

@@ -395,6 +395,7 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
         &all_keys,
         config.effective_default_namespace(),
         config.namespace_less_mode(),
+        config.merge_namespaces,
         config.preserve_context_variants,
         &config.context_separator,
         locale,

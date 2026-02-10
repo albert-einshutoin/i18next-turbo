@@ -312,3 +312,83 @@ impl FileWatcher {
         Ok(all_extracted_keys)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir_in;
+
+    fn make_test_config(input: Vec<String>, ignore: Vec<String>) -> Config {
+        Config {
+            input,
+            ignore,
+            output: "locales".to_string(),
+            locales: vec!["en".to_string()],
+            functions: vec!["t".to_string()],
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn compute_watch_dirs_from_glob_prefixes() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        let relative = src_dir
+            .strip_prefix(&cwd)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let config = make_test_config(vec![format!("{}/**/*.ts", relative)], vec![]);
+        let watcher = FileWatcher::new(config, None);
+
+        let dirs = watcher.compute_watch_dirs();
+        assert!(
+            dirs.iter().any(|d| d.ends_with(&relative)),
+            "watch dirs should include source dir; got: {:?}",
+            dirs
+        );
+    }
+
+    #[test]
+    fn should_process_file_respects_extension_and_ignore_patterns() {
+        let config = make_test_config(
+            vec!["src/**/*.ts".to_string()],
+            vec!["**/*.spec.ts".to_string()],
+        );
+        let watcher = FileWatcher::new(config, None);
+
+        assert!(watcher.should_process_file(Path::new("src/app.ts")));
+        assert!(watcher.should_process_file(Path::new("src/app.tsx")));
+        assert!(!watcher.should_process_file(Path::new("src/app.md")));
+        assert!(!watcher.should_process_file(Path::new("src/app.spec.ts")));
+    }
+
+    #[test]
+    fn incremental_extract_updates_cache_for_changed_files() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let file = src_dir.join("app.ts");
+        std::fs::write(&file, "t('watch.key');").unwrap();
+
+        let relative = src_dir
+            .strip_prefix(&cwd)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let config = make_test_config(vec![format!("{}/**/*.ts", relative)], vec![]);
+        let mut watcher = FileWatcher::new(config, None);
+
+        let keys = watcher
+            .incremental_extract(std::slice::from_ref(&file))
+            .unwrap();
+        assert!(keys.iter().any(|k| k.key == "watch.key"));
+
+        let cached = watcher.file_cache.get(&file).unwrap();
+        assert!(cached.iter().any(|k| k.key == "watch.key"));
+    }
+}

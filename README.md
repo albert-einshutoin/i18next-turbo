@@ -139,6 +139,9 @@ Create `i18next-turbo.json` in your project root:
 | `types.resourcesFile` | Optional secondary file path for `Resources` interfaces | not generated |
 | `types.enableSelector` | Enable selector helper types (`true`, `false`, `"optimize"`) | `false` |
 | `types.indentation` | Indentation for generated type files | `2 spaces` |
+| `defaultValue` | String or function `(key, namespace, language, value) => string` | `""` |
+| `sort` | Boolean or function `(a, b) => number` for locale key ordering | `true` |
+| `plugins` | Plugin modules/objects with `setup`/`onEnd`/`afterSync` hooks | `[]` |
 
 Use the optional `types` block to control where type definitions are written and which locale files `i18next-turbo typegen` or `i18next-turbo extract --generate-types` should use.
 
@@ -343,14 +346,30 @@ Supported mappings:
 | `mergeNamespaces` | `mergeNamespaces` |
 | `extractFromComments` | `extractFromComments` (default `true`) |
 
-Not supported:
+Function-form support:
 
-| i18next-cli (extract) | Reason |
+| i18next-cli (extract) | i18next-turbo behavior |
 |:---|:---|
-| `sort` | Not implemented in i18next-turbo |
+| `defaultValue` function | Applied after `extract`/`sync` on generated locale files |
+| `sort` function | Applied after `extract`/`sync` to order keys |
+
+Plugin support:
+
+| Hook | Status |
+|:---|:---|
+| `setup` | Supported |
+| `onEnd` | Supported |
+| `afterSync` | Supported |
 
 Notes:
 - Output templates like `locales/{{language}}/{{namespace}}.json` are reduced to a base directory.
+
+Documentation:
+- [API](./docs/api.md)
+- [Usage examples](./docs/usage-examples.md)
+- [Migration guide](./docs/migration-guide.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+- [Performance testing](./docs/performance-testing.md)
 
 ---
 
@@ -434,10 +453,10 @@ interface Translation {
 
 ### 🚧 In Development
 
-- [ ] npm package distribution
-- [ ] Full `useTranslation` hook support (`keyPrefix`, etc.)
-- [ ] Language-specific plural categories (`zero`, `few`, `many`, etc.)
-- [ ] JS/TS config file loading
+- [x] npm package distribution
+- [x] Full `useTranslation` hook support (`keyPrefix`, etc.)
+- [x] Language-specific plural categories (`zero`, `few`, `many`, etc.)
+- [x] JS/TS config file loading
 
 ### 📅 Planned
 
@@ -478,489 +497,9 @@ MIT License - see [LICENSE](./LICENSE) file for details.
 ## ⚠️ Disclaimer
 
 - This tool is an **unofficial i18next tool**
-- Currently **under development**, APIs may change
-- npm package distribution is in preparation (Rust installation required)
+- APIs may evolve between major versions
+- npm package is available: [i18next-turbo](https://www.npmjs.com/package/i18next-turbo)
 
 ---
 
 **Questions or issues? Please open an [Issue](https://github.com/your-username/i18next-turbo/issues)!**
-
----
-
----
-
-# i18next-turbo ⚡️
-
-**超高速な i18next 翻訳キー抽出ツール - Rust + SWC で実現する 10-100倍の速度向上**
-
-`i18next-turbo` は、既存の `i18next-parser` や `i18next-cli` の**超高速な代替品**です。Rust と SWC を使用して、数千ファイルを**ミリ秒単位**で処理します。
-
-> **⚠️ 開発中**: 現在は Rust バイナリとして利用可能です。npm パッケージとしての配布は準備中です。
-
----
-
-## 🚀 なぜ i18next-turbo なのか？
-
-### 速度比較
-
-| ツール | エンジン | 1,000ファイルの処理時間 | Watch モード |
-|:---|:---|:---|:---|
-| `i18next-parser` | Node.js (Babel/Regex) | **10-30秒** | 遅い / CPU使用率高 |
-| `i18next-cli` | Node.js (SWC) | **2-5秒** | 中程度 |
-| **`i18next-turbo`** | **Rust + SWC** | **< 100ms** ⚡️ | **即座に反応 / 低負荷** |
-
-**実測値（MacBook Pro M3、1,000ファイル）:**
-```
-i18next-parser:  ████████████████████ 12.5s
-i18next-cli:     ████████ 2.3s
-i18next-turbo:   ▏ 0.08s ⚡️ (約150倍高速)
-```
-
-### 主な特徴
-
-- ⚡️ **圧倒的な速度**: 大規模プロジェクトでも瞬時に処理完了
-- 🎯 **高精度な抽出**: SWC による完全な AST 解析で誤検知ゼロ
-- 🔄 **リアルタイム更新**: Watch モードでファイル保存と同時に JSON を更新
-- 🛡️ **既存翻訳を保護**: 新しいキーを追加しても、既存の翻訳は完全に保持
-- 📦 **軽量**: 低メモリ使用量、バックグラウンド実行も快適
-- 🔧 **i18next 完全対応**: 名前空間、複数形、コンテキストなど主要機能をサポート
-
----
-
-## ✨ 実装済み機能
-
-### 基本的な抽出パターン
-
-```typescript
-// ✅ サポート済み
-t('hello.world')
-i18n.t('greeting')
-t('common:button.save')  // 名前空間付き
-```
-
-### React コンポーネント
-
-```tsx
-// ✅ Trans コンポーネント
-<Trans i18nKey="welcome">Welcome</Trans>
-<Trans i18nKey="common:greeting" defaults="Hello!" />
-```
-
-### 複数形とコンテキスト
-
-```typescript
-// ✅ 複数形
-t('apple', { count: 5 })  // → apple_one, apple_other
-
-// ✅ コンテキスト
-t('friend', { context: 'male' })  // → friend_male
-
-// ✅ 複数形 + コンテキスト
-t('friend', { count: 2, context: 'female' })  // → friend_female_one, friend_female_other
-```
-
-### その他の機能
-
-- ✅ **マジックコメント**: `// i18next-extract-disable-line`
-- ✅ **ネストされたキー**: `button.submit` → `{"button": {"submit": ""}}`
-- ✅ **キーの自動ソート**: アルファベット順で一貫性のある JSON
-- ✅ **TypeScript 型定義生成**: 自動補完と型安全性
-- ✅ **未使用キーの検知**: リファクタリングで不要になったキーを発見
-
----
-
-## 📦 インストール
-
-### 方法 1: Cargo からインストール（推奨）
-
-```bash
-cargo install i18next-turbo
-```
-
-### 方法 2: ソースからビルド
-
-```bash
-git clone https://github.com/your-username/i18next-turbo.git
-cd i18next-turbo
-cargo build --release
-# バイナリは target/release/i18next-turbo に生成されます
-```
-
-> **📌 注意**: npm パッケージとしての配布は準備中です。Node.js プロジェクトでの使用は、Rust がインストールされている環境が必要です。
-
----
-
-## 🛠️ 使い方
-
-### 1. 設定ファイルの作成
-
-プロジェクトのルートに `i18next-turbo.json` を作成します：
-
-```json
-{
-  "input": ["src/**/*.{ts,tsx,js,jsx}"],
-  "output": "locales/$LOCALE/$NAMESPACE.json",
-  "locales": ["en", "ja", "de"],
-  "defaultNamespace": "translation",
-  "functions": ["t", "i18n.t"],
-  "types": {
-    "output": "src/@types/i18next.d.ts",
-    "defaultLocale": "en",
-    "localesDir": "locales"
-  }
-}
-```
-
-#### 設定オプション
-
-| オプション | 説明 | デフォルト |
-|:---|:---|:---|
-| `input` | 抽出対象のファイルパターン（glob） | `["src/**/*.{ts,tsx,js,jsx}"]` |
-| `output` | 出力先のパス（`$LOCALE` と `$NAMESPACE` が置換される） | `"locales"` |
-| `locales` | 対象言語のリスト | `["en"]` |
-| `defaultNamespace` | デフォルトの名前空間 | `"translation"` |
-| `functions` | 抽出対象の関数名 | `["t"]` |
-| `logLevel` | ログレベル（`error`/`warn`/`info`/`debug`） | `"info"` |
-| `types.output` | 型定義ファイルの出力パス | `"src/@types/i18next.d.ts"` |
-| `types.defaultLocale` | 型生成時に使用するデフォルトロケール | `locales` の先頭 | 
-| `types.localesDir` | 型生成時に読むロケールディレクトリ | `output` と同じ |
-| `types.input` | 型生成に含める翻訳ファイルの glob パターン | デフォルトロケール配下の `*.json` 全件 |
-| `types.resourcesFile` | `Resources` インターフェースを出力する補助ファイル | 未生成 |
-| `types.enableSelector` | セレクター補助型を有効化（`true`, `false`, `"optimize"`） | `false` |
-| `types.indentation` | 生成される型定義ファイルのインデント | `2スペース` |
-
-`types` ブロックを設定すると、`i18next-turbo typegen` や `i18next-turbo extract --generate-types` が参照する出力パスやロケールを制御できます。
-
-> CLI は `i18next-turbo.json` や `i18next-parser.config.(js|ts)`, `i18next.config.(js|ts)` を自動的に読み込みます（CommonJS/ESM/TypeScript は `jiti` 経由でサポート）。`--config ./i18next.config.ts` のように直接指定することも可能です。
-
-### 2. キーの抽出
-
-一度だけ実行する場合（CI/CD など）：
-
-```bash
-i18next-turbo extract
-```
-
-#### 出力例
-
-```
-=== i18next-turbo extract ===
-
-Configuration:
-  Input patterns: ["src/**/*.{ts,tsx}"]
-  Output: locales
-  Locales: ["en", "ja"]
-  Functions: ["t"]
-
-Extracted keys by file:
-------------------------------------------------------------
-
-src/components/Button.tsx
-  - button.submit
-  - button.cancel
-
-src/pages/Home.tsx
-  - welcome.title
-  - welcome.message
-
-------------------------------------------------------------
-
-Extraction Summary:
-  Files processed: 2
-  Unique keys found: 4
-
-Syncing to locale files...
-  locales/en/translation.json - added 4 new key(s)
-
-Done!
-```
-
-### 3. Watch モード（開発時）
-
-ファイルを保存するたびに自動でキーを抽出・更新します：
-
-```bash
-i18next-turbo watch
-```
-
-#### 動作例
-
-```
-=== i18next-turbo watch ===
-
-Watching: src
-Watching for changes... (Ctrl+C to stop)
-
---- Change detected ---
-  Modified: src/components/Button.tsx
-  Added 1 new key(s)
---- Sync complete ---
-```
-
-開発中はこのコマンドをバックグラウンドで実行しておくと、翻訳キーを追加するたびに自動で JSON ファイルが更新されます。
-
----
-
-## 📝 使用例
-
-### 基本的な使用例
-
-```typescript
-// src/components/Button.tsx
-import { useTranslation } from 'react-i18next';
-
-function Button() {
-  const { t } = useTranslation();
-  
-  return (
-    <button>
-      {t('button.submit')}
-    </button>
-  );
-}
-```
-
-実行後、`locales/en/translation.json` に以下が追加されます：
-
-```json
-{
-  "button": {
-    "submit": ""
-  }
-}
-```
-
-### 名前空間の使用
-
-```typescript
-// 名前空間を指定
-t('common:button.save')  // → locales/en/common.json に保存
-```
-
-### React Trans コンポーネント
-
-```tsx
-import { Trans } from 'react-i18next';
-
-function Welcome() {
-  return (
-    <Trans i18nKey="welcome.title" defaults="Welcome!">
-      Welcome to our app!
-    </Trans>
-  );
-}
-```
-
-### 複数形の使用
-
-```typescript
-const count = 5;
-t('apple', { count });  // → apple_one, apple_other が生成される
-```
-
-`locales` に含めた言語ごとに ICU の複数形ルールを参照し、必要なカテゴリ（`few`, `many`, など）を自動生成します。例えば `locales: ["en", "ru"]` の場合、`ru` 向けに `_one/_few/_many/_other` が同時に追加されます。
-
-生成される JSON:
-
-```json
-{
-  "apple_one": "",
-  "apple_other": ""
-}
-```
-
----
-
-## 🎯 i18next-parser からの移行
-
-既存の `i18next-parser` を使用している場合、設定ファイルを少し変更するだけで移行できます。
-
-### 設定ファイルの違い
-
-| i18next-parser | i18next-turbo |
-|:---|:---|
-| `input` | `input` (同じ) |
-| `output` | `output` (同じ) |
-| `locales` | `locales` (同じ) |
-| `defaultNamespace` | `defaultNamespace` (同じ) |
-| `functions` | `functions` (同じ) |
-
-基本的に同じ設定が使えます！
-
-### 移行手順
-
-1. `i18next-turbo.json` を作成（既存の設定をコピー）
-2. `i18next-turbo extract` を実行
-3. 生成された JSON ファイルを確認
-4. Watch モードで開発を開始
-
-### i18next-cli 設定との互換性
-
-`i18next-turbo` は `i18next-cli` の設定ファイルを読み込み、一部の `extract` 設定をマッピングします。
-
-対応するマッピング:
-
-| i18next-cli (extract) | i18next-turbo |
-|:---|:---|
-| `input` | `input` |
-| `output` (文字列) | `output` (ディレクトリ) |
-| `output` (関数) | 評価して `output` ディレクトリへ射影 |
-| `functions` | `functions` |
-| `defaultNS` | `defaultNamespace` |
-| `keySeparator` | `keySeparator` (`false` -> 空文字) |
-| `nsSeparator` | `nsSeparator` (`false` -> 空文字) |
-| `contextSeparator` | `contextSeparator` |
-| `pluralSeparator` | `pluralSeparator` |
-| `defaultNS = false` | `defaultNamespace = ""` + namespace-less mode |
-| `secondaryLanguages` | `secondaryLanguages` |
-| `transKeepBasicHtmlNodesFor` | `transKeepBasicHtmlNodesFor` |
-| `preserveContextVariants` | `preserveContextVariants` |
-| `interpolationPrefix` / `interpolationSuffix` | `interpolationPrefix` / `interpolationSuffix` |
-| `mergeNamespaces` | `mergeNamespaces` |
-| `extractFromComments` | `extractFromComments`（デフォルト `true`） |
-
-未対応:
-
-| i18next-cli (extract) | 理由 |
-|:---|:---|
-| `sort` | 未実装 |
-
-注意点:
-- `locales/{{language}}/{{namespace}}.json` のようなテンプレート出力はベースディレクトリに変換します。
-
----
-
-## 🔧 高度な機能
-
-### マジックコメント
-
-特定の行を抽出対象から除外：
-
-```typescript
-// i18next-extract-disable-line
-const dynamicKey = `user.${role}.permission`;
-t(dynamicKey);  // この行は抽出されません
-```
-
-### TypeScript 型定義の生成
-
-```bash
-# `types` 設定に基づいて一度だけ型定義を生成
-i18next-turbo typegen
-
-# もしくは抽出と同時に生成
-i18next-turbo extract --generate-types
-```
-
-生成される型定義例：
-
-```typescript
-interface Translation {
-  button: {
-    submit: string;
-    cancel: string;
-  };
-  welcome: {
-    title: string;
-    message: string;
-  };
-}
-```
-
-### 未使用キーの検知
-
-```bash
-# 将来的に i18next-turbo cleanup コマンドで利用可能
-# コードから見つからないキーを検出
-```
-
----
-
-## 📊 パフォーマンス
-
-### ベンチマーク結果
-
-| ファイル数 | i18next-parser | i18next-cli | i18next-turbo |
-|:---|:---:|:---:|:---:|
-| 100 | 1.2s | 0.3s | **0.01s** |
-| 1,000 | 12.5s | 2.3s | **0.08s** |
-| 10,000 | 125s | 23s | **0.8s** |
-
-### メモリ使用量
-
-- **i18next-parser**: ~200MB
-- **i18next-cli**: ~150MB
-- **i18next-turbo**: **~50MB** (約4倍軽量)
-
----
-
-## 🗺️ ロードマップ
-
-### ✅ 実装済み
-
-- [x] 基本的な `t()` 関数の抽出
-- [x] `<Trans>` コンポーネントのサポート
-- [x] 名前空間のサポート
-- [x] 複数形（基本的な `_one`, `_other`）
-- [x] コンテキストのサポート
-- [x] Watch モード
-- [x] JSON 同期（既存翻訳の保持）
-- [x] TypeScript 型定義生成
-- [x] 未使用キーの検知
-
-### 🚧 開発中
-
-- [ ] npm パッケージとしての配布
-- [ ] `useTranslation` hook の完全サポート（`keyPrefix` など）
-- [ ] 言語別複数形カテゴリの生成（`zero`, `few`, `many` など）
-- [ ] JS/TS 設定ファイルの読み込み
-
-### 📅 計画中
-
-- [ ] `status` コマンド（翻訳完了率の表示）
-- [ ] `sync` コマンド（ロケール間の同期）
-- [ ] `lint` コマンド（ハードコードされた文字列の検出）
-- [ ] `rename-key` コマンド（キーの一括リネーム）
-- [ ] Locize 統合
-
-詳細は [TODO.md](./TODO.md) を参照してください。
-
----
-
-## 🤝 貢献
-
-プルリクエストやイシューの報告を歓迎します！
-
-1. このリポジトリをフォーク
-2. フィーチャーブランチを作成 (`git checkout -b feature/amazing-feature`)
-3. 変更をコミット (`git commit -m 'Add some amazing feature'`)
-4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
-5. プルリクエストを開く
-
-詳細は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照してください。
-
----
-
-## 📄 ライセンス
-
-MIT License - 詳細は [LICENSE](./LICENSE) を参照してください。
-
----
-
-## 🙏 謝辞
-
-- [i18next](https://www.i18next.com/) - 素晴らしい国際化フレームワーク
-- [SWC](https://swc.rs/) - 高速な JavaScript/TypeScript コンパイラ
-- [i18next-parser](https://github.com/i18next/i18next-parser) - インスピレーションの源
-
----
-
-## ⚠️ 注意事項
-
-- このツールは **i18next の非公式ツール**です
-- 現在は **開発中** のため、API が変更される可能性があります
-- npm パッケージとしての配布は準備中です（Rust のインストールが必要です）
-
----
-
-**質問や問題があれば、[Issues](https://github.com/your-username/i18next-turbo/issues) でお知らせください！**

@@ -409,3 +409,126 @@ fn typegen_command_generates_file() {
     let content = fs::read_to_string(&types_out).unwrap();
     assert!(content.contains("bye"));
 }
+
+#[test]
+fn check_dry_run_reports_dead_keys() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('alive.key');").unwrap();
+    let config_path = write_config(project);
+
+    write_locale_json(
+        &project.join("locales/en/translation.json"),
+        json!({
+            "alive": { "key": "" },
+            "dead": { "key": "" }
+        }),
+    );
+
+    let output = run_cli(
+        project,
+        &[
+            "--config",
+            config_path.to_str().unwrap(),
+            "check",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Would remove 1 key(s)"));
+
+    let locale = read_json(&project.join("locales/en/translation.json"));
+    assert!(locale["dead"]["key"].is_string());
+}
+
+#[test]
+fn lint_fail_on_error_returns_non_zero() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("src/app.tsx"),
+        "export const App = () => <div>Hello hardcoded</div>;",
+    )
+    .unwrap();
+    let config_path = write_config(project);
+
+    let output = run_cli(
+        project,
+        &[
+            "--config",
+            config_path.to_str().unwrap(),
+            "lint",
+            "--fail-on-error",
+        ],
+    );
+    assert!(
+        !output.status.success(),
+        "expected lint failure; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("lint issue"));
+}
+
+#[test]
+fn lint_passes_when_only_translated_text_exists() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("src/app.tsx"),
+        "import { t } from 'i18next'; export const App = () => <div>{t('ui.title')}</div>;",
+    )
+    .unwrap();
+    let config_path = write_config(project);
+
+    let output = run_cli(
+        project,
+        &["--config", config_path.to_str().unwrap(), "lint"],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No hardcoded strings found"));
+}
+
+#[test]
+fn migrate_dry_run_prints_preview_for_existing_turbo_config() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    let config_path = write_config(project);
+
+    let output = run_cli(
+        project,
+        &[
+            "--config",
+            config_path.to_str().unwrap(),
+            "migrate",
+            "--dry-run",
+            "--yes",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("変換後プレビュー"));
+    assert!(stdout.contains("dry-run"));
+}

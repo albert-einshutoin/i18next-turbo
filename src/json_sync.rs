@@ -3,7 +3,7 @@ use glob::Pattern;
 use serde::Serialize;
 use serde_json::ser::{Formatter, Serializer};
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 
@@ -17,6 +17,73 @@ fn effective_namespace(default_namespace: &str) -> &str {
     } else {
         default_namespace
     }
+}
+
+fn merged_namespace_filename(config: &Config) -> String {
+    config
+        .merged_namespace_filename
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| effective_namespace(&config.default_namespace).to_string())
+}
+
+fn locale_namespace_file_path(
+    config: &Config,
+    output_dir: &str,
+    locale: &str,
+    namespace: &str,
+) -> std::path::PathBuf {
+    let output_ext = config.output_extension();
+    let file_stem = if config.merge_namespaces {
+        config
+            .merged_namespace_filename
+            .clone()
+            .or_else(|| detect_existing_merged_filename(output_dir, locale, output_ext))
+            .unwrap_or_else(|| merged_namespace_filename(config))
+    } else {
+        namespace.to_string()
+    };
+    Path::new(output_dir)
+        .join(locale)
+        .join(format!("{}.{}", file_stem, output_ext))
+}
+
+fn detect_existing_merged_filename(output_dir: &str, locale: &str, ext: &str) -> Option<String> {
+    let locale_dir = Path::new(output_dir).join(locale);
+    let entries = std::fs::read_dir(locale_dir).ok()?;
+
+    let mut stems: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter_map(|path| {
+            let file_ext = path.extension().and_then(|e| e.to_str())?;
+            if file_ext != ext {
+                return None;
+            }
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
+
+    if stems.is_empty() {
+        return None;
+    }
+    stems.sort();
+    stems.dedup();
+
+    // Existing merged layouts often use one shared file name per locale (e.g. all.json).
+    if stems.len() == 1 {
+        return stems.into_iter().next();
+    }
+
+    if stems.iter().any(|s| s == "translation") {
+        return Some("translation".to_string());
+    }
+
+    None
 }
 
 fn merge_namespace_key(config: &Config, namespace: &str, key: &str) -> String {
@@ -688,8 +755,12 @@ fn write_json5_locale_with_fs<F: FileSystem>(
         .as_deref()
         .map(extract_json5_preservation_hints)
         .unwrap_or_default();
+    let preserved_numbers = existing
+        .as_deref()
+        .map(|current| build_json5_numeric_preservation_map(current, content))
+        .unwrap_or_default();
 
-    let mut json_body = serde_json::to_string_pretty(content)?;
+    let mut json_body = render_json5_with_preserved_numbers(content, &preserved_numbers)?;
     if prefer_trailing_comma {
         json_body = add_trailing_commas_to_pretty_json(&json_body);
     }
@@ -750,6 +821,378 @@ fn add_trailing_commas_to_pretty_json(pretty_json: &str) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn render_json5_with_preserved_numbers(
+    content: &Map<String, Value>,
+    preserved_numbers: &HashMap<String, String>,
+) -> Result<String> {
+    let root = Value::Object(content.clone());
+    let mut out = String::new();
+    write_json5_value(&root, "", 0, preserved_numbers, &mut out)?;
+    Ok(out)
+}
+
+fn write_json5_value(
+    value: &Value,
+    pointer: &str,
+    depth: usize,
+    preserved_numbers: &HashMap<String, String>,
+    out: &mut String,
+) -> Result<()> {
+    match value {
+        Value::Object(map) => {
+            if map.is_empty() {
+                out.push_str("{}");
+                return Ok(());
+            }
+            out.push('{');
+            out.push('\n');
+            let mut iter = map.iter().peekable();
+            while let Some((key, v)) = iter.next() {
+                out.push_str(&"  ".repeat(depth + 1));
+                out.push_str(&serde_json::to_string(key)?);
+                out.push_str(": ");
+                let child_pointer = pointer_child(pointer, key);
+                write_json5_value(v, &child_pointer, depth + 1, preserved_numbers, out)?;
+                if iter.peek().is_some() {
+                    out.push(',');
+                }
+                out.push('\n');
+            }
+            out.push_str(&"  ".repeat(depth));
+            out.push('}');
+        }
+        Value::Array(arr) => {
+            if arr.is_empty() {
+                out.push_str("[]");
+                return Ok(());
+            }
+            out.push('[');
+            out.push('\n');
+            for (idx, item) in arr.iter().enumerate() {
+                out.push_str(&"  ".repeat(depth + 1));
+                let child_pointer = pointer_index(pointer, idx);
+                write_json5_value(item, &child_pointer, depth + 1, preserved_numbers, out)?;
+                if idx + 1 < arr.len() {
+                    out.push(',');
+                }
+                out.push('\n');
+            }
+            out.push_str(&"  ".repeat(depth));
+            out.push(']');
+        }
+        Value::Number(_) => {
+            if let Some(raw) = preserved_numbers.get(pointer) {
+                out.push_str(raw);
+            } else {
+                out.push_str(&serde_json::to_string(value)?);
+            }
+        }
+        _ => out.push_str(&serde_json::to_string(value)?),
+    }
+
+    Ok(())
+}
+
+fn pointer_child(parent: &str, key: &str) -> String {
+    let escaped = key.replace('~', "~0").replace('/', "~1");
+    format!("{}/{}", parent, escaped)
+}
+
+fn pointer_index(parent: &str, idx: usize) -> String {
+    format!("{}/{}", parent, idx)
+}
+
+fn build_json5_numeric_preservation_map(
+    existing_content: &str,
+    new_content: &Map<String, Value>,
+) -> HashMap<String, String> {
+    let Some(existing_value) = json5::from_str::<Value>(existing_content).ok() else {
+        return HashMap::new();
+    };
+    let new_value = Value::Object(new_content.clone());
+    let raw_numbers = collect_json5_number_literals(existing_content);
+    let mut preserved = HashMap::new();
+
+    for (pointer, literal) in raw_numbers {
+        let Some(existing_number) = existing_value.pointer(&pointer) else {
+            continue;
+        };
+        let Some(new_number) = new_value.pointer(&pointer) else {
+            continue;
+        };
+        if numeric_values_equal(existing_number, new_number) {
+            preserved.insert(pointer, literal);
+        }
+    }
+
+    preserved
+}
+
+fn numeric_values_equal(left: &Value, right: &Value) -> bool {
+    let (Value::Number(ln), Value::Number(rn)) = (left, right) else {
+        return false;
+    };
+    if ln == rn {
+        return true;
+    }
+
+    let lf = ln
+        .as_f64()
+        .or_else(|| ln.as_i64().map(|v| v as f64))
+        .or_else(|| ln.as_u64().map(|v| v as f64));
+    let rf = rn
+        .as_f64()
+        .or_else(|| rn.as_i64().map(|v| v as f64))
+        .or_else(|| rn.as_u64().map(|v| v as f64));
+
+    matches!((lf, rf), (Some(a), Some(b)) if a == b)
+}
+
+fn collect_json5_number_literals(content: &str) -> HashMap<String, String> {
+    let mut scanner = Json5NumberScanner::new(content);
+    let mut out = HashMap::new();
+    scanner.scan_root(&mut out);
+    out
+}
+
+struct Json5NumberScanner<'a> {
+    bytes: &'a [u8],
+    idx: usize,
+}
+
+impl<'a> Json5NumberScanner<'a> {
+    fn new(content: &'a str) -> Self {
+        Self {
+            bytes: content.as_bytes(),
+            idx: 0,
+        }
+    }
+
+    fn scan_root(&mut self, out: &mut HashMap<String, String>) {
+        self.skip_ws_and_comments();
+        self.scan_value("", out);
+    }
+
+    fn scan_value(&mut self, pointer: &str, out: &mut HashMap<String, String>) {
+        self.skip_ws_and_comments();
+        let Some(ch) = self.peek() else {
+            return;
+        };
+        match ch {
+            b'{' => self.scan_object(pointer, out),
+            b'[' => self.scan_array(pointer, out),
+            b'"' | b'\'' => {
+                self.scan_string(ch);
+            }
+            b'-' | b'+' | b'.' | b'0'..=b'9' => {
+                let literal = self.scan_token();
+                if !pointer.is_empty() && !literal.is_empty() {
+                    out.insert(pointer.to_string(), literal);
+                }
+            }
+            b't' | b'f' | b'n' => {
+                self.scan_identifier();
+            }
+            b'I' | b'N' => {
+                let literal = self.scan_identifier();
+                if !pointer.is_empty() && !literal.is_empty() {
+                    out.insert(pointer.to_string(), literal);
+                }
+            }
+            _ => {
+                self.idx += 1;
+            }
+        }
+    }
+
+    fn scan_object(&mut self, pointer: &str, out: &mut HashMap<String, String>) {
+        self.idx += 1; // {
+        loop {
+            self.skip_ws_and_comments();
+            match self.peek() {
+                Some(b'}') => {
+                    self.idx += 1;
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+
+            let Some(key) = self.scan_object_key() else {
+                break;
+            };
+            self.skip_ws_and_comments();
+            if self.peek() == Some(b':') {
+                self.idx += 1;
+            } else {
+                break;
+            }
+
+            let child_pointer = pointer_child(pointer, &key);
+            self.scan_value(&child_pointer, out);
+            self.skip_ws_and_comments();
+
+            match self.peek() {
+                Some(b',') => {
+                    self.idx += 1;
+                }
+                Some(b'}') => {
+                    self.idx += 1;
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+        }
+    }
+
+    fn scan_array(&mut self, pointer: &str, out: &mut HashMap<String, String>) {
+        self.idx += 1; // [
+        let mut index = 0usize;
+        loop {
+            self.skip_ws_and_comments();
+            match self.peek() {
+                Some(b']') => {
+                    self.idx += 1;
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+
+            let child_pointer = pointer_index(pointer, index);
+            self.scan_value(&child_pointer, out);
+            index += 1;
+            self.skip_ws_and_comments();
+
+            match self.peek() {
+                Some(b',') => {
+                    self.idx += 1;
+                }
+                Some(b']') => {
+                    self.idx += 1;
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+        }
+    }
+
+    fn scan_object_key(&mut self) -> Option<String> {
+        self.skip_ws_and_comments();
+        match self.peek()? {
+            b'"' | b'\'' => self.scan_string(self.peek()?).into(),
+            _ => {
+                let ident = self.scan_identifier();
+                if ident.is_empty() {
+                    None
+                } else {
+                    Some(ident)
+                }
+            }
+        }
+    }
+
+    fn scan_string(&mut self, quote: u8) -> String {
+        let mut out = String::new();
+        self.idx += 1; // opening quote
+        while let Some(ch) = self.peek() {
+            self.idx += 1;
+            if ch == quote {
+                break;
+            }
+            if ch == b'\\' {
+                if let Some(next) = self.peek() {
+                    self.idx += 1;
+                    out.push(next as char);
+                }
+                continue;
+            }
+            out.push(ch as char);
+        }
+        out
+    }
+
+    fn scan_identifier(&mut self) -> String {
+        let start = self.idx;
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$' {
+                self.idx += 1;
+            } else {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&self.bytes[start..self.idx]).to_string()
+    }
+
+    fn scan_token(&mut self) -> String {
+        let start = self.idx;
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_whitespace() || matches!(ch, b',' | b'}' | b']') {
+                break;
+            }
+            if ch == b'/' && self.peek_next().is_some_and(|n| n == b'/' || n == b'*') {
+                break;
+            }
+            self.idx += 1;
+        }
+        String::from_utf8_lossy(&self.bytes[start..self.idx]).to_string()
+    }
+
+    fn skip_ws_and_comments(&mut self) {
+        loop {
+            while let Some(ch) = self.peek() {
+                if ch.is_ascii_whitespace() {
+                    self.idx += 1;
+                } else {
+                    break;
+                }
+            }
+
+            let Some(ch) = self.peek() else {
+                return;
+            };
+            if ch != b'/' {
+                return;
+            }
+            let Some(next) = self.peek_next() else {
+                return;
+            };
+            if next == b'/' {
+                self.idx += 2;
+                while let Some(c) = self.peek() {
+                    self.idx += 1;
+                    if c == b'\n' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if next == b'*' {
+                self.idx += 2;
+                while self.idx + 1 < self.bytes.len() {
+                    if self.bytes[self.idx] == b'*' && self.bytes[self.idx + 1] == b'/' {
+                        self.idx += 2;
+                        break;
+                    }
+                    self.idx += 1;
+                }
+                continue;
+            }
+            return;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.idx).copied()
+    }
+
+    fn peek_next(&self) -> Option<u8> {
+        self.bytes.get(self.idx + 1).copied()
+    }
 }
 
 enum JsVariant {
@@ -1012,15 +1455,16 @@ pub fn sync_namespaces(
 ) -> Result<Vec<SyncResult>> {
     let preserve_matcher = PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator)?;
     let mut results = Vec::new();
+    let target_namespaces: Vec<String> = if config.merge_namespaces {
+        vec![effective_namespace(&config.default_namespace).to_string()]
+    } else {
+        namespaces.iter().cloned().collect()
+    };
 
     // Process only the specified namespace files
     for locale in &config.locales {
-        for namespace in namespaces {
-            let file_path = Path::new(output_dir).join(locale).join(format!(
-                "{}.{}",
-                namespace,
-                config.output_extension()
-            ));
+        for namespace in &target_namespaces {
+            let file_path = locale_namespace_file_path(config, output_dir, locale, namespace);
 
             // Use locked sync for data integrity
             let sync_result = sync_locale_file_locked(
@@ -1053,11 +1497,7 @@ pub fn sync_locales(
 
     for locale in target_locales {
         for namespace in &namespaces {
-            let file_path = Path::new(output_dir).join(locale).join(format!(
-                "{}.{}",
-                namespace,
-                config.output_extension()
-            ));
+            let file_path = locale_namespace_file_path(config, output_dir, locale, namespace);
 
             let sync_result = sync_locale_file_locked(
                 &file_path,
@@ -1709,6 +2149,120 @@ mod tests {
             .expect("File should exist");
         assert!(content.contains("\"farewell\""));
         assert!(content.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_locale_namespace_file_path_uses_merged_filename_when_enabled() {
+        let mut config = Config::default();
+        config.merge_namespaces = true;
+        config.merged_namespace_filename = Some("all".to_string());
+
+        let path = locale_namespace_file_path(&config, "locales", "en", "translation");
+        assert_eq!(
+            path.to_string_lossy().replace('\\', "/"),
+            "locales/en/all.json"
+        );
+    }
+
+    #[test]
+    fn test_locale_namespace_file_path_detects_existing_single_merged_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let locale_dir = tmp.path().join("en");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        std::fs::write(locale_dir.join("bundle.json"), "{}").unwrap();
+
+        let mut config = Config::default();
+        config.merge_namespaces = true;
+        config.output = tmp.path().to_string_lossy().to_string();
+
+        let path = locale_namespace_file_path(&config, &config.output, "en", "translation");
+        assert_eq!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("bundle.json")
+        );
+    }
+
+    #[test]
+    fn test_detect_existing_merged_filename_none_for_namespaced_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let locale_dir = tmp.path().join("en");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        std::fs::write(locale_dir.join("common.json"), "{}").unwrap();
+        std::fs::write(locale_dir.join("home.json"), "{}").unwrap();
+
+        let detected = detect_existing_merged_filename(tmp.path().to_str().unwrap(), "en", "json");
+        assert_eq!(detected, None);
+    }
+
+    #[test]
+    fn test_sync_locale_with_json5_preserves_number_literals() {
+        use crate::fs::mock::InMemoryFileSystem;
+        use std::path::Path;
+
+        let fs = InMemoryFileSystem::new();
+        fs.add_file(
+            "locales/en/translation.json5",
+            "{\n  count: 1e3,\n  hex: 0x10,\n  greeting: 'Hello',\n}\n",
+        );
+
+        let keys = vec![
+            ExtractedKey {
+                key: "count".to_string(),
+                namespace: None,
+                default_value: None,
+            },
+            ExtractedKey {
+                key: "hex".to_string(),
+                namespace: None,
+                default_value: None,
+            },
+            ExtractedKey {
+                key: "greeting".to_string(),
+                namespace: None,
+                default_value: Some("Hello".to_string()),
+            },
+            ExtractedKey {
+                key: "farewell".to_string(),
+                namespace: None,
+                default_value: Some("Goodbye".to_string()),
+            },
+        ];
+
+        let mut config = Config::default();
+        config.output_format = OutputFormat::Json5;
+        let matcher =
+            PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
+
+        let _ = sync_locale_file_locked_with_fs(
+            Path::new("locales/en/translation.json5"),
+            &keys,
+            "translation",
+            &config,
+            &matcher,
+            false,
+            &fs,
+        )
+        .unwrap();
+
+        let files = fs.get_files();
+        let content = files
+            .get(Path::new("locales/en/translation.json5"))
+            .expect("File should exist");
+
+        assert!(
+            content.contains("1e3"),
+            "scientific notation should be preserved, got:\n{}",
+            content
+        );
+        assert!(
+            content.contains("0x10"),
+            "hex notation should be preserved, got:\n{}",
+            content
+        );
+        assert!(
+            content.contains("\"farewell\""),
+            "new key should be written"
+        );
     }
 
     #[test]
