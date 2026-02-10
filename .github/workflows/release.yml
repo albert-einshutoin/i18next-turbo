@@ -49,16 +49,12 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/i18next-turbo dist/i18next-turbo
-          tar czf dist/${{ matrix.artifact }}.tar.gz -C dist i18next-turbo
+          ./scripts/package-binary.sh "${{ matrix.target }}" "${{ matrix.artifact }}" "i18next-turbo"
       - name: Package binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\${{ matrix.target }}\release\i18next-turbo.exe dist\i18next-turbo.exe
-          Compress-Archive -Path dist\i18next-turbo.exe -DestinationPath dist\${{ matrix.artifact }}.zip
+          ./scripts/package-binary.ps1 -Target "${{ matrix.target }}" -Artifact "${{ matrix.artifact }}" -BinaryName "i18next-turbo.exe"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -91,6 +87,8 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Install dependencies
         run: npm install
+      - name: Sync package version from Cargo.toml
+        run: npm run sync-version
       - name: Publish package
         run: npm publish --access public
         env:

@@ -1,0 +1,14 @@
+{
+  "input": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  "output": "locales",
+  "locales": [
+    "en"
+  ],
+  "functions": [
+    "t"
+  ],
+  "extractFromComments": false
+}

@@ -5,6 +5,7 @@ pub mod extractor;
 pub mod fs;
 pub mod json_sync;
 pub mod lint;
+pub mod logging;
 pub mod typegen;
 pub mod watcher;
 
@@ -138,6 +139,13 @@ pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<Ex
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.trans_keep_basic_html_nodes_for,
+        &config.use_translation_names,
+        &config.nesting_prefix,
+        &config.nesting_suffix,
+        &config.nesting_options_separator,
+        &config.interpolation_prefix,
+        &config.interpolation_suffix,
     )
     .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
@@ -199,8 +207,21 @@ pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<Ex
             .as_deref()
             .or_else(|| config.locales.first().map(|s| s.as_str()))
             .unwrap_or("en");
-        crate::typegen::generate_types(locales_dir, types_path, default_locale)
-            .map_err(|e| napi::Error::from_reason(format!("Type generation failed: {}", e)))?;
+        let indentation = config.types_indentation_string();
+        let input_patterns = config.types_input_patterns();
+        let resources_file = config.types_resources_file();
+        let enable_selector = config.types_enable_selector();
+        crate::typegen::generate_types_with_options(
+            locales_dir,
+            types_path,
+            default_locale,
+            indentation.as_deref(),
+            input_patterns.as_deref(),
+            resources_file.as_deref().map(std::path::Path::new),
+            enable_selector.as_ref(),
+            config.merge_namespaces,
+        )
+        .map_err(|e| napi::Error::from_reason(format!("Type generation failed: {}", e)))?;
     }
 
     // Check fail-on-warnings
@@ -353,6 +374,13 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.trans_keep_basic_html_nodes_for,
+        &config.use_translation_names,
+        &config.nesting_prefix,
+        &config.nesting_suffix,
+        &config.nesting_options_separator,
+        &config.interpolation_prefix,
+        &config.interpolation_suffix,
     )
     .map_err(|e| napi::Error::from_reason(format!("Extraction failed: {}", e)))?;
 
@@ -362,9 +390,17 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
     }
 
     let locales_path = std::path::Path::new(&config.output);
-    let dead_keys =
-        cleanup_mod::find_dead_keys(locales_path, &all_keys, &config.default_namespace, locale)
-            .map_err(|e| napi::Error::from_reason(format!("Check failed: {}", e)))?;
+    let dead_keys = cleanup_mod::find_dead_keys(
+        locales_path,
+        &all_keys,
+        config.effective_default_namespace(),
+        config.namespace_less_mode(),
+        config.merge_namespaces,
+        config.preserve_context_variants,
+        &config.context_separator,
+        locale,
+    )
+    .map_err(|e| napi::Error::from_reason(format!("Check failed: {}", e)))?;
 
     let mut removed_count = 0usize;
     if remove && !dry_run && !dead_keys.is_empty() {

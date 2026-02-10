@@ -27,7 +27,10 @@ pub fn run(
     println!("Configuration:");
     println!("  Locales directory: {}", config.output);
     println!("  Checking locale: {}", check_locale);
-    println!("  Default namespace: {}", config.default_namespace);
+    println!(
+        "  Default namespace: {}",
+        config.effective_default_namespace()
+    );
     if let Some(ns) = namespace_filter {
         println!("  Namespace filter: {}", ns);
     }
@@ -43,19 +46,31 @@ pub fn run(
         config.extract_from_comments,
         &plural_config,
         &config.trans_components,
+        &config.trans_keep_basic_html_nodes_for,
+        &config.use_translation_names,
+        &config.nesting_prefix,
+        &config.nesting_suffix,
+        &config.nesting_options_separator,
+        &config.interpolation_prefix,
+        &config.interpolation_suffix,
     )?;
 
     let mut source_keys: HashSet<String> = HashSet::new();
     let mut all_keys: Vec<ExtractedKey> = Vec::new();
+    let namespace_less_mode = config.namespace_less_mode();
 
     for (_file_path, keys) in &extraction.files {
         for key in keys {
             let namespace = key
                 .namespace
                 .as_deref()
-                .unwrap_or(&config.default_namespace);
+                .unwrap_or(config.effective_default_namespace());
             if namespace_filter.is_none_or(|filter| filter == namespace) {
-                let full_key = format!("{}:{}", namespace, key.key);
+                let full_key = if namespace_less_mode {
+                    key.key.clone()
+                } else {
+                    format!("{}:{}", namespace, key.key)
+                };
                 source_keys.insert(full_key);
             }
             all_keys.push(key.clone());
@@ -94,7 +109,14 @@ pub fn run(
                 }
 
                 if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                    count_json_keys(&json, namespace, "", &mut locale_keys);
+                    count_json_keys(
+                        &json,
+                        namespace,
+                        "",
+                        namespace_less_mode,
+                        config.merge_namespaces,
+                        &mut locale_keys,
+                    );
                 }
             }
         }
@@ -106,7 +128,11 @@ pub fn run(
     let dead_keys = cleanup::find_dead_keys(
         locales_path,
         &all_keys,
-        &config.default_namespace,
+        config.effective_default_namespace(),
+        namespace_less_mode,
+        config.merge_namespaces,
+        config.preserve_context_variants,
+        &config.context_separator,
         check_locale,
     )?;
     let dead_keys: Vec<_> = dead_keys
@@ -166,20 +192,37 @@ pub fn run(
 }
 
 /// Count all leaf keys in a JSON structure
-fn count_json_keys(value: &Value, namespace: &str, prefix: &str, keys: &mut HashSet<String>) {
+fn count_json_keys(
+    value: &Value,
+    namespace: &str,
+    prefix: &str,
+    namespace_less_mode: bool,
+    merge_namespaces: bool,
+    keys: &mut HashSet<String>,
+) {
     match value {
         Value::Object(obj) => {
+            if merge_namespaces && !namespace_less_mode && prefix.is_empty() {
+                for (root_ns, nested) in obj {
+                    count_json_keys(nested, root_ns, "", namespace_less_mode, false, keys);
+                }
+                return;
+            }
             for (k, v) in obj {
                 let path = if prefix.is_empty() {
                     k.clone()
                 } else {
                     format!("{}.{}", prefix, k)
                 };
-                count_json_keys(v, namespace, &path, keys);
+                count_json_keys(v, namespace, &path, namespace_less_mode, false, keys);
             }
         }
         Value::String(_) => {
-            keys.insert(format!("{}:{}", namespace, prefix));
+            if namespace_less_mode {
+                keys.insert(prefix.to_string());
+            } else {
+                keys.insert(format!("{}:{}", namespace, prefix));
+            }
         }
         _ => {}
     }
@@ -196,4 +239,23 @@ fn format_progress_bar(completed: usize, total: usize) -> String {
     let filled = ((ratio * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
     let bar = format!("[{}{}]", "#".repeat(filled), "-".repeat(BAR_WIDTH - filled));
     format!("{} {:>5.1}% ({}/{})", bar, ratio * 100.0, completed, total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn count_json_keys_supports_merged_namespace_object_shape() {
+        let value = json!({
+            "common": { "hello": "x" },
+            "home": { "title": "y" }
+        });
+        let mut keys = HashSet::new();
+        count_json_keys(&value, "translation", "", false, true, &mut keys);
+        assert!(keys.contains("common:hello"));
+        assert!(keys.contains("home:title"));
+        assert_eq!(keys.len(), 2);
+    }
 }

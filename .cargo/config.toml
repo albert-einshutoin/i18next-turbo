@@ -1,3 +1,14 @@
-[target.aarch64-unknown-linux-gnu]
-linker = "aarch64-linux-gnu-gcc"
-ar = "aarch64-linux-gnu-ar"
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "gcc"
+
+[target.x86_64-pc-windows-msvc]
+# GitHub Actions windows-latest uses MSVC toolchain by default
+
+[target.x86_64-apple-darwin]
+# macOS cross-target for Intel
+
+[target.aarch64-apple-darwin]
+# macOS native/target for Apple Silicon

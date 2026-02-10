@@ -666,12 +666,13 @@ dependencies = [
 
 [[package]]
 name = "i18next-turbo"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
  "fs2",
  "glob",
+ "httpdate",
  "icu_locid",
  "icu_plurals",
  "json5",

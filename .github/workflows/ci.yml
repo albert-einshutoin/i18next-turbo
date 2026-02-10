@@ -10,6 +10,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  node-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary for CLI wrapper smoke tests
+        run: cargo build --release
+      - name: Install local npm package
+        run: npm install .
+      - name: Verify Node API fallback execution
+        run: |
+          node -e "(async()=>{const fs=require('fs');const os=require('os');const path=require('path');const api=require('./');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'iturbo-ci-'));fs.mkdirSync(path.join(dir,'src'),{recursive:true});fs.writeFileSync(path.join(dir,'src','app.ts'),\"t('ci.hello')\\n\");process.chdir(dir);await api.extract({input:['src/**/*.ts'],output:'locales',locales:['en'],functions:['t']});if(!fs.existsSync(path.join(dir,'locales','en','translation.json'))){throw new Error('translation.json not created')}})().catch(e=>{console.error(e);process.exit(1)})"
+      - name: Verify CLI command via npx --no-install
+        run: |
+          npx --no-install i18next-turbo --config benchmarks/fixtures/large/i18next-turbo.json extract
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -21,7 +41,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets
       - name: Run tests
         run: cargo test --all
 
@@ -65,16 +85,12 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/i18next-turbo dist/i18next-turbo
-          tar czf dist/${{ matrix.artifact }}.tar.gz -C dist i18next-turbo
+          ./scripts/package-binary.sh "${{ matrix.target }}" "${{ matrix.artifact }}" "i18next-turbo"
       - name: Package binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target\${{ matrix.target }}\release\i18next-turbo.exe dist\i18next-turbo.exe
-          Compress-Archive -Path dist\i18next-turbo.exe -DestinationPath dist\${{ matrix.artifact }}.zip
+          ./scripts/package-binary.ps1 -Target "${{ matrix.target }}" -Artifact "${{ matrix.artifact }}" -BinaryName "i18next-turbo.exe"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

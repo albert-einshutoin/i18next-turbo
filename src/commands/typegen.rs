@@ -28,7 +28,20 @@ pub fn run(
     let locales_path = Path::new(locales_dir_path);
     let output_path = Path::new(output);
 
-    typegen::generate_types(locales_path, output_path, default_locale)?;
+    let indentation = config.types_indentation_string();
+    let input_patterns = config.types_input_patterns();
+    let resources_file = config.types_resources_file();
+    let enable_selector = config.types_enable_selector();
+    typegen::generate_types_with_options(
+        locales_path,
+        output_path,
+        default_locale,
+        indentation.as_deref(),
+        input_patterns.as_deref(),
+        resources_file.as_deref().map(Path::new),
+        enable_selector.as_ref(),
+        config.merge_namespaces,
+    )?;
 
     println!("TypeScript types generated successfully!");
     println!("  Output: {}", output);

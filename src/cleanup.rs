@@ -25,16 +25,24 @@ pub fn find_dead_keys(
     locales_dir: &Path,
     extracted_keys: &[ExtractedKey],
     default_namespace: &str,
+    namespace_less_mode: bool,
+    merge_namespaces: bool,
+    preserve_context_variants: bool,
+    context_separator: &str,
     locale: &str,
 ) -> Result<Vec<DeadKey>> {
     let mut dead_keys = Vec::new();
 
     // Build a set of extracted key paths (namespace:key format)
     let mut extracted_set: HashSet<String> = HashSet::new();
+    let mut object_root_set: HashSet<String> = HashSet::new();
     for key in extracted_keys {
         let ns = key.namespace.as_deref().unwrap_or(default_namespace);
-        // Store both the full key and flattened version
-        extracted_set.insert(format!("{}:{}", ns, key.key));
+        if let Some(root) = key.key.strip_suffix(".*") {
+            object_root_set.insert(format_key_id(ns, root, namespace_less_mode));
+        } else {
+            extracted_set.insert(format_key_id(ns, &key.key, namespace_less_mode));
+        }
     }
 
     // Scan locale directory
@@ -68,14 +76,50 @@ pub fn find_dead_keys(
 
             if let Value::Object(obj) = json {
                 let file_path = path.display().to_string();
-                find_dead_keys_in_object(
-                    &obj,
-                    &namespace,
-                    "",
-                    &extracted_set,
-                    &file_path,
-                    &mut dead_keys,
-                );
+                if merge_namespaces && !namespace_less_mode {
+                    for (root_ns, value) in obj {
+                        match value {
+                            Value::Object(nested) => {
+                                find_dead_keys_in_object(
+                                    &nested,
+                                    &root_ns,
+                                    "",
+                                    &extracted_set,
+                                    &object_root_set,
+                                    namespace_less_mode,
+                                    preserve_context_variants,
+                                    context_separator,
+                                    &file_path,
+                                    &mut dead_keys,
+                                );
+                            }
+                            Value::String(_) => {
+                                let full_key = format_key_id(&root_ns, "", namespace_less_mode);
+                                if !extracted_set.contains(&full_key) {
+                                    dead_keys.push(DeadKey {
+                                        file_path: file_path.clone(),
+                                        key_path: root_ns.clone(),
+                                        namespace: root_ns.clone(),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    find_dead_keys_in_object(
+                        &obj,
+                        &namespace,
+                        "",
+                        &extracted_set,
+                        &object_root_set,
+                        namespace_less_mode,
+                        preserve_context_variants,
+                        context_separator,
+                        &file_path,
+                        &mut dead_keys,
+                    );
+                }
             }
         }
     }
@@ -89,6 +133,10 @@ fn find_dead_keys_in_object(
     namespace: &str,
     prefix: &str,
     extracted_set: &HashSet<String>,
+    object_root_set: &HashSet<String>,
+    namespace_less_mode: bool,
+    preserve_context_variants: bool,
+    context_separator: &str,
     file_path: &str,
     dead_keys: &mut Vec<DeadKey>,
 ) {
@@ -107,14 +155,32 @@ fn find_dead_keys_in_object(
                     namespace,
                     &key_path,
                     extracted_set,
+                    object_root_set,
+                    namespace_less_mode,
+                    preserve_context_variants,
+                    context_separator,
                     file_path,
                     dead_keys,
                 );
             }
             Value::String(_) => {
                 // Check if this leaf key exists in extracted keys
-                let full_key = format!("{}:{}", namespace, key_path);
-                if !extracted_set.contains(&full_key) {
+                let full_key = format_key_id(namespace, &key_path, namespace_less_mode);
+                let covered_by_object_root = object_root_set
+                    .iter()
+                    .any(|root| full_key == *root || full_key.starts_with(&format!("{}.", root)));
+                let covered_by_context_variant = preserve_context_variants
+                    && is_covered_by_context_variant(
+                        namespace,
+                        &key_path,
+                        extracted_set,
+                        namespace_less_mode,
+                        context_separator,
+                    );
+                if !extracted_set.contains(&full_key)
+                    && !covered_by_object_root
+                    && !covered_by_context_variant
+                {
                     dead_keys.push(DeadKey {
                         file_path: file_path.to_string(),
                         key_path: key_path.clone(),
@@ -124,6 +190,36 @@ fn find_dead_keys_in_object(
             }
             _ => {}
         }
+    }
+}
+
+fn is_covered_by_context_variant(
+    namespace: &str,
+    key_path: &str,
+    extracted_set: &HashSet<String>,
+    namespace_less_mode: bool,
+    context_separator: &str,
+) -> bool {
+    if context_separator.is_empty() {
+        return false;
+    }
+
+    let mut candidate = key_path.to_string();
+    while let Some((base, _)) = candidate.rsplit_once(context_separator) {
+        let full_base = format_key_id(namespace, base, namespace_less_mode);
+        if extracted_set.contains(&full_base) {
+            return true;
+        }
+        candidate = base.to_string();
+    }
+    false
+}
+
+fn format_key_id(namespace: &str, key_path: &str, namespace_less_mode: bool) -> String {
+    if namespace_less_mode {
+        key_path.to_string()
+    } else {
+        format!("{}:{}", namespace, key_path)
     }
 }
 
@@ -222,5 +318,70 @@ mod tests {
         let button = obj.get("button").unwrap().as_object().unwrap();
         assert!(!button.contains_key("submit"));
         assert!(button.contains_key("cancel"));
+    }
+
+    #[test]
+    fn test_context_variant_is_preserved_when_base_key_exists() {
+        let mut extracted_set = HashSet::new();
+        extracted_set.insert("common:friend".to_string());
+
+        assert!(is_covered_by_context_variant(
+            "common",
+            "friend_male",
+            &extracted_set,
+            false,
+            "_",
+        ));
+        assert!(is_covered_by_context_variant(
+            "common",
+            "friend_male_one",
+            &extracted_set,
+            false,
+            "_",
+        ));
+    }
+
+    #[test]
+    fn test_find_dead_keys_with_merge_namespaces_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let locale_dir = tmp.path().join("en");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        std::fs::write(
+            locale_dir.join("all.json"),
+            r#"{
+  "common": { "hello": "Hello", "stale": "Old" },
+  "home": { "title": "Title" }
+}"#,
+        )
+        .unwrap();
+
+        let extracted_keys = vec![
+            ExtractedKey {
+                key: "hello".to_string(),
+                namespace: Some("common".to_string()),
+                default_value: None,
+            },
+            ExtractedKey {
+                key: "title".to_string(),
+                namespace: Some("home".to_string()),
+                default_value: None,
+            },
+        ];
+
+        let dead = find_dead_keys(
+            tmp.path(),
+            &extracted_keys,
+            "translation",
+            false,
+            true,
+            false,
+            "_",
+            "en",
+        )
+        .unwrap();
+
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].namespace, "common");
+        assert_eq!(dead[0].key_path, "stale");
     }
 }

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use glob::Pattern;
 use std::collections::HashSet;
 use std::path::Path;
 use swc_common::sync::Lrc;
@@ -27,6 +28,45 @@ pub struct LintResult {
     pub files_checked: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct LintOptions {
+    pub ignored_attributes: Vec<String>,
+    pub ignored_tags: Vec<String>,
+    pub accepted_attributes: Vec<String>,
+    pub accepted_tags: Vec<String>,
+    pub ignore_patterns: Vec<String>,
+}
+
+impl Default for LintOptions {
+    fn default() -> Self {
+        Self {
+            ignored_attributes: Vec::new(),
+            ignored_tags: vec![
+                "script".to_string(),
+                "style".to_string(),
+                "code".to_string(),
+                "pre".to_string(),
+            ],
+            accepted_attributes: vec![
+                "alt".to_string(),
+                "title".to_string(),
+                "placeholder".to_string(),
+                "aria-label".to_string(),
+                "aria-description".to_string(),
+            ],
+            accepted_tags: vec![
+                "p".to_string(),
+                "span".to_string(),
+                "div".to_string(),
+                "button".to_string(),
+                "label".to_string(),
+                "img".to_string(),
+            ],
+            ignore_patterns: Vec::new(),
+        }
+    }
+}
+
 /// Visitor that finds hardcoded strings in JSX
 pub struct LintVisitor {
     /// Source map for line number lookup
@@ -37,33 +77,47 @@ pub struct LintVisitor {
     file_path: String,
     /// Tags to ignore (e.g., script, style)
     ignored_tags: HashSet<String>,
+    /// Attributes to ignore
+    ignored_attributes: HashSet<String>,
     /// Attributes to check (e.g., alt, title, placeholder)
     checked_attributes: HashSet<String>,
+    /// If non-empty, only these tags are lint targets
+    accepted_tags: HashSet<String>,
     /// Whether we're inside a Trans component
     in_trans: bool,
 }
 
 impl LintVisitor {
-    pub fn new(source_map: Lrc<SourceMap>, file_path: String) -> Self {
-        let mut ignored_tags = HashSet::new();
-        ignored_tags.insert("script".to_string());
-        ignored_tags.insert("style".to_string());
-        ignored_tags.insert("code".to_string());
-        ignored_tags.insert("pre".to_string());
-
-        let mut checked_attributes = HashSet::new();
-        checked_attributes.insert("alt".to_string());
-        checked_attributes.insert("title".to_string());
-        checked_attributes.insert("placeholder".to_string());
-        checked_attributes.insert("aria-label".to_string());
-        checked_attributes.insert("aria-description".to_string());
+    pub fn new(source_map: Lrc<SourceMap>, file_path: String, options: &LintOptions) -> Self {
+        let ignored_tags = options
+            .ignored_tags
+            .iter()
+            .map(|v| v.to_lowercase())
+            .collect();
+        let ignored_attributes = options
+            .ignored_attributes
+            .iter()
+            .map(|v| v.to_lowercase())
+            .collect();
+        let checked_attributes = options
+            .accepted_attributes
+            .iter()
+            .map(|v| v.to_lowercase())
+            .collect();
+        let accepted_tags = options
+            .accepted_tags
+            .iter()
+            .map(|v| v.to_lowercase())
+            .collect();
 
         Self {
             source_map,
             issues: Vec::new(),
             file_path,
             ignored_tags,
+            ignored_attributes,
             checked_attributes,
+            accepted_tags,
             in_trans: false,
         }
     }
@@ -121,19 +175,26 @@ impl LintVisitor {
 
 impl Visit for LintVisitor {
     fn visit_jsx_element(&mut self, elem: &JSXElement) {
-        // Check if this is a Trans component
-        let is_trans = if let JSXElementName::Ident(ident) = &elem.opening.name {
-            ident.sym.as_ref() == "Trans"
+        let tag_name = if let JSXElementName::Ident(ident) = &elem.opening.name {
+            Some(ident.sym.to_string().to_lowercase())
         } else {
-            false
+            None
         };
 
+        // Check if this is a Trans component
+        let is_trans = tag_name.as_deref() == Some("trans");
+
         // Check if this is an ignored tag
-        let is_ignored = if let JSXElementName::Ident(ident) = &elem.opening.name {
-            self.ignored_tags
-                .contains(&ident.sym.to_string().to_lowercase())
+        let is_ignored = tag_name
+            .as_deref()
+            .is_some_and(|tag| self.ignored_tags.contains(tag));
+
+        let accepted_tag = if self.accepted_tags.is_empty() {
+            true
         } else {
-            false
+            tag_name
+                .as_deref()
+                .is_some_and(|tag| self.accepted_tags.contains(tag))
         };
 
         if is_ignored {
@@ -146,11 +207,14 @@ impl Visit for LintVisitor {
         }
 
         // Check attributes for hardcoded strings
-        if !self.in_trans {
+        if !self.in_trans && accepted_tag {
             for attr in &elem.opening.attrs {
                 if let JSXAttrOrSpread::JSXAttr(jsx_attr) = attr {
                     if let JSXAttrName::Ident(name) = &jsx_attr.name {
-                        let attr_name = name.sym.to_string();
+                        let attr_name = name.sym.to_string().to_lowercase();
+                        if self.ignored_attributes.contains(&attr_name) {
+                            continue;
+                        }
                         if self.checked_attributes.contains(&attr_name) {
                             if let Some(JSXAttrValue::Str(s)) = &jsx_attr.value {
                                 if let Some(text) = s.value.as_str().map(|v| v.to_string()) {
@@ -176,7 +240,7 @@ impl Visit for LintVisitor {
         }
 
         // Check children for hardcoded text
-        if !self.in_trans {
+        if !self.in_trans && accepted_tag {
             for child in &elem.children {
                 if let JSXElementChild::JSXText(text) = child {
                     self.check_jsx_text(text);
@@ -209,15 +273,30 @@ impl LintVisitor {
 
 /// Lint a single file for hardcoded strings
 pub fn lint_file<P: AsRef<Path>>(path: P) -> Result<Vec<LintIssue>> {
+    lint_file_with_options(path, &LintOptions::default())
+}
+
+pub fn lint_file_with_options<P: AsRef<Path>>(
+    path: P,
+    options: &LintOptions,
+) -> Result<Vec<LintIssue>> {
     let path = path.as_ref();
     let source_code = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
-    lint_source(&source_code, path)
+    lint_source_with_options(&source_code, path, options)
 }
 
 /// Lint source code string
 pub fn lint_source<P: AsRef<Path>>(source: &str, path: P) -> Result<Vec<LintIssue>> {
+    lint_source_with_options(source, path, &LintOptions::default())
+}
+
+pub fn lint_source_with_options<P: AsRef<Path>>(
+    source: &str,
+    path: P,
+    options: &LintOptions,
+) -> Result<Vec<LintIssue>> {
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
 
@@ -259,7 +338,7 @@ pub fn lint_source<P: AsRef<Path>>(source: &str, path: P) -> Result<Vec<LintIssu
         }
     };
 
-    let mut visitor = LintVisitor::new(cm, path.display().to_string());
+    let mut visitor = LintVisitor::new(cm, path.display().to_string(), options);
     module.visit_with(&mut visitor);
 
     Ok(visitor.issues)
@@ -267,7 +346,20 @@ pub fn lint_source<P: AsRef<Path>>(source: &str, path: P) -> Result<Vec<LintIssu
 
 /// Lint multiple files using glob patterns
 pub fn lint_from_glob(patterns: &[String]) -> Result<LintResult> {
+    lint_from_glob_with_options(patterns, &LintOptions::default())
+}
+
+/// Lint multiple files using glob patterns with options
+pub fn lint_from_glob_with_options(
+    patterns: &[String],
+    options: &LintOptions,
+) -> Result<LintResult> {
     let mut result = LintResult::default();
+    let ignore_patterns: Vec<Pattern> = options
+        .ignore_patterns
+        .iter()
+        .filter_map(|pattern| Pattern::new(pattern).ok())
+        .collect();
 
     for pattern in patterns {
         let matches =
@@ -276,9 +368,13 @@ pub fn lint_from_glob(patterns: &[String]) -> Result<LintResult> {
         for entry in matches {
             match entry {
                 Ok(path) => {
-                    if path.is_file() {
+                    if path.is_file()
+                        && !ignore_patterns
+                            .iter()
+                            .any(|pattern| pattern.matches_path(&path))
+                    {
                         result.files_checked += 1;
-                        match lint_file(&path) {
+                        match lint_file_with_options(&path, options) {
                             Ok(issues) => result.issues.extend(issues),
                             Err(e) => eprintln!("Warning: {}", e),
                         }
@@ -295,6 +391,8 @@ pub fn lint_from_glob(patterns: &[String]) -> Result<LintResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_lint_hardcoded_text() {
@@ -344,5 +442,63 @@ mod tests {
 
         let issues = lint_source(source, "test.tsx").unwrap();
         assert_eq!(issues.len(), 0);
+    }
+
+    #[test]
+    fn test_lint_ignored_attributes() {
+        let source = r#"
+            function Component() {
+                return <img alt="A beautiful image" />;
+            }
+        "#;
+
+        let options = LintOptions {
+            ignored_attributes: vec!["alt".to_string()],
+            ..LintOptions::default()
+        };
+        let issues = lint_source_with_options(source, "test.tsx", &options).unwrap();
+        assert_eq!(issues.len(), 0);
+    }
+
+    #[test]
+    fn test_lint_accepted_tags() {
+        let source = r#"
+            function Component() {
+                return (
+                    <>
+                        <div>Hello</div>
+                        <button>Click me</button>
+                    </>
+                );
+            }
+        "#;
+
+        let options = LintOptions {
+            accepted_tags: vec!["button".to_string()],
+            ..LintOptions::default()
+        };
+        let issues = lint_source_with_options(source, "test.tsx", &options).unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].text, "Click me");
+    }
+
+    #[test]
+    fn test_lint_ignore_patterns_in_glob() {
+        let dir = tempdir().unwrap();
+        let included = dir.path().join("included.tsx");
+        let ignored = dir.path().join("ignored.tsx");
+        fs::write(&included, "function C(){return <div>Hello Included</div>;}").unwrap();
+        fs::write(&ignored, "function C(){return <div>Hello Ignored</div>;}").unwrap();
+
+        let options = LintOptions {
+            ignore_patterns: vec![ignored.to_string_lossy().to_string()],
+            ..LintOptions::default()
+        };
+        let pattern = format!("{}/*.tsx", dir.path().display());
+        let result = lint_from_glob_with_options(&[pattern], &options).unwrap();
+
+        assert_eq!(result.files_checked, 1);
+        assert_eq!(result.issues.len(), 1);
+        assert!(result.issues[0].text.contains("Hello Included"));
     }
 }
