@@ -88,10 +88,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
+          mapfile -t release_assets < <(find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort)
+          if [ ${#release_assets[@]} -eq 0 ]; then
+            echo "No release archive assets found under dist/"
+            exit 1
+          fi
+
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" dist/**/* --clobber
+            gh release upload "$TAG_NAME" "${release_assets[@]}" --clobber
           else
-            gh release create "$TAG_NAME" dist/**/* --generate-notes
+            gh release create "$TAG_NAME" "${release_assets[@]}" --generate-notes
           fi
 
   publish-npm:
