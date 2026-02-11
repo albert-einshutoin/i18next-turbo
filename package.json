@@ -1,6 +1,6 @@
 {
   "name": "i18next-turbo",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Blazing fast i18next translation key extractor - 10-100x faster with Rust + SWC",
   "license": "MIT",
   "author": "i18next-turbo contributors",
@@ -41,12 +41,12 @@
     "jiti": "^1.21.0"
   },
   "optionalDependencies": {
-    "i18next-turbo-darwin-arm64": "0.5.0",
-    "i18next-turbo-darwin-x64": "0.5.0",
-    "i18next-turbo-linux-arm64": "0.5.0",
-    "i18next-turbo-linux-x64": "0.5.0",
-    "i18next-turbo-win32-ia32": "0.5.0",
-    "i18next-turbo-win32-x64": "0.5.0"
+    "i18next-turbo-darwin-arm64": "0.5.1",
+    "i18next-turbo-darwin-x64": "0.5.1",
+    "i18next-turbo-linux-arm64": "0.5.1",
+    "i18next-turbo-linux-x64": "0.5.1",
+    "i18next-turbo-win32-ia32": "0.5.1",
+    "i18next-turbo-win32-x64": "0.5.1"
   },
   "engines": {
     "node": ">=14"
