@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use i18next_turbo::commands;

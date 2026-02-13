@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 

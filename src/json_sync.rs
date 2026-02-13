@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use anyhow::{bail, Context, Result};
 use glob::Pattern;
 use serde::Serialize;

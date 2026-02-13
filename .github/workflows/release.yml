@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -100,9 +101,125 @@ jobs:
             gh release create "$TAG_NAME" "${release_assets[@]}" --generate-notes
           fi
 
-  publish-npm:
+  publish-platform-npm:
     runs-on: ubuntu-latest
     needs: [build, release]
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: i18next-turbo-darwin-x64
+            package_name: i18next-turbo-darwin-x64
+            os: darwin
+            cpu: x64
+            archive_ext: tar.gz
+            binary_name: i18next-turbo
+            libc: ""
+          - artifact: i18next-turbo-darwin-arm64
+            package_name: i18next-turbo-darwin-arm64
+            os: darwin
+            cpu: arm64
+            archive_ext: tar.gz
+            binary_name: i18next-turbo
+            libc: ""
+          - artifact: i18next-turbo-linux-x64-gnu
+            package_name: i18next-turbo-linux-x64-gnu
+            os: linux
+            cpu: x64
+            archive_ext: tar.gz
+            binary_name: i18next-turbo
+            libc: glibc
+          - artifact: i18next-turbo-linux-x64-musl
+            package_name: i18next-turbo-linux-x64-musl
+            os: linux
+            cpu: x64
+            archive_ext: tar.gz
+            binary_name: i18next-turbo
+            libc: musl
+          - artifact: i18next-turbo-win32-x64-msvc
+            package_name: i18next-turbo-win32-x64-msvc
+            os: win32
+            cpu: x64
+            archive_ext: zip
+            binary_name: i18next-turbo.exe
+            libc: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          registry-url: https://registry.npmjs.org
+      - name: Download platform artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Prepare platform package
+        env:
+          PKG_NAME: ${{ matrix.package_name }}
+          PKG_OS: ${{ matrix.os }}
+          PKG_CPU: ${{ matrix.cpu }}
+          PKG_LIBC: ${{ matrix.libc }}
+          BIN_NAME: ${{ matrix.binary_name }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="$(find dist -type f -name "*.${ARCHIVE_EXT}" | head -n 1)"
+          if [ -z "${ARCHIVE_PATH}" ]; then
+            echo "Archive not found for ${PKG_NAME} (*.${ARCHIVE_EXT})"
+            exit 1
+          fi
+
+          rm -rf platform-package
+          mkdir -p platform-package
+
+          if [ "${ARCHIVE_EXT}" = "zip" ]; then
+            unzip -q "${ARCHIVE_PATH}" -d platform-package
+          else
+            tar -xzf "${ARCHIVE_PATH}" -C platform-package
+          fi
+
+          node - <<'NODE'
+          const fs = require('fs');
+          const pkg = {
+            name: process.env.PKG_NAME,
+            version: require('./package.json').version,
+            description: `Prebuilt binary for ${process.env.PKG_NAME}`,
+            license: "MIT",
+            os: [process.env.PKG_OS],
+            cpu: [process.env.PKG_CPU],
+            files: [process.env.BIN_NAME]
+          };
+          if (process.env.PKG_LIBC) {
+            pkg.libc = [process.env.PKG_LIBC];
+          }
+          fs.writeFileSync('platform-package/package.json', `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+      - name: Check if platform package version is already published
+        id: npm_platform_version
+        env:
+          PKG_NAME: ${{ matrix.package_name }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "${PKG_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "${PKG_NAME}@${VERSION} is already published. Skipping publish."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish platform package
+        if: steps.npm_platform_version.outputs.already_published != 'true'
+        run: npm publish ./platform-package --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    needs: [build, release, publish-platform-npm]
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
         with:
@@ -112,7 +229,7 @@ jobs:
           node-version: 18
           registry-url: https://registry.npmjs.org
       - name: Install dependencies
-        run: npm install
+        run: npm ci
       - name: Sync package version from Cargo.toml
         run: npm run sync-version
       - name: Check if version is already published
@@ -127,6 +244,6 @@ jobs:
           fi
       - name: Publish package
         if: steps.npm_version.outputs.already_published != 'true'
-        run: npm publish --access public
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

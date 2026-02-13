@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use crate::config::EnableSelector;
 use anyhow::{Context, Result};
 use glob::glob;
@@ -115,13 +117,11 @@ fn resolve_typegen_files(
                 locale_dir.join(pattern).to_string_lossy().to_string()
             };
 
-            let matches = glob(&glob_pattern)
-                .with_context(|| format!("Invalid typegen input pattern: {}", pattern))?;
-            for entry in matches {
-                if let Ok(path) = entry {
-                    if path.is_file() && path.extension().map(|e| e == "json").unwrap_or(false) {
-                        files.push(path);
-                    }
+            let matches =
+                glob(&glob_pattern).with_context(|| format!("Invalid typegen input pattern: {}", pattern))?;
+            for path in matches.flatten() {
+                if path.is_file() && path.extension().map(|e| e == "json").unwrap_or(false) {
+                    files.push(path);
                 }
             }
         }

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use crate::config::{PluralConfig, UseTranslationName};
 use anyhow::{Context, Result};
 use glob::Pattern;
