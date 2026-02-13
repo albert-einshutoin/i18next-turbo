@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use crate::config::EnableSelector;
 use anyhow::{Context, Result};
 use glob::glob;
@@ -117,11 +119,9 @@ fn resolve_typegen_files(
 
             let matches = glob(&glob_pattern)
                 .with_context(|| format!("Invalid typegen input pattern: {}", pattern))?;
-            for entry in matches {
-                if let Ok(path) = entry {
-                    if path.is_file() && path.extension().map(|e| e == "json").unwrap_or(false) {
-                        files.push(path);
-                    }
+            for path in matches.flatten() {
+                if path.is_file() && path.extension().map(|e| e == "json").unwrap_or(false) {
+                    files.push(path);
                 }
             }
         }
