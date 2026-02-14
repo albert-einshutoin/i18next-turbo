@@ -184,11 +184,23 @@ jobs:
 
           node - <<'NODE'
           const fs = require('fs');
+          const rootPkg = require('./package.json');
+          const repositoryUrl = (
+            (typeof rootPkg.repository === 'string'
+              ? rootPkg.repository
+              : rootPkg.repository?.url) || 'https://github.com/albert-einshutoin/i18next-turbo'
+          ).replace(/\.git$/, '');
           const pkg = {
             name: process.env.PKG_NAME,
-            version: require('./package.json').version,
+            version: rootPkg.version,
             description: `Prebuilt binary for ${process.env.PKG_NAME}`,
             license: "MIT",
+            repository: {
+              type: "git",
+              url: repositoryUrl
+            },
+            homepage: rootPkg.homepage,
+            bugs: rootPkg.bugs,
             os: [process.env.PKG_OS],
             cpu: [process.env.PKG_CPU],
             files: [process.env.BIN_NAME]
