@@ -1,3 +1,6 @@
+#![allow(non_snake_case)]
+#![allow(clippy::items_after_test_module)]
+
 use anyhow::{bail, Context, Result};
 use glob::Pattern;
 use icu_locid::Locale;
@@ -1100,13 +1103,11 @@ impl Config {
                 }
             }
         }
-        if let Some(enable_selector) = &self.types.enable_selector {
-            if let EnableSelector::Mode(mode) = enable_selector {
-                if mode != "optimize" {
-                    bail!(
-                        "Configuration error: 'types.enableSelector' must be true, false, or 'optimize'."
-                    );
-                }
+        if let Some(EnableSelector::Mode(mode)) = &self.types.enable_selector {
+            if mode != "optimize" {
+                bail!(
+                    "Configuration error: 'types.enableSelector' must be true, false, or 'optimize'."
+                );
             }
         }
 

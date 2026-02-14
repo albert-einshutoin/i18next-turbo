@@ -1165,25 +1165,56 @@ function resolveBinaryPath(platformName, archName, binName) {
   }
 
   // Fallback to optional platform package in installed environments.
-  const pkgName = getBinaryPackageName(platformName, archName);
-  if (pkgName) {
+  const pkgNames = getBinaryPackageNames(platformName, archName);
+  for (const pkgName of pkgNames) {
     try {
       const pkgJsonPath = require.resolve(`${pkgName}/package.json`);
       return path.join(path.dirname(pkgJsonPath), binName);
     } catch (error) {
-      // Optional package not installed; fall back to local build.
+      // Try next candidate package.
     }
   }
 
   return debugPath;
 }
 
-function getBinaryPackageName(platformName, archName) {
-  if (platformName === 'darwin' && archName === 'x64') return 'i18next-turbo-darwin-x64';
-  if (platformName === 'darwin' && archName === 'arm64') return 'i18next-turbo-darwin-arm64';
-  if (platformName === 'linux' && archName === 'x64') return 'i18next-turbo-linux-x64';
-  if (platformName === 'linux' && archName === 'arm64') return 'i18next-turbo-linux-arm64';
-  if (platformName === 'win32' && archName === 'x64') return 'i18next-turbo-win32-x64';
-  if (platformName === 'win32' && archName === 'ia32') return 'i18next-turbo-win32-ia32';
-  return null;
+function getBinaryPackageNames(platformName, archName) {
+  if (platformName === 'darwin' && archName === 'x64') {
+    return ['i18next-turbo-darwin-x64'];
+  }
+  if (platformName === 'darwin' && archName === 'arm64') {
+    return ['i18next-turbo-darwin-arm64'];
+  }
+  if (platformName === 'linux' && archName === 'x64') {
+    return isMuslRuntime()
+      ? ['i18next-turbo-linux-x64-musl', 'i18next-turbo-linux-x64']
+      : ['i18next-turbo-linux-x64-gnu', 'i18next-turbo-linux-x64'];
+  }
+  if (platformName === 'win32' && archName === 'x64') {
+    return ['i18next-turbo-win32-x64-msvc', 'i18next-turbo-win32-x64'];
+  }
+  if (platformName === 'win32' && archName === 'ia32') {
+    return ['i18next-turbo-win32-ia32'];
+  }
+  return [];
+}
+
+function isMuslRuntime() {
+  if (process.platform !== 'linux') {
+    return false;
+  }
+
+  try {
+    const report = process.report && typeof process.report.getReport === 'function'
+      ? process.report.getReport()
+      : null;
+    const glibcVersion = report && report.header ? report.header.glibcVersionRuntime : null;
+    if (glibcVersion) {
+      return false;
+    }
+  } catch (error) {
+    // Fall through to conservative default below.
+  }
+
+  return true;
 }

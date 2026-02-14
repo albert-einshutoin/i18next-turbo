@@ -11,7 +11,7 @@ This document organizes the implementation status and future tasks for i18next-t
 - ✅ **Done**: Robustness (error message matrix display, no Silent Failure, preserve existing JSON style, mockable FS abstraction)
 - ✅ **Done**: Language-specific plural categories (ICU-based) and ordinal plural key generation
 - ✅ **Done**: returnObjects protection (`key.*` marker for child key preservation)
-- ⚠️ **Partial**: Phase 1 (npm distribution base is ready; CI/CD not implemented)
+- ✅ **Done**: Phase 1 (npm distribution + CI/CD + release/publish workflow)
 
 ---
 
@@ -143,7 +143,7 @@ The following are "i18next-cli compatibility extensions" and are not counted tow
 - [x] Version automation
 
 #### Acceptance criteria
-- [ ] Binaries listed on GitHub Releases for each OS
+- [x] Binaries listed on GitHub Releases for each OS
 - [x] Package published to npm registry
 - [x] `npm install i18next-turbo` works
 
@@ -635,7 +635,7 @@ The following are "i18next-cli compatibility extensions" and are not counted tow
 - ✅ `output` function form
 - ✅ `defaultNS: false`
 - ✅ `transKeepBasicHtmlNodesFor`
-- ⚠️ Plugin system (partial: setup/onEnd/afterSync)
+- ✅ Plugin system (setup / onLoad / onVisitNode / onEnd / afterSync)
 - ✅ Heuristic config detection
 - ✅ JS output (`js`, `js-esm`, `js-cjs`)
 - ✅ Typegen details (`enableSelector`)
@@ -710,9 +710,9 @@ The following are "i18next-cli compatibility extensions" and are not counted tow
 - [x] Zero extraction gaps
 
 ### v2.0.0 (Phase 3 complete)
-- [ ] Differentiation features
-- [ ] Better DX
-- [ ] Ecosystem integration
+- [x] Differentiation features
+- [x] Better DX
+- [x] Ecosystem integration
 
 ---
 
@@ -775,4 +775,4 @@ The following are "i18next-cli compatibility extensions" and are not counted tow
 
 ---
 
-Last updated: 2026-01-06 (indentation, primaryLanguage, nsSeparator:false, single-category base key, generateBasePluralForms).
+Last updated: 2026-02-12 (v0.5.1 release assets verified on GitHub Releases, v2.0 milestone checklist synchronized).

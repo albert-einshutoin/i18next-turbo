@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+
 pub mod cleanup;
 pub mod commands;
 pub mod config;
@@ -124,7 +126,7 @@ pub fn extract(config: NapiConfig, options: Option<ExtractOptions>) -> Result<Ex
         .and_then(|o| o.types_output.as_ref())
         .map(|s| s.to_string())
         .or_else(|| config.types.output.clone())
-        .unwrap_or_else(|| Config::default_types_output());
+        .unwrap_or_else(Config::default_types_output);
 
     // Determine output directory
     let output_dir = output.unwrap_or(&config.output);
