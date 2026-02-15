@@ -67,6 +67,7 @@ i18next-turbo watch
 - [トラブルシューティング](docs/troubleshooting.ja.md)
 - [使用例](docs/usage-examples.ja.md)
 - [パフォーマンステスト](docs/performance-testing.ja.md)
+- [MVP計画](docs/MVP_PLAN.ja.md)
 
 ## コントリビュート
 

@@ -67,6 +67,7 @@ Create `i18next-turbo.json` in your project root:
 - [Troubleshooting](docs/troubleshooting.md)
 - [Usage Examples](docs/usage-examples.md)
 - [Performance Testing](docs/performance-testing.md)
+- [MVP Plan](docs/MVP_PLAN.md)
 
 ## Contributing
 
