@@ -113,7 +113,7 @@ async function main() {
   const turboArgs = ['--config', 'i18next-turbo.json', 'extract'];
 
   const cliCmd = 'npx';
-  const cliArgs = ['i18next-cli', 'extract', '--config', 'i18next.config.cjs'];
+  const cliArgs = ['--yes', 'i18next-cli@latest', 'extract', '--config', 'i18next.config.cjs'];
 
   const results = { turbo: null, cli: null };
 
