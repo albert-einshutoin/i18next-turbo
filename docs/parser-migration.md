@@ -8,22 +8,16 @@ Move extraction logic from regex-dependent matching toward scanner/AST-based par
 
 ## Current Status
 
-- Completed in this step:
+- Completed:
   - Comment extraction path no longer depends on regex patterns for:
     - `t('key')`
     - `t('key', 'default')`
     - `t('key', { ...options })`
   - Option parsing (`defaultValue`, `ns`, `context`, `count`, `ordinal`) uses scanner helpers.
-- Remaining regex usage:
-  - framework block extraction for `.vue/.svelte` script/template/style segmentation
-  - other non-comment legacy helpers
+  - framework block extraction for `.vue/.svelte` script/template/style is scanner-based
+  - `regex` crate dependency removed from extractor path and `Cargo.toml`
 
-## Migration Strategy
+## Outcome
 
-1. Replace high-frequency extraction paths first (comment parser done).
-2. Keep behavior parity with integration/unit tests.
-3. Remove remaining regex paths incrementally with benchmark checks (`npm run benchmark`).
-
-## Notes
-
-- This is a staged migration to keep risk low while reducing regex dependency from major extraction paths.
+- Extraction behavior parity is maintained by unit/integration tests.
+- Benchmark sanity check (`npm run benchmark`) remains part of regression validation.
