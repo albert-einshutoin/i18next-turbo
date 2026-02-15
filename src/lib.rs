@@ -3,6 +3,7 @@
 pub mod cleanup;
 pub mod commands;
 pub mod config;
+pub mod error;
 pub mod extractor;
 pub mod fs;
 pub mod json_sync;
