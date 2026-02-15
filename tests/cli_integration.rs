@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde_json::{json, Value};
-use tempfile::tempdir;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use tempfile::tempdir;
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_i18next-turbo")
