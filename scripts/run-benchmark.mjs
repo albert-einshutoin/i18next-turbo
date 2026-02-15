@@ -65,7 +65,8 @@ function runExtract(name, command, args, cwd) {
     const start = performance.now();
     const child = spawn(command, args, {
       cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // Ignore stdout to avoid pipe backpressure deadlock in CI.
+      stdio: ['ignore', 'ignore', 'pipe'],
     });
     let stderr = '';
     child.stderr?.on('data', (d) => { stderr += d; });
@@ -113,7 +114,7 @@ async function main() {
   const turboArgs = ['--config', 'i18next-turbo.json', 'extract'];
 
   const cliCmd = 'npx';
-  const cliArgs = ['i18next-cli', 'extract', '--config', 'i18next.config.cjs'];
+  const cliArgs = ['--yes', 'i18next-cli@latest', 'extract', '--config', 'i18next.config.cjs'];
 
   const results = { turbo: null, cli: null };
 
