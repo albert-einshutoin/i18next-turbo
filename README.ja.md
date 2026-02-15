@@ -11,6 +11,7 @@
 モダンな TypeScript/JavaScript コードベース向けの高速 i18next キー抽出ツールです。
 
 `i18next-turbo` は Rust + SWC ベースの抽出器で、i18next ワークフローとの互換性を重視して設計されています。CI の高速化と、開発時の低遅延な watch 実行を目的としています。
+最新安定版リリースは `v0.5.3` です。
 
 ## インストール
 
@@ -75,6 +76,7 @@ i18next-turbo watch
 - [トラブルシューティング](docs/troubleshooting.ja.md)
 - [使用例](docs/usage-examples.ja.md)
 - [パフォーマンステスト](docs/performance-testing.ja.md)
+- [変更履歴](CHANGELOG.md)
 
 ## コントリビュート
 

@@ -8,18 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial project setup
-- Basic key extraction from `t()` function calls
-- Support for `i18n.t()` pattern
-- Namespace support (`namespace:key`)
-- Basic plural support (`_one`, `_other`)
-- Context support
-- `<Trans>` component support (`i18nKey`, `defaults` attributes)
-- Watch mode for real-time updates
-- JSON synchronization (preserves existing translations)
-- Magic comments (`i18next-extract-disable-line`)
-- TypeScript type definition generation
-- Dead key detection
 
 ### Changed
 
@@ -33,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.3] - 2026-02-15
+
+### Added
+- CI benchmark regression gate (`benchmark-regression`) with benchmark report artifact upload.
+- README trust badges (npm version/downloads, Node.js, CI, codecov, MIT, Rust) in both English and Japanese docs.
+
+### Changed
+- Reduced SWC parser dependency surface to minimum required defaults for smaller/faster builds.
+- Benchmarks are now executed non-interactively in CI (`npx --yes i18next-cli@latest`).
+
+### Fixed
+- Prevented benchmark hangs caused by subprocess stdout backpressure.
+- Added workflow-level and per-run timeout guards for benchmark execution stability.
+
 ## [0.1.0] - 2025-01-XX
 
 ### Added
@@ -41,6 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Watch mode
 - JSON synchronization
 
-[Unreleased]: https://github.com/your-username/i18next-turbo/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/your-username/i18next-turbo/releases/tag/v0.1.0
-
+[Unreleased]: https://github.com/albert-einshutoin/i18next-turbo/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/albert-einshutoin/i18next-turbo/compare/v0.1.0...v0.5.3
+[0.1.0]: https://github.com/albert-einshutoin/i18next-turbo/releases/tag/v0.1.0
