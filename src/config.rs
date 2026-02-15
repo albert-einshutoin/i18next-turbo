@@ -1,13 +1,15 @@
 #![allow(non_snake_case)]
 #![allow(clippy::items_after_test_module)]
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result as AnyResult};
 use glob::Pattern;
 use icu_locid::Locale;
 use icu_plurals::{PluralCategory, PluralRules};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::Path;
+
+use crate::error::ConfigError;
 
 /// Configuration for i18next-turbo
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -408,17 +410,17 @@ impl OutputFormat {
         }
     }
 
-    pub fn parse_str(value: &str) -> Result<Self> {
+    pub fn parse_str(value: &str) -> std::result::Result<Self, ConfigError> {
         match value.to_lowercase().as_str() {
             "json" => Ok(OutputFormat::Json),
             "json5" => Ok(OutputFormat::Json5),
             "js" | "js-esm" => Ok(OutputFormat::JsEsm),
             "js-cjs" => Ok(OutputFormat::JsCjs),
             "ts" => Ok(OutputFormat::Ts),
-            other => bail!(
+            other => Err(ConfigError::validation(format!(
                 "Configuration error: unsupported outputFormat '{}'. Supported: json, json5, js, js-esm, js-cjs, ts",
                 other
-            ),
+            ))),
         }
     }
 }
@@ -901,7 +903,11 @@ impl Config {
     }
 
     /// Validate configuration values
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> std::result::Result<(), ConfigError> {
+        self.validate_inner().map_err(ConfigError::from)
+    }
+
+    fn validate_inner(&self) -> AnyResult<()> {
         // Check locales is not empty
         if self.locales.is_empty() {
             bail!(
@@ -1133,28 +1139,38 @@ impl Config {
     }
 
     /// Load configuration from a JSON file
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn load<P: AsRef<Path>>(path: P) -> std::result::Result<Self, ConfigError> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read config file: {}", path.display()))?;
+        let content = std::fs::read_to_string(path).map_err(|err| {
+            ConfigError::io(
+                err,
+                format!("Failed to read config file: {}", path.display()),
+            )
+        })?;
 
-        let config: Config = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+        let config: Config = serde_json::from_str(&content).map_err(|err| {
+            ConfigError::parse(
+                err,
+                format!("Failed to parse config file: {}", path.display()),
+            )
+        })?;
 
         config.validate()?;
         Ok(config)
     }
 
     /// Load configuration from a JSON string
-    pub fn from_json_string(json_str: &str) -> Result<Self> {
-        let config: Config =
-            serde_json::from_str(json_str).with_context(|| "Failed to parse config JSON string")?;
+    pub fn from_json_string(json_str: &str) -> std::result::Result<Self, ConfigError> {
+        let config: Config = serde_json::from_str(json_str)
+            .map_err(|err| ConfigError::parse(err, "Failed to parse config JSON string"))?;
         config.validate()?;
         Ok(config)
     }
 
     /// Try to load from default config file, or return default config
-    pub fn load_or_default<P: AsRef<Path>>(path: Option<P>) -> Result<Self> {
+    pub fn load_or_default<P: AsRef<Path>>(
+        path: Option<P>,
+    ) -> std::result::Result<Self, ConfigError> {
         match path {
             Some(p) => Self::load(p),
             None => {
@@ -1170,7 +1186,7 @@ impl Config {
     }
 
     #[cfg(feature = "napi")]
-    pub fn from_napi(config: NapiConfig) -> Result<Self> {
+    pub fn from_napi(config: NapiConfig) -> std::result::Result<Self, ConfigError> {
         let defaults = Config::default();
         let config = Config {
             input: config.input.unwrap_or_else(|| defaults.input.clone()),
