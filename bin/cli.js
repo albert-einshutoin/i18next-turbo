@@ -652,6 +652,14 @@ function resolveIndent(config) {
   return '  ';
 }
 
+function detectJsonStyle(content, fallbackIndent = '  ') {
+  const newline = content.includes('\r\n') ? '\r\n' : '\n';
+  const indentMatch = content.match(/^[ \t]+(?=")/m);
+  const indent = indentMatch ? indentMatch[0] : fallbackIndent;
+  const trailingNewline = content.endsWith('\n') || content.endsWith('\r\n');
+  return { indent, newline, trailingNewline };
+}
+
 async function applyRuntimeTransforms(features) {
   if (!features.enabled) {
     return { applied: false, files: [] };
@@ -672,7 +680,7 @@ async function applyRuntimeTransforms(features) {
   const outputDir = path.resolve(process.cwd(), config.output || 'locales');
   const locales = Array.isArray(config.locales) && config.locales.length > 0 ? config.locales : ['en'];
   const ext = outputFormat;
-  const indent = resolveIndent(config);
+  const fallbackIndent = resolveIndent(config);
   const touched = [];
 
   for (const locale of locales) {
@@ -695,6 +703,7 @@ async function applyRuntimeTransforms(features) {
         console.warn(`Warning: skipping transform for non-JSON file: ${filePath}`);
         continue;
       }
+      const style = detectJsonStyle(content, fallbackIndent);
 
       let changed = false;
       if (defaultValueFn) {
@@ -702,12 +711,18 @@ async function applyRuntimeTransforms(features) {
       }
       if (sortFn) {
         parsed = sortObjectWithComparator(parsed, sortFn, namespace, locale, '');
-        changed = true || changed;
+        changed = true;
       }
 
       if (changed) {
-        fs.writeFileSync(filePath, `${JSON.stringify(parsed, null, indent)}\n`);
-        touched.push(filePath);
+        const serialized = JSON.stringify(parsed, null, style.indent);
+        const nextContent = style.trailingNewline
+          ? `${serialized}${style.newline}`
+          : serialized;
+        if (nextContent !== content) {
+          fs.writeFileSync(filePath, nextContent);
+          touched.push(filePath);
+        }
       }
     }
   }
