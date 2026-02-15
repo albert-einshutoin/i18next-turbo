@@ -37,8 +37,6 @@ swc_ecma_parser = { version = "32", default-features = false, features = ["types
 swc_ecma_ast = "19"
 swc_ecma_visit = "19"
 
-# Regex for comment extraction
-regex = "1.10"
 httpdate = { version = "1.0", optional = true }
 
 # Unicode normalization for consistent key handling
