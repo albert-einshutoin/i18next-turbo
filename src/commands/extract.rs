@@ -80,9 +80,13 @@ pub fn run(
         }
         eprintln!();
     }
+    let extraction_error_count = extraction.errors.len();
 
     if extraction.files.is_empty() {
         println!("No translation keys found.");
+        if extraction_error_count > 0 {
+            bail!("{} extraction error(s) encountered", extraction_error_count);
+        }
         if fail_on_warnings && extraction.warning_count > 0 {
             bail!(
                 "{} warning(s) encountered (--fail-on-warnings enabled)",
@@ -291,6 +295,9 @@ pub fn run(
             total_added,
             total_removed
         );
+    }
+    if extraction_error_count > 0 {
+        bail!("{} extraction error(s) encountered", extraction_error_count);
     }
 
     Ok(())
