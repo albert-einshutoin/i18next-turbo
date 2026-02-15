@@ -32,10 +32,10 @@ tempfile = "3.10"  # Safe atomic file operations (avoids EXDEV errors on cross-m
 rayon = "1.8"
 
 # AST Parsing (SWC)
-swc_common = { version = "18", default-features = false, features = ["tty-emitter"] }
+swc_common = { version = "18", default-features = false }
 swc_ecma_parser = { version = "32", default-features = false, features = ["typescript", "stacker"] }
-swc_ecma_ast = "19"
-swc_ecma_visit = "19"
+swc_ecma_ast = { version = "19", default-features = false }
+swc_ecma_visit = { version = "19", default-features = false }
 
 httpdate = { version = "1.0", optional = true }
 
