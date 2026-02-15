@@ -254,3 +254,93 @@ module.exports = {
         "translation.json should not be created for this output template"
     );
 }
+
+#[test]
+fn node_wrapper_plugin_errors_continue_by_default() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('continue.mode');\n").unwrap();
+
+    let plugin_js = r#"
+module.exports = {
+  afterSync() {
+    throw new Error('afterSync boom');
+  }
+};
+"#;
+    fs::write(project.join("error-plugin.js"), plugin_js).unwrap();
+
+    let config_js = r#"
+module.exports = {
+  locales: ['en'],
+  plugins: [{ resolve: './error-plugin.js' }],
+  extract: {
+    input: 'src/**/*.ts',
+    output: 'locales/{{language}}/{{namespace}}.json',
+    functions: ['t']
+  }
+};
+"#;
+    fs::write(project.join("i18next.config.js"), config_js).unwrap();
+
+    let output = run_node_cli(project, &["--config", "i18next.config.js", "extract"]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let locale_file = project.join("locales/en/translation.json");
+    let json = read_json(&locale_file);
+    assert_eq!(json["continue"]["mode"], "");
+}
+
+#[test]
+fn node_wrapper_plugin_errors_fail_fast_when_configured() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('fail.fast');\n").unwrap();
+
+    let plugin_js = r#"
+module.exports = {
+  afterSync() {
+    throw new Error('afterSync boom');
+  }
+};
+"#;
+    fs::write(project.join("error-plugin.js"), plugin_js).unwrap();
+
+    let config_js = r#"
+module.exports = {
+  locales: ['en'],
+  pluginErrorMode: 'fail-fast',
+  plugins: [{ resolve: './error-plugin.js' }],
+  extract: {
+    input: 'src/**/*.ts',
+    output: 'locales/{{language}}/{{namespace}}.json',
+    functions: ['t']
+  }
+};
+"#;
+    fs::write(project.join("i18next.config.js"), config_js).unwrap();
+
+    let output = run_node_cli(project, &["--config", "i18next.config.js", "extract"]);
+    assert!(
+        !output.status.success(),
+        "expected fail-fast mode to return non-zero; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("plugin hook \"afterSync\" failed"));
+}

@@ -19,7 +19,8 @@
 
 ## プラグインフックでエラー
 
-- フックエラーは warning として出力。
+- デフォルトは warning を出して継続（`pluginErrorMode: "continue"`）。
+- CI で厳格に止めたい場合は `pluginErrorMode: "fail-fast"` を指定。
 - `setup` / `onLoad` から段階的に導入。
 
 ## JSON5 の見た目が変わる

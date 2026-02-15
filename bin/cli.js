@@ -108,15 +108,16 @@ async function main() {
   rustArgs.push(...args);
 
   const commandName = resolveCommandName(args);
+  const pluginRuntime = resolvePluginRuntime(runtimeConfig);
   const features = resolveRuntimeFeatures(runtimeConfig, commandName, args);
-  const plugins = await loadPlugins(runtimeConfig);
+  const plugins = await loadPlugins(runtimeConfig, pluginRuntime);
   await runPluginHook(plugins, 'setup', {
     command: commandName,
     args,
     config: runtimeConfig
-  });
+  }, pluginRuntime);
 
-  const onLoadPrep = await prepareOnLoadInput(plugins, runtimeConfig, commandName, args);
+  const onLoadPrep = await prepareOnLoadInput(plugins, runtimeConfig, commandName, args, pluginRuntime);
   if (onLoadPrep && onLoadPrep.updatedConfig) {
     runtimeConfig = onLoadPrep.updatedConfig;
     configJson = serializeConfigForRust(runtimeConfig);
@@ -134,7 +135,7 @@ async function main() {
       command: commandName,
       args,
       config: runtimeConfig
-    });
+    }, pluginRuntime);
   }
   if (exitCode !== 0) {
     process.exit(exitCode);
@@ -142,20 +143,20 @@ async function main() {
 
   const postSyncResult = await applyRuntimeTransforms(features);
   if (commandName === 'sync') {
-    await emitOnVisitNodeEquivalent(plugins, runtimeConfig, commandName, args);
+    await emitOnVisitNodeEquivalent(plugins, runtimeConfig, commandName, args, pluginRuntime);
   }
   await runPluginHook(plugins, 'onEnd', {
     command: commandName,
     args,
     config: runtimeConfig,
     postSyncResult
-  });
+  }, pluginRuntime);
   await runPluginHook(plugins, 'afterSync', {
     command: commandName,
     args,
     config: runtimeConfig,
     postSyncResult
-  });
+  }, pluginRuntime);
 
   process.exit(0);
 }
@@ -345,10 +346,39 @@ function buildRuntimeMetadata(rawConfig) {
     sortFn: typeof extract.sort === 'function'
       ? extract.sort
       : (typeof rawConfig.sort === 'function' ? rawConfig.sort : null),
+    pluginErrorMode: typeof extract.pluginErrorMode === 'string'
+      ? extract.pluginErrorMode
+      : (typeof rawConfig.pluginErrorMode === 'string' ? rawConfig.pluginErrorMode : null),
     plugins: Array.isArray(rawConfig.plugins)
       ? rawConfig.plugins
       : (Array.isArray(extract.plugins) ? extract.plugins : [])
   };
+}
+
+function resolvePluginRuntime(config) {
+  const runtime = config && config.__runtime ? config.__runtime : {};
+  const rawMode = typeof runtime.pluginErrorMode === 'string'
+    ? runtime.pluginErrorMode.trim().toLowerCase()
+    : '';
+  if (!rawMode || rawMode === 'continue') {
+    return { errorMode: 'continue' };
+  }
+  if (rawMode === 'fail-fast') {
+    return { errorMode: 'fail-fast' };
+  }
+  console.warn(`Warning: unknown pluginErrorMode "${runtime.pluginErrorMode}", falling back to "continue".`);
+  return { errorMode: 'continue' };
+}
+
+function handlePluginError(runtime, hook, error, detail = '') {
+  const mode = runtime && runtime.errorMode === 'fail-fast' ? 'fail-fast' : 'continue';
+  const msg = detail
+    ? `plugin hook "${hook}" failed for ${detail}: ${error.message}`
+    : `plugin hook "${hook}" failed: ${error.message}`;
+  if (mode === 'fail-fast') {
+    throw new Error(msg);
+  }
+  console.warn(`Warning: ${msg}`);
 }
 
 function resolveCommandName(args) {
@@ -422,7 +452,7 @@ function prepareAstEventCapture(plugins, commandName) {
   };
 }
 
-async function dispatchAstVisitEvents(plugins, capture, context) {
+async function dispatchAstVisitEvents(plugins, capture, context, pluginRuntime) {
   if (!capture || !capture.filePath) {
     return;
   }
@@ -443,7 +473,7 @@ async function dispatchAstVisitEvents(plugins, capture, context) {
           ...node,
           command: context.command,
           args: context.args
-        });
+        }, pluginRuntime);
       } catch (error) {
         console.warn(`Warning: failed to parse AST event line: ${error.message}`);
       }
@@ -462,7 +492,7 @@ function shouldApplyOnLoad(commandName, args) {
   return ['extract', 'watch', 'status', 'check', 'lint'].includes(commandName);
 }
 
-async function prepareOnLoadInput(plugins, runtimeConfig, commandName, args) {
+async function prepareOnLoadInput(plugins, runtimeConfig, commandName, args, pluginRuntime) {
   const hasOnLoad = plugins.some((plugin) => plugin && typeof plugin.onLoad === 'function');
   if (!hasOnLoad || !runtimeConfig || !shouldApplyOnLoad(commandName, args)) {
     return null;
@@ -509,7 +539,7 @@ async function prepareOnLoadInput(plugins, runtimeConfig, commandName, args) {
           }
         }
       } catch (error) {
-        console.warn(`Warning: plugin hook "onLoad" failed for ${rel}: ${error.message}`);
+        handlePluginError(pluginRuntime, 'onLoad', error, rel);
       }
     }
 
@@ -688,7 +718,7 @@ async function applyRuntimeTransforms(features) {
   return { applied: touched.length > 0, files: touched };
 }
 
-async function emitOnVisitNodeEquivalent(plugins, config, commandName, args) {
+async function emitOnVisitNodeEquivalent(plugins, config, commandName, args, pluginRuntime) {
   const hasVisitor = plugins.some((plugin) => plugin && typeof plugin.onVisitNode === 'function');
   if (!hasVisitor || !config) {
     return;
@@ -729,12 +759,12 @@ async function emitOnVisitNodeEquivalent(plugins, config, commandName, args) {
         command: commandName,
         args,
         config
-      }, plugins);
+      }, plugins, pluginRuntime);
     }
   }
 }
 
-async function traverseLocaleNodes(value, base, plugins, parentPath = '') {
+async function traverseLocaleNodes(value, base, plugins, pluginRuntime, parentPath = '') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return;
   }
@@ -747,20 +777,20 @@ async function traverseLocaleNodes(value, base, plugins, parentPath = '') {
         type: 'TranslationObject',
         key: keyPath,
         value: v
-      });
-      await traverseLocaleNodes(v, base, plugins, keyPath);
+      }, pluginRuntime);
+      await traverseLocaleNodes(v, base, plugins, pluginRuntime, keyPath);
     } else {
       await runPluginVisitNode(plugins, {
         ...base,
         type: 'TranslationKey',
         key: keyPath,
         value: v
-      });
+      }, pluginRuntime);
     }
   }
 }
 
-async function runPluginVisitNode(plugins, node) {
+async function runPluginVisitNode(plugins, node, pluginRuntime) {
   for (const plugin of plugins) {
     if (!plugin || typeof plugin.onVisitNode !== 'function') {
       continue;
@@ -768,7 +798,7 @@ async function runPluginVisitNode(plugins, node) {
     try {
       await plugin.onVisitNode(node);
     } catch (error) {
-      console.warn(`Warning: plugin hook "onVisitNode" failed: ${error.message}`);
+      handlePluginError(pluginRuntime, 'onVisitNode', error);
     }
   }
 }
@@ -827,7 +857,7 @@ function sortObjectWithComparator(value, sortFn, namespace, language, keyPath) {
   return sorted;
 }
 
-async function loadPlugins(config) {
+async function loadPlugins(config, pluginRuntime) {
   const pluginDefs = (config && config.__runtime && Array.isArray(config.__runtime.plugins))
     ? config.__runtime.plugins
     : [];
@@ -853,7 +883,7 @@ async function loadPlugins(config) {
         plugins.push(def);
       }
     } catch (error) {
-      console.warn(`Warning: failed to load plugin: ${error.message}`);
+      handlePluginError(pluginRuntime, 'loadPlugin', error);
     }
   }
 
@@ -873,7 +903,7 @@ async function loadPluginModule(specifier) {
   return mod && mod.default ? mod.default : mod;
 }
 
-async function runPluginHook(plugins, hook, context) {
+async function runPluginHook(plugins, hook, context, pluginRuntime) {
   for (const plugin of plugins) {
     if (!plugin || typeof plugin[hook] !== 'function') {
       continue;
@@ -881,7 +911,7 @@ async function runPluginHook(plugins, hook, context) {
     try {
       await plugin[hook](context);
     } catch (error) {
-      console.warn(`Warning: plugin hook "${hook}" failed: ${error.message}`);
+      handlePluginError(pluginRuntime, hook, error);
     }
   }
 }

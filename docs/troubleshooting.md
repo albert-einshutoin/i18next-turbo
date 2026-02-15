@@ -19,7 +19,8 @@
 
 ## Plugin hook errors
 
-- Hook errors are logged as warnings.
+- Default mode logs hook errors as warnings (`pluginErrorMode: "continue"`).
+- For CI strict mode, set `pluginErrorMode: "fail-fast"` to stop immediately.
 - Start with `setup` / `onLoad` only, then add `onVisitNode`.
 
 ## JSON5 formatting changed
