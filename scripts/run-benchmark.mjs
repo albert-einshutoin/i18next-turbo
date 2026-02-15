@@ -65,7 +65,8 @@ function runExtract(name, command, args, cwd) {
     const start = performance.now();
     const child = spawn(command, args, {
       cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      // Ignore stdout to avoid pipe backpressure deadlock in CI.
+      stdio: ['ignore', 'ignore', 'pipe'],
     });
     let stderr = '';
     child.stderr?.on('data', (d) => { stderr += d; });
