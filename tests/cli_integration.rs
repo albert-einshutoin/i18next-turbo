@@ -4,6 +4,8 @@ use std::process::{Command, Output};
 
 use serde_json::{json, Value};
 use tempfile::tempdir;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_i18next-turbo")
@@ -531,4 +533,90 @@ fn migrate_dry_run_prints_preview_for_existing_turbo_config() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("変換後プレビュー"));
     assert!(stdout.contains("dry-run"));
+}
+
+#[test]
+fn extract_fails_on_invalid_utf8_source() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("src/broken.ts"),
+        vec![0x74, 0x28, 0x27, 0x6b, 0x27, 0x29, 0x3b, 0x80],
+    )
+    .unwrap();
+    let config_path = write_config(project);
+
+    let output = run_cli(
+        project,
+        &["--config", config_path.to_str().unwrap(), "extract"],
+    );
+    assert!(
+        !output.status.success(),
+        "expected extract to fail for invalid UTF-8; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to read file"));
+}
+
+#[cfg(unix)]
+#[test]
+fn extract_fails_on_unreadable_source_file() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    let locked_path = project.join("src/locked.ts");
+    fs::write(&locked_path, "t('cannot.read');").unwrap();
+    fs::set_permissions(&locked_path, fs::Permissions::from_mode(0o000)).unwrap();
+    let config_path = write_config(project);
+
+    let output = run_cli(
+        project,
+        &["--config", config_path.to_str().unwrap(), "extract"],
+    );
+    fs::set_permissions(&locked_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert!(
+        !output.status.success(),
+        "expected extract to fail for unreadable file; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Failed to read file"));
+}
+
+#[test]
+fn extract_handles_large_input_without_panicking() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+
+    let mut source = String::new();
+    for i in 0..3000 {
+        source.push_str(&format!("t('bulk.key{}');\n", i));
+    }
+    let deep_key = vec!["deep"; 32].join(".");
+    source.push_str(&format!("t('{}');\n", deep_key));
+    fs::write(project.join("src/large.ts"), source).unwrap();
+
+    let config_path = write_config(project);
+    let output = run_cli(
+        project,
+        &["--config", config_path.to_str().unwrap(), "extract"],
+    );
+    assert!(
+        output.status.success(),
+        "large input should be processed successfully; stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let locale_json = project.join("locales/en/translation.json");
+    let json = read_json(&locale_json);
+    assert!(json["bulk"]["key0"].is_string());
+    assert!(json["bulk"]["key2999"].is_string());
+    assert!(json["deep"].is_object());
 }
