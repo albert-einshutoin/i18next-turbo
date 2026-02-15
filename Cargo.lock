@@ -681,7 +681,6 @@ dependencies = [
  "napi-derive",
  "notify-debouncer-mini",
  "rayon",
- "regex",
  "reqwest",
  "serde",
  "serde_json",

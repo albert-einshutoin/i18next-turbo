@@ -3,7 +3,6 @@
 use crate::config::{PluralConfig, UseTranslationName};
 use anyhow::{Context, Result};
 use glob::Pattern;
-use regex::Regex;
 use serde_json::{json, Value as JsonValue};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -30,35 +29,11 @@ fn normalize_key(key: &str) -> Cow<'_, str> {
 }
 
 // =============================================================================
-// Static regex patterns (compiled once via OnceLock for thread-safe lazy init)
+// Lazy globals
 // =============================================================================
-static SCRIPT_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
-static TEMPLATE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
-static STYLE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
 static AST_EVENT_WRITER: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
 
 const AST_EVENT_PATH_ENV: &str = "I18NEXT_TURBO_AST_EVENTS_PATH";
-
-fn get_script_block_regex() -> &'static Regex {
-    SCRIPT_BLOCK_REGEX.get_or_init(|| {
-        Regex::new(r#"(?is)<script\b[^>]*>(.*?)</script>"#)
-            .expect("SCRIPT_BLOCK_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-fn get_template_block_regex() -> &'static Regex {
-    TEMPLATE_BLOCK_REGEX.get_or_init(|| {
-        Regex::new(r#"(?is)<template\b[^>]*>(.*?)</template>"#)
-            .expect("TEMPLATE_BLOCK_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-fn get_style_block_regex() -> &'static Regex {
-    STYLE_BLOCK_REGEX.get_or_init(|| {
-        Regex::new(r#"(?is)<style\b[^>]*>.*?</style>"#)
-            .expect("STYLE_BLOCK_REGEX pattern is invalid - this is a bug")
-    })
-}
 
 fn get_ast_event_writer() -> Option<&'static Mutex<std::fs::File>> {
     AST_EVENT_WRITER
@@ -96,18 +71,120 @@ struct TagBlock {
     range: Range<usize>,
 }
 
-fn extract_tag_blocks(source: &str, regex: &Regex) -> Vec<TagBlock> {
-    regex
-        .captures_iter(source)
-        .filter_map(|caps| {
-            let full = caps.get(0)?;
-            let inner = caps.get(1).unwrap_or(full);
-            Some(TagBlock {
-                content: inner.as_str().to_string(),
-                range: full.start()..full.end(),
-            })
-        })
-        .collect()
+fn ascii_eq_ignore_case(a: u8, b: u8) -> bool {
+    if a == b {
+        return true;
+    }
+    a.is_ascii_alphabetic() && b.is_ascii_alphabetic() && a.eq_ignore_ascii_case(&b)
+}
+
+fn starts_with_ascii_case_insensitive(haystack: &[u8], offset: usize, needle: &[u8]) -> bool {
+    if offset + needle.len() > haystack.len() {
+        return false;
+    }
+    for (idx, b) in needle.iter().enumerate() {
+        if !ascii_eq_ignore_case(haystack[offset + idx], *b) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_tag_name_boundary(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || byte == b'>' || byte == b'/'
+}
+
+fn find_tag_end(source: &[u8], mut index: usize) -> Option<usize> {
+    let mut quote: Option<u8> = None;
+    while index < source.len() {
+        let ch = source[index];
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if ch == b'\'' || ch == b'"' {
+            quote = Some(ch);
+            index += 1;
+            continue;
+        }
+        if ch == b'>' {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn find_tag_blocks_by_name(source: &str, tag_name: &str) -> Vec<TagBlock> {
+    let bytes = source.as_bytes();
+    let tag = tag_name.as_bytes();
+    let mut blocks = Vec::new();
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        let Some(open_rel) = bytes[index..].iter().position(|b| *b == b'<') else {
+            break;
+        };
+        let open_start = index + open_rel;
+        let name_start = open_start + 1;
+        if !starts_with_ascii_case_insensitive(bytes, name_start, tag) {
+            index = open_start + 1;
+            continue;
+        }
+        let after_name = name_start + tag.len();
+        if after_name >= bytes.len() || !is_tag_name_boundary(bytes[after_name]) {
+            index = open_start + 1;
+            continue;
+        }
+        let Some(open_end) = find_tag_end(bytes, after_name) else {
+            break;
+        };
+
+        let mut search = open_end + 1;
+        let mut close_start = None;
+        while search < bytes.len() {
+            let Some(rel) = bytes[search..].iter().position(|b| *b == b'<') else {
+                break;
+            };
+            let candidate = search + rel;
+            if candidate + 2 >= bytes.len() || bytes[candidate + 1] != b'/' {
+                search = candidate + 1;
+                continue;
+            }
+            let close_name_start = candidate + 2;
+            if !starts_with_ascii_case_insensitive(bytes, close_name_start, tag) {
+                search = candidate + 1;
+                continue;
+            }
+            let close_after_name = close_name_start + tag.len();
+            if close_after_name >= bytes.len() || !is_tag_name_boundary(bytes[close_after_name]) {
+                search = candidate + 1;
+                continue;
+            }
+            close_start = Some(candidate);
+            break;
+        }
+
+        let Some(close_start) = close_start else {
+            break;
+        };
+        let Some(close_end) = find_tag_end(bytes, close_start + 2 + tag.len()) else {
+            break;
+        };
+
+        let content_start = open_end + 1;
+        let content_end = close_start;
+        blocks.push(TagBlock {
+            content: source[content_start..content_end].to_string(),
+            range: open_start..(close_end + 1),
+        });
+        index = close_end + 1;
+    }
+
+    blocks
 }
 
 #[derive(Default)]
@@ -2369,7 +2446,7 @@ fn extract_vue_component(
     let mut keys = Vec::new();
     let mut warnings = 0usize;
 
-    let script_blocks = extract_tag_blocks(source_code, get_script_block_regex());
+    let script_blocks = find_tag_blocks_by_name(source_code, "script");
     for (idx, block) in script_blocks.iter().enumerate() {
         let virtual_path = format!("{}#script{}", file_path.display(), idx + 1);
         let (mut script_keys, block_warnings) = extract_from_source_with_warnings(
@@ -2391,7 +2468,7 @@ fn extract_vue_component(
         warnings += block_warnings;
     }
 
-    let template_blocks = extract_tag_blocks(source_code, get_template_block_regex());
+    let template_blocks = find_tag_blocks_by_name(source_code, "template");
     if !template_blocks.is_empty() {
         let template_functions = ctx.template_functions();
         for (block_idx, block) in template_blocks.iter().enumerate() {
@@ -2458,7 +2535,7 @@ fn extract_svelte_component(
     let mut keys = Vec::new();
     let mut warnings = 0usize;
 
-    let script_blocks = extract_tag_blocks(source_code, get_script_block_regex());
+    let script_blocks = find_tag_blocks_by_name(source_code, "script");
     for (idx, block) in script_blocks.iter().enumerate() {
         let virtual_path = format!("{}#script{}", file_path.display(), idx + 1);
         let (mut script_keys, block_warnings) = extract_from_source_with_warnings(
@@ -2485,7 +2562,7 @@ fn extract_svelte_component(
         .iter()
         .map(|block| block.range.clone())
         .collect();
-    let style_blocks = extract_tag_blocks(source_code, get_style_block_regex());
+    let style_blocks = find_tag_blocks_by_name(source_code, "style");
     for block in style_blocks {
         removal_ranges.push(block.range);
     }
