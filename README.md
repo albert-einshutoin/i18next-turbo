@@ -1,5 +1,13 @@
 # i18next-turbo
 
+[![npm version](https://img.shields.io/npm/v/i18next-turbo.svg)](https://www.npmjs.com/package/i18next-turbo)
+[![npm downloads](https://img.shields.io/npm/dm/i18next-turbo.svg)](https://www.npmjs.com/package/i18next-turbo)
+[![Node.js](https://img.shields.io/node/v/i18next-turbo.svg)](https://www.npmjs.com/package/i18next-turbo)
+[![CI](https://github.com/albert-einshutoin/i18next-turbo/actions/workflows/ci.yml/badge.svg)](https://github.com/albert-einshutoin/i18next-turbo/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/albert-einshutoin/i18next-turbo/graph/badge.svg)](https://codecov.io/gh/albert-einshutoin/i18next-turbo)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.85%2B-DEA584?logo=rust)](https://www.rust-lang.org/)
+
 Fast i18next key extraction for modern TypeScript/JavaScript codebases.
 
 `i18next-turbo` is a Rust + SWC based extractor compatible with i18next-style workflows. It is designed for fast CI runs and low-latency watch mode.
