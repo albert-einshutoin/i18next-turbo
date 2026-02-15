@@ -11,6 +11,7 @@
 Fast i18next key extraction for modern TypeScript/JavaScript codebases.
 
 `i18next-turbo` is a Rust + SWC based extractor compatible with i18next-style workflows. It is designed for fast CI runs and low-latency watch mode.
+Latest stable release: `v0.5.3`.
 
 ## Install
 
@@ -77,6 +78,7 @@ Create `i18next-turbo.json` in your project root:
 - [Troubleshooting](docs/troubleshooting.md)
 - [Usage Examples](docs/usage-examples.md)
 - [Performance Testing](docs/performance-testing.md)
+- [Changelog](CHANGELOG.md)
 
 ## Contributing
 
