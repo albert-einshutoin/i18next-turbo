@@ -344,3 +344,48 @@ module.exports = {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("plugin hook \"afterSync\" failed"));
 }
+
+#[test]
+fn node_wrapper_runtime_transform_preserves_json_style() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(project.join("locales/en")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('z.key');\nt('a.key');\n").unwrap();
+    // tabs + CRLF + no trailing newline
+    fs::write(
+        project.join("locales/en/translation.json"),
+        "{\r\n\t\"z\": {\r\n\t\t\"key\": \"\"\r\n\t},\r\n\t\"a\": {\r\n\t\t\"key\": \"\"\r\n\t}\r\n}",
+    )
+    .unwrap();
+
+    let config_js = r#"
+module.exports = {
+  locales: ['en'],
+  extract: {
+    input: 'src/**/*.ts',
+    output: 'locales/{{language}}/{{namespace}}.json',
+    functions: ['t'],
+    defaultValue: (key) => key,
+    sort: (a, b) => a.key.localeCompare(b.key)
+  }
+};
+"#;
+    fs::write(project.join("i18next.config.js"), config_js).unwrap();
+
+    let output = run_node_cli(project, &["--config", "i18next.config.js", "extract"]);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(project.join("locales/en/translation.json")).unwrap();
+    assert!(content.contains("\r\n\t\"a\""));
+    assert!(!content.ends_with('\n'));
+}
