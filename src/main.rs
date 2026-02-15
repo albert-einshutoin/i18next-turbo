@@ -217,12 +217,14 @@ enum Commands {
     },
 
     /// Locize integration commands
+    #[cfg(feature = "locize")]
     Locize {
         #[command(subcommand)]
         command: LocizeCommands,
     },
 }
 
+#[cfg(feature = "locize")]
 #[derive(Subcommand)]
 enum LocizeCommands {
     /// Upload local translation files to Locize
@@ -452,6 +454,7 @@ fn main() -> Result<()> {
                 matches!(loaded_config.source_kind, ConfigSourceKind::InlineJson),
             )?;
         }
+        #[cfg(feature = "locize")]
         Commands::Locize { command } => match command {
             LocizeCommands::Upload {
                 locale,

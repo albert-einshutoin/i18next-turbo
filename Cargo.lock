@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "i18next-turbo"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -681,7 +681,6 @@ dependencies = [
  "napi-derive",
  "notify-debouncer-mini",
  "rayon",
- "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -1782,7 +1781,6 @@ dependencies = [
  "swc_atoms",
  "swc_eq_ignore_macros",
  "swc_visit",
- "termcolor",
  "tracing",
  "unicode-width",
  "url",
@@ -1935,15 +1933,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "termcolor"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
-dependencies = [
- "winapi-util",
 ]
 
 [[package]]

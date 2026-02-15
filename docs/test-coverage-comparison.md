@@ -9,7 +9,7 @@
 | 言語 | TypeScript (Node.js) | Rust |
 | テストフレームワーク | Vitest | cargo test (標準) |
 | テストファイル数 | 57 | 2 (integration) + 各モジュール内 unit |
-| テスト数 | 542 (1 timeout 失敗あり) | 135 (lib) + 3 (bin) + 17 (integration) |
+| テスト数 | 542 (1 timeout 失敗あり) | 140 (lib) + 6 (bin) + 27 (integration) |
 | カバレッジ計測 | あり (v8) | CI では未実施 |
 | カバレッジ値 | **Stmts 84.59%**, Branch 76.27%, Funcs 89.32%, Lines 86.83% | **Regions 75.09% / Functions 76.09% / Lines 75.23%**（`cargo llvm-cov --summary-only`） |
 
@@ -57,7 +57,7 @@
 
 ### 3.2 統合テスト（`tests/*.rs`）
 
-**cli_integration.rs（14 テスト）**
+**cli_integration.rs（17 テスト）**
 
 | テスト名 | 保証していること |
 |----------|------------------|
@@ -75,12 +75,22 @@
 | lint_fail_on_error_returns_non_zero | ハードコード文字列で lint --fail-on-error が非ゼロ |
 | lint_passes_when_only_translated_text_exists | 翻訳のみの場合は lint 成功 |
 | migrate_dry_run_prints_preview_for_existing_turbo_config | migrate --dry-run でプレビュー表示 |
+| extract_fails_on_invalid_utf8_source | 不正UTF-8入力で extract が非ゼロ終了し読み込みエラーを返す |
+| extract_fails_on_unreadable_source_file (unix) | 権限不足で読み取り不可ファイル時に非ゼロ終了する |
+| extract_handles_large_input_without_panicking | 大規模入力（3,000キー+深いネスト）でもパニックせず完走する |
 
-**node_wrapper_integration.rs（3 テスト、Node と cosmiconfig/jiti がある場合のみ）**
+**extraction_patterns.rs（6 テスト）**
+
+- t()/i18n.t()/Trans/useTranslation/comment など主要パターンの抽出回帰
+
+**node_wrapper_integration.rs（6 テスト、Node と cosmiconfig/jiti がある場合のみ）**
 
 - node_wrapper_supports_default_value_and_sort_function_forms
 - node_wrapper_plugin_onload_transforms_source_and_aftersync_runs
 - node_wrapper_plugin_onvisitnode_receives_rust_ast_events
+- node_wrapper_merge_namespaces_without_namespace_placeholder_writes_single_file
+- node_wrapper_plugin_errors_continue_by_default
+- node_wrapper_plugin_errors_fail_fast_when_configured
 
 ---
 
@@ -102,7 +112,7 @@
 | **init** | init.test | commands::init::tests | ○ 両方で検証 |
 | **config** | config.test, config.ensureConfig.test | config::tests::* | ◎ 設定解釈を両方で検証 |
 | **locize** | locize.test, locize-output-function | commands::locize::tests | ○ 両方で検証（CLI は E2E 的） |
-| **plugin** | plugin.*.test.ts（Vue, Svelte, Astro, Handlebars, HTML, TypeScript, afterSync 等） | node_wrapper の 3 テスト（defaultValue/sort, onload/aftersync, onvisitnode） | △  CLI はプラグイン多様、turbo は Node ラッパー経由の一部のみ |
+| **plugin** | plugin.*.test.ts（Vue, Svelte, Astro, Handlebars, HTML, TypeScript, afterSync 等） | node_wrapper の 5 テスト（defaultValue/sort, onload/aftersync, onvisitnode, error mode） | △  CLI はプラグイン多様、turbo は Node ラッパー経由の一部のみ |
 | **CLI 入口** | cli.test, cli.config.test | main.rs の tests（3 件すべて通過） | ○ 基本分岐は検証済み |
 
 ---
@@ -125,13 +135,20 @@
 
 ### turbo で不足しがちな部分（△）
 
-- **プラグイン**: turbo は Node ラッパー経由の 3 テストのみ。Vue/Svelte/Astro/Handlebars/HTML 等の個別プラグインに相当するテストは CLI にしかない。
+- **プラグイン**: turbo は Node ラッパー経由の 5 テスト（エラーモード含む）を持つが、Vue/Svelte/Astro/Handlebars/HTML 等の個別プラグイン群は CLI 側が依然厚い。
 - **カバレッジ運用**: turbo は `cargo llvm-cov` で計測可能。現在は手動計測ベースのため、CI 常時収集は未導入。
 - **CLI 入口**: main.rs テストの失敗は解消済み。
+
+### 正常系/異常系のカバレッジ方針（Issue #61）
+
+- 正常系: 既存コマンドの主要ユースケース（extract/sync/status/typegen/check/lint/migrate）を integration で維持。
+- 異常系: 入力破損（不正UTF-8）、I/O失敗（権限/読み取り不可）、極端入力（巨大ファイル/深いネスト）を最小1ケース以上追加。
+- 失敗契約: 異常系は「非ゼロ終了コード + stderr のエラー文言」を必ず検証。
+- CI運用: 異常系テストを通常の `cargo test --all` に含め、常時実行する。
 
 ### 数値まとめ
 
 - **i18next-cli**: 約 **86% Lines カバレッジ**、542 テスト、57 ファイル。extract/sync/status/typegen/lint/config などは高いカバレッジでカバーされている。
-- **i18next-turbo**: **単体 135 + bin 3 + 統合 17**。`cargo llvm-cov` 実測で **Regions 75.09% / Functions 76.09% / Lines 75.23%**。extract/sync/status/typegen/lint/check/migrate の主要フローは integration で保証され、locize/main/watcher のカバレッジも改善済み。
+- **i18next-turbo**: **単体 140 + bin 6 + 統合 27**。`cargo llvm-cov` 実測で **Regions 75.09% / Functions 76.09% / Lines 75.23%**。extract/sync/status/typegen/lint/check/migrate の主要フローは integration で保証され、異常系（不正UTF-8・権限・巨大入力）も回帰検知対象に追加済み。
 
 全体として、**コア機能（extract, sync, typegen, lint, config）については両方で同様の動作がテストで保証されている**。status/rename-key は CLI の方が厚く、turbo は plugin 拡張周辺（多言語テンプレート専用プラグイン群）でまだ差がある。

@@ -42,3 +42,21 @@ node scripts/run-benchmark.mjs 5 \
 
 - Time includes process startup and file I/O.
 - For stable comparisons, run on the same machine with low background load.
+
+## Plugin overhead benchmark
+
+```bash
+npm install
+npm run benchmark:plugin
+# or
+node scripts/run-plugin-benchmark.mjs 5 --json benchmarks/plugin-latest.json
+```
+
+Optional threshold gate:
+
+```bash
+node scripts/run-plugin-benchmark.mjs 5 --max-overhead 0.20
+```
+
+- compares `i18next-turbo` with plugin off/on on the same fixture
+- reports overhead ratio: `(withPlugin.avg - withoutPlugin.avg) / withoutPlugin.avg`

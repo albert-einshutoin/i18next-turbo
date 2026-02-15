@@ -1,6 +1,6 @@
 {
   "name": "i18next-turbo",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Blazing fast i18next translation key extractor - 10-100x faster with Rust + SWC",
   "license": "MIT",
   "author": "i18next-turbo contributors",
@@ -33,7 +33,8 @@
     "postinstall": "node bin/postinstall.js",
     "sync-version": "node scripts/sync-version.mjs",
     "benchmark": "node scripts/run-benchmark.mjs",
-    "benchmark:ci": "node scripts/run-benchmark.mjs 5 --json benchmarks/latest.json --min-speedup 10",
+    "benchmark:plugin": "node scripts/run-plugin-benchmark.mjs",
+    "benchmark:ci": "node scripts/run-benchmark.mjs 5 --json benchmarks/latest.json --min-speedup 10 --run-timeout-ms 120000",
     "bench:fixtures": "node scripts/generate-bench-fixtures.mjs"
   },
   "dependencies": {
@@ -41,11 +42,11 @@
     "jiti": "^1.21.0"
   },
   "optionalDependencies": {
-    "i18next-turbo-darwin-arm64": "0.5.2",
-    "i18next-turbo-darwin-x64": "0.5.2",
-    "i18next-turbo-linux-x64-gnu": "0.5.2",
-    "i18next-turbo-linux-x64-musl": "0.5.2",
-    "i18next-turbo-win32-x64-msvc": "0.5.2"
+    "i18next-turbo-darwin-arm64": "0.5.3",
+    "i18next-turbo-darwin-x64": "0.5.3",
+    "i18next-turbo-linux-x64-gnu": "0.5.3",
+    "i18next-turbo-linux-x64-musl": "0.5.3",
+    "i18next-turbo-win32-x64-msvc": "0.5.3"
   },
   "engines": {
     "node": ">=14"

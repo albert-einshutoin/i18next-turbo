@@ -1,6 +1,6 @@
 [package]
 name = "i18next-turbo"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 
 [lib]
@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 napi = ["dep:napi", "dep:napi-derive"]
+locize = ["dep:reqwest", "dep:httpdate"]
 
 [dependencies]
 # CLI & Config
@@ -18,7 +19,7 @@ serde_json = "1.0"
 json5 = "0.4"
 anyhow = "1.0"
 thiserror = "1.0"
-reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.11", optional = true, default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 # Filesystem & Glob
 glob = "0.3"
@@ -31,14 +32,12 @@ tempfile = "3.10"  # Safe atomic file operations (avoids EXDEV errors on cross-m
 rayon = "1.8"
 
 # AST Parsing (SWC)
-swc_common = { version = "18", features = ["tty-emitter"] }
-swc_ecma_parser = "32"
-swc_ecma_ast = "19"
-swc_ecma_visit = "19"
+swc_common = { version = "18", default-features = false }
+swc_ecma_parser = { version = "32", default-features = false, features = ["typescript", "stacker"] }
+swc_ecma_ast = { version = "19", default-features = false }
+swc_ecma_visit = { version = "19", default-features = false }
 
-# Regex for comment extraction
-regex = "1.10"
-httpdate = "1.0"
+httpdate = { version = "1.0", optional = true }
 
 # Unicode normalization for consistent key handling
 unicode-normalization = "0.1"

@@ -775,4 +775,4 @@ The following are "i18next-cli compatibility extensions" and are not counted tow
 
 ---
 
-Last updated: 2026-02-12 (v0.5.1 release assets verified on GitHub Releases, v2.0 milestone checklist synchronized).
+Last updated: 2026-02-15 (v0.5.3 release preparation completed, v2.0 milestone checklist synchronized).

@@ -38,3 +38,19 @@
 - `onVisitNode(node)`
 - `onEnd(context)`
 - `afterSync(context)`
+
+## プラグインエラーポリシー
+
+`pluginErrorMode` でフック失敗時の挙動を指定できます。
+
+```js
+module.exports = {
+  pluginErrorMode: 'continue', // または 'fail-fast'
+  extract: {
+    pluginErrorMode: 'fail-fast' // extract 配下が優先
+  }
+};
+```
+
+- `continue`（デフォルト）: warning 出力で継続。
+- `fail-fast`: load/hook エラー時に非ゼロ終了。

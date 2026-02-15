@@ -2,6 +2,7 @@ pub mod check;
 pub mod extract;
 pub mod init;
 pub mod lint;
+#[cfg(feature = "locize")]
 pub mod locize;
 pub mod migrate;
 pub mod rename_key;

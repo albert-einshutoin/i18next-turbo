@@ -3,7 +3,6 @@
 use crate::config::{PluralConfig, UseTranslationName};
 use anyhow::{Context, Result};
 use glob::Pattern;
-use regex::Regex;
 use serde_json::{json, Value as JsonValue};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -30,81 +29,11 @@ fn normalize_key(key: &str) -> Cow<'_, str> {
 }
 
 // =============================================================================
-// Static regex patterns (compiled once via OnceLock for thread-safe lazy init)
+// Lazy globals
 // =============================================================================
-//
-// All regex patterns are validated at compile time via tests (see test_regex_initialization).
-// If any pattern is invalid, the test will fail during CI, preventing runtime panics.
-
-/// Pattern for t() calls in comments with single argument.
-/// Matches: `t('key')`, `t("key")`, `t(\`key\`)`
-/// Captures: Group 1 = the key string
-static COMMENT_SINGLE_ARG_REGEX: OnceLock<Regex> = OnceLock::new();
-
-/// Pattern for t() calls in comments with key and default value.
-/// Matches: `t('key', 'default')`, `t("key", "default")`
-/// Captures: Group 1 = key, Group 2 = default value
-static COMMENT_WITH_DEFAULT_REGEX: OnceLock<Regex> = OnceLock::new();
-
-/// Pattern for t() calls in comments with options object containing defaultValue.
-/// Matches: `t('key', { defaultValue: 'default' })`
-/// Captures: Group 1 = key, Group 2 = default value
-static COMMENT_WITH_OPTIONS_REGEX: OnceLock<Regex> = OnceLock::new();
-
-static SCRIPT_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
-static TEMPLATE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
-static STYLE_BLOCK_REGEX: OnceLock<Regex> = OnceLock::new();
 static AST_EVENT_WRITER: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
 
 const AST_EVENT_PATH_ENV: &str = "I18NEXT_TURBO_AST_EVENTS_PATH";
-
-/// Returns regex for t() calls in comments with single argument
-fn get_comment_single_arg_regex() -> &'static Regex {
-    COMMENT_SINGLE_ARG_REGEX.get_or_init(|| {
-        // Pattern: non-identifier char (or start), then t, optional whitespace, open paren,
-        // optional whitespace, quoted string (single, double, or backtick), close paren
-        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*\)"#)
-            .expect("COMMENT_SINGLE_ARG_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-/// Returns regex for t() calls in comments with key and default value
-fn get_comment_with_default_regex() -> &'static Regex {
-    COMMENT_WITH_DEFAULT_REGEX.get_or_init(|| {
-        // Pattern: t('key', 'default') - two consecutive quoted strings separated by comma
-        Regex::new(r#"(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]\s*\)"#)
-            .expect("COMMENT_WITH_DEFAULT_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-/// Returns regex for t() calls with options object (captures key and opening brace)
-fn get_comment_with_options_regex() -> &'static Regex {
-    COMMENT_WITH_OPTIONS_REGEX.get_or_init(|| {
-        Regex::new(r#"(?s)(?:^|[^a-zA-Z_])t\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(\{)"#)
-            .expect("COMMENT_WITH_OPTIONS_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-fn get_script_block_regex() -> &'static Regex {
-    SCRIPT_BLOCK_REGEX.get_or_init(|| {
-        Regex::new(r#"(?is)<script\b[^>]*>(.*?)</script>"#)
-            .expect("SCRIPT_BLOCK_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-fn get_template_block_regex() -> &'static Regex {
-    TEMPLATE_BLOCK_REGEX.get_or_init(|| {
-        Regex::new(r#"(?is)<template\b[^>]*>(.*?)</template>"#)
-            .expect("TEMPLATE_BLOCK_REGEX pattern is invalid - this is a bug")
-    })
-}
-
-fn get_style_block_regex() -> &'static Regex {
-    STYLE_BLOCK_REGEX.get_or_init(|| {
-        Regex::new(r#"(?is)<style\b[^>]*>.*?</style>"#)
-            .expect("STYLE_BLOCK_REGEX pattern is invalid - this is a bug")
-    })
-}
 
 fn get_ast_event_writer() -> Option<&'static Mutex<std::fs::File>> {
     AST_EVENT_WRITER
@@ -142,18 +71,120 @@ struct TagBlock {
     range: Range<usize>,
 }
 
-fn extract_tag_blocks(source: &str, regex: &Regex) -> Vec<TagBlock> {
-    regex
-        .captures_iter(source)
-        .filter_map(|caps| {
-            let full = caps.get(0)?;
-            let inner = caps.get(1).unwrap_or(full);
-            Some(TagBlock {
-                content: inner.as_str().to_string(),
-                range: full.start()..full.end(),
-            })
-        })
-        .collect()
+fn ascii_eq_ignore_case(a: u8, b: u8) -> bool {
+    if a == b {
+        return true;
+    }
+    a.is_ascii_alphabetic() && b.is_ascii_alphabetic() && a.eq_ignore_ascii_case(&b)
+}
+
+fn starts_with_ascii_case_insensitive(haystack: &[u8], offset: usize, needle: &[u8]) -> bool {
+    if offset + needle.len() > haystack.len() {
+        return false;
+    }
+    for (idx, b) in needle.iter().enumerate() {
+        if !ascii_eq_ignore_case(haystack[offset + idx], *b) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_tag_name_boundary(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || byte == b'>' || byte == b'/'
+}
+
+fn find_tag_end(source: &[u8], mut index: usize) -> Option<usize> {
+    let mut quote: Option<u8> = None;
+    while index < source.len() {
+        let ch = source[index];
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if ch == b'\'' || ch == b'"' {
+            quote = Some(ch);
+            index += 1;
+            continue;
+        }
+        if ch == b'>' {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn find_tag_blocks_by_name(source: &str, tag_name: &str) -> Vec<TagBlock> {
+    let bytes = source.as_bytes();
+    let tag = tag_name.as_bytes();
+    let mut blocks = Vec::new();
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        let Some(open_rel) = bytes[index..].iter().position(|b| *b == b'<') else {
+            break;
+        };
+        let open_start = index + open_rel;
+        let name_start = open_start + 1;
+        if !starts_with_ascii_case_insensitive(bytes, name_start, tag) {
+            index = open_start + 1;
+            continue;
+        }
+        let after_name = name_start + tag.len();
+        if after_name >= bytes.len() || !is_tag_name_boundary(bytes[after_name]) {
+            index = open_start + 1;
+            continue;
+        }
+        let Some(open_end) = find_tag_end(bytes, after_name) else {
+            break;
+        };
+
+        let mut search = open_end + 1;
+        let mut close_start = None;
+        while search < bytes.len() {
+            let Some(rel) = bytes[search..].iter().position(|b| *b == b'<') else {
+                break;
+            };
+            let candidate = search + rel;
+            if candidate + 2 >= bytes.len() || bytes[candidate + 1] != b'/' {
+                search = candidate + 1;
+                continue;
+            }
+            let close_name_start = candidate + 2;
+            if !starts_with_ascii_case_insensitive(bytes, close_name_start, tag) {
+                search = candidate + 1;
+                continue;
+            }
+            let close_after_name = close_name_start + tag.len();
+            if close_after_name >= bytes.len() || !is_tag_name_boundary(bytes[close_after_name]) {
+                search = candidate + 1;
+                continue;
+            }
+            close_start = Some(candidate);
+            break;
+        }
+
+        let Some(close_start) = close_start else {
+            break;
+        };
+        let Some(close_end) = find_tag_end(bytes, close_start + 2 + tag.len()) else {
+            break;
+        };
+
+        let content_start = open_end + 1;
+        let content_end = close_start;
+        blocks.push(TagBlock {
+            content: source[content_start..content_end].to_string(),
+            range: open_start..(close_end + 1),
+        });
+        index = close_end + 1;
+    }
+
+    blocks
 }
 
 #[derive(Default)]
@@ -175,53 +206,6 @@ impl CommentOptionsData {
             has_ordinal: comment_option_truthy(text, "ordinal"),
         }
     }
-}
-
-fn extract_braced_block(text: &str, start_index: usize) -> Option<(String, usize)> {
-    let mut depth = 0usize;
-    let mut in_string: Option<char> = None;
-    let mut is_escaped = false;
-
-    for (offset, ch) in text[start_index..].char_indices() {
-        let abs_index = start_index + offset;
-
-        if let Some(quote) = in_string {
-            if is_escaped {
-                is_escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                is_escaped = true;
-                continue;
-            }
-            if ch == quote {
-                in_string = None;
-            }
-            continue;
-        }
-
-        match ch {
-            '\'' | '"' | '`' => {
-                in_string = Some(ch);
-            }
-            '{' => {
-                depth += 1;
-            }
-            '}' => {
-                if depth == 0 {
-                    return None;
-                }
-                depth -= 1;
-                if depth == 0 {
-                    let end = abs_index + ch.len_utf8();
-                    return Some((text[start_index..end].to_string(), end));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
 }
 
 fn extract_parenthesized_expression(text: &str, start_index: usize) -> Option<(String, usize)> {
@@ -361,45 +345,136 @@ fn is_identifier_char(ch: char) -> bool {
     ch == '_' || ch == '$' || ch == '.' || ch.is_alphanumeric()
 }
 
-fn extract_comment_string_option(text: &str, key: &str) -> Option<String> {
-    let base = format!(
-        r#"(?s)(?:^|[^a-zA-Z0-9_])["']?{}["']?\s*:\s*"#,
-        regex::escape(key)
-    );
-    let variants = [("'", "[^']+"), ("\"", "[^\"]+"), ("`", "[^`]+")];
+fn skip_comment_whitespace(text: &str, mut index: usize) -> usize {
+    while index < text.len() {
+        let Some(ch) = text[index..].chars().next() else {
+            break;
+        };
+        if ch.is_whitespace() {
+            index += ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    index
+}
 
-    for (quote, inner) in &variants {
-        let pattern = format!("{}{}({}){}", base, quote, inner, quote);
-        if let Ok(re) = Regex::new(&pattern) {
-            if let Some(cap) = re.captures(text) {
-                return cap.get(1).map(|m| m.as_str().to_string());
+fn parse_quoted_value(text: &str, start: usize) -> Option<(String, usize)> {
+    let quote = text[start..].chars().next()?;
+    if quote != '\'' && quote != '"' && quote != '`' {
+        return None;
+    }
+
+    let mut escaped = false;
+    let mut result = String::new();
+
+    for (offset, ch) in text[start + quote.len_utf8()..].char_indices() {
+        if escaped {
+            result.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            let end = start + quote.len_utf8() + offset + ch.len_utf8();
+            return Some((result, end));
+        }
+        result.push(ch);
+    }
+    None
+}
+
+fn parse_comment_key_literal(token: &str) -> Option<String> {
+    let trimmed = token.trim();
+    let (value, end) = parse_quoted_value(trimmed, 0)?;
+    if end == trimmed.len() {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn find_comment_option_colon(text: &str, key: &str) -> Option<usize> {
+    let mut index = 0usize;
+    while index < text.len() {
+        index = skip_comment_whitespace(text, index);
+        if index >= text.len() {
+            break;
+        }
+
+        let mut cursor = index;
+        let mut parsed_key: Option<String> = None;
+
+        if let Some(ch) = text[cursor..].chars().next() {
+            if ch == '\'' || ch == '"' {
+                if let Some((value, end)) = parse_quoted_value(text, cursor) {
+                    parsed_key = Some(value);
+                    cursor = end;
+                }
+            } else if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' {
+                let start = cursor;
+                cursor += ch.len_utf8();
+                while cursor < text.len() {
+                    let Some(next) = text[cursor..].chars().next() else {
+                        break;
+                    };
+                    if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                        cursor += next.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                parsed_key = Some(text[start..cursor].to_string());
             }
+        }
+
+        if let Some(parsed) = parsed_key {
+            cursor = skip_comment_whitespace(text, cursor);
+            if parsed == key && text[cursor..].starts_with(':') {
+                return Some(cursor);
+            }
+        }
+
+        if let Some(ch) = text[index..].chars().next() {
+            index += ch.len_utf8();
+        } else {
+            break;
         }
     }
 
     None
 }
 
+fn extract_comment_string_option(text: &str, key: &str) -> Option<String> {
+    let colon = find_comment_option_colon(text, key)?;
+    let value_start = skip_comment_whitespace(text, colon + 1);
+    parse_quoted_value(text, value_start).map(|(value, _)| value)
+}
+
 fn comment_option_exists(text: &str, key: &str) -> bool {
-    let pattern = format!(
-        r#"(?s)(?:^|[^a-zA-Z0-9_])["']?{}["']?\s*:"#,
-        regex::escape(key)
-    );
-    Regex::new(&pattern)
-        .ok()
-        .and_then(|re| re.find(text))
-        .is_some()
+    find_comment_option_colon(text, key).is_some()
 }
 
 fn comment_option_truthy(text: &str, key: &str) -> bool {
-    let pattern = format!(
-        r#"(?s)(?:^|[^a-zA-Z0-9_])["']?{}["']?\s*:\s*true(?:[^a-zA-Z0-9_]|$)"#,
-        regex::escape(key)
-    );
-    Regex::new(&pattern)
-        .ok()
-        .and_then(|re| re.find(text))
-        .is_some()
+    let Some(colon) = find_comment_option_colon(text, key) else {
+        return false;
+    };
+    let value_start = skip_comment_whitespace(text, colon + 1);
+    let Some(remain) = text.get(value_start..) else {
+        return false;
+    };
+    if !remain.starts_with("true") {
+        return false;
+    }
+    let tail = &remain["true".len()..];
+    if let Some(next) = tail.chars().next() {
+        return !(next.is_ascii_alphanumeric() || next == '_' || next == '$');
+    }
+    true
 }
 
 fn dedup_strings(values: Vec<String>) -> Vec<String> {
@@ -1608,90 +1683,26 @@ impl TranslationVisitor {
 
     /// Extract translation keys from a comment string
     fn extract_keys_from_comment_text(&mut self, text: &str) {
-        // Look for patterns like t('key'), t("key"), t('key', 'default'), t('key', { defaultValue: '...' })
-        // Also support i18n.t('key')
+        let comment_funcs = ["t".to_string(), "i18n.t".to_string()];
+        let calls = extract_translation_calls(text, &comment_funcs, false);
 
-        // Use static regex patterns (compiled once, reused across all calls)
-        let single_arg_pattern = get_comment_single_arg_regex();
-        let with_default_pattern = get_comment_with_default_regex();
-        let with_options_pattern = get_comment_with_options_regex();
-
-        // Extract with options pattern first (most specific)
-        for cap in with_options_pattern.captures_iter(text) {
-            if let Some(key_match) = cap.get(1) {
-                let key = key_match.as_str();
-                if let Some(object_match) = cap.get(2) {
-                    if let Some((options_text, _)) =
-                        extract_braced_block(text, object_match.start())
-                    {
-                        let CommentOptionsData {
-                            default_value,
-                            namespace: namespace_override,
-                            context,
-                            has_count,
-                            has_ordinal,
-                        } = CommentOptionsData::from_text(&options_text);
-
-                        let (namespace, base_key) =
-                            self.resolve_comment_key_scope(key, namespace_override);
-
-                        if has_count {
-                            let plural_keys = self.generate_plural_keys(
-                                &base_key,
-                                context.as_deref(),
-                                namespace.clone(),
-                                default_value.clone(),
-                                has_ordinal,
-                            );
-                            self.keys.extend(plural_keys);
-                            continue;
-                        }
-
-                        if let Some(ctx) = context {
-                            self.keys.push(ExtractedKey {
-                                key: format!("{}{}{}", base_key, self.context_separator, ctx),
-                                namespace,
-                                default_value,
-                            });
-                        } else {
-                            self.keys.push(ExtractedKey {
-                                key: base_key,
-                                namespace,
-                                default_value,
-                            });
-                        }
-                    }
-                }
+        for call in calls {
+            let Some(open) = call.find('(') else {
+                continue;
+            };
+            let Some(close) = call.rfind(')') else {
+                continue;
+            };
+            if close <= open + 1 {
+                continue;
             }
-        }
-
-        // Extract with default pattern
-        for cap in with_default_pattern.captures_iter(text) {
-            if let Some(key_match) = cap.get(1) {
-                let key = key_match.as_str();
-                // Check if already captured by options pattern
-                let (namespace, base_key) = self.resolve_comment_key_scope(key, None);
-                if !self
-                    .keys
-                    .iter()
-                    .any(|k| k.key == base_key && k.namespace == namespace)
-                {
-                    let default_value = cap.get(2).map(|m| m.as_str().to_string());
-                    self.keys.push(ExtractedKey {
-                        key: base_key,
-                        namespace,
-                        default_value,
-                    });
-                }
-            }
-        }
-
-        // Extract single arg pattern
-        for cap in single_arg_pattern.captures_iter(text) {
-            if let Some(key_match) = cap.get(1) {
-                let key = key_match.as_str();
-                let (namespace, base_key) = self.resolve_comment_key_scope(key, None);
-                // Check if already captured
+            let args_text = &call[open + 1..close];
+            let Some((key_token, rest)) = split_top_level_once(args_text, ",") else {
+                let key_token = args_text.trim();
+                let Some(key) = parse_comment_key_literal(key_token) else {
+                    continue;
+                };
+                let (namespace, base_key) = self.resolve_comment_key_scope(&key, None);
                 if !self
                     .keys
                     .iter()
@@ -1703,6 +1714,68 @@ impl TranslationVisitor {
                         default_value: None,
                     });
                 }
+                continue;
+            };
+
+            let Some(key) = parse_comment_key_literal(key_token.trim()) else {
+                continue;
+            };
+
+            let second_arg = rest.trim();
+            if let Some(default_value) = parse_comment_key_literal(second_arg) {
+                let (namespace, base_key) = self.resolve_comment_key_scope(&key, None);
+                if !self
+                    .keys
+                    .iter()
+                    .any(|k| k.key == base_key && k.namespace == namespace)
+                {
+                    self.keys.push(ExtractedKey {
+                        key: base_key,
+                        namespace,
+                        default_value: Some(default_value),
+                    });
+                }
+                continue;
+            }
+
+            if !second_arg.starts_with('{') {
+                continue;
+            }
+
+            let CommentOptionsData {
+                default_value,
+                namespace: namespace_override,
+                context,
+                has_count,
+                has_ordinal,
+            } = CommentOptionsData::from_text(second_arg);
+
+            let (namespace, base_key) = self.resolve_comment_key_scope(&key, namespace_override);
+
+            if has_count {
+                let plural_keys = self.generate_plural_keys(
+                    &base_key,
+                    context.as_deref(),
+                    namespace.clone(),
+                    default_value.clone(),
+                    has_ordinal,
+                );
+                self.keys.extend(plural_keys);
+                continue;
+            }
+
+            if let Some(ctx) = context {
+                self.keys.push(ExtractedKey {
+                    key: format!("{}{}{}", base_key, self.context_separator, ctx),
+                    namespace,
+                    default_value,
+                });
+            } else {
+                self.keys.push(ExtractedKey {
+                    key: base_key,
+                    namespace,
+                    default_value,
+                });
             }
         }
     }
@@ -2373,7 +2446,7 @@ fn extract_vue_component(
     let mut keys = Vec::new();
     let mut warnings = 0usize;
 
-    let script_blocks = extract_tag_blocks(source_code, get_script_block_regex());
+    let script_blocks = find_tag_blocks_by_name(source_code, "script");
     for (idx, block) in script_blocks.iter().enumerate() {
         let virtual_path = format!("{}#script{}", file_path.display(), idx + 1);
         let (mut script_keys, block_warnings) = extract_from_source_with_warnings(
@@ -2395,7 +2468,7 @@ fn extract_vue_component(
         warnings += block_warnings;
     }
 
-    let template_blocks = extract_tag_blocks(source_code, get_template_block_regex());
+    let template_blocks = find_tag_blocks_by_name(source_code, "template");
     if !template_blocks.is_empty() {
         let template_functions = ctx.template_functions();
         for (block_idx, block) in template_blocks.iter().enumerate() {
@@ -2462,7 +2535,7 @@ fn extract_svelte_component(
     let mut keys = Vec::new();
     let mut warnings = 0usize;
 
-    let script_blocks = extract_tag_blocks(source_code, get_script_block_regex());
+    let script_blocks = find_tag_blocks_by_name(source_code, "script");
     for (idx, block) in script_blocks.iter().enumerate() {
         let virtual_path = format!("{}#script{}", file_path.display(), idx + 1);
         let (mut script_keys, block_warnings) = extract_from_source_with_warnings(
@@ -2489,7 +2562,7 @@ fn extract_svelte_component(
         .iter()
         .map(|block| block.range.clone())
         .collect();
-    let style_blocks = extract_tag_blocks(source_code, get_style_block_regex());
+    let style_blocks = find_tag_blocks_by_name(source_code, "style");
     for block in style_blocks {
         removal_ranges.push(block.range);
     }
@@ -4088,23 +4161,31 @@ mod tests {
         assert!(extracted.iter().any(|k| k.key == "b.key"));
     }
 
-    /// Test that regex-based comment extractors compile successfully.
     #[test]
-    fn test_regex_initialization() {
-        // Force initialization
-        let _ = get_comment_single_arg_regex();
-        let _ = get_comment_with_default_regex();
-        let _ = get_comment_with_options_regex();
+    fn test_comment_option_scanner() {
+        let text =
+            "{ defaultValue: 'value', ns: \"common\", context: `male`, count: 1, ordinal: true }";
+        assert_eq!(
+            extract_comment_string_option(text, "defaultValue").as_deref(),
+            Some("value")
+        );
+        assert_eq!(
+            extract_comment_string_option(text, "ns").as_deref(),
+            Some("common")
+        );
+        assert_eq!(
+            extract_comment_string_option(text, "context").as_deref(),
+            Some("male")
+        );
+        assert!(comment_option_exists(text, "count"));
+        assert!(comment_option_truthy(text, "ordinal"));
+    }
 
-        assert!(get_comment_single_arg_regex().is_match("t('key')"));
-        assert!(get_comment_single_arg_regex().is_match("t(\"key\")"));
-        assert!(get_comment_single_arg_regex().is_match("t(`key`)"));
-
-        assert!(get_comment_with_default_regex().is_match("t('key', 'default')"));
-        assert!(get_comment_with_default_regex().is_match("t(\"key\", \"default\")"));
-
-        assert!(get_comment_with_options_regex().is_match("t('key', { defaultValue: 'value' })"));
-        assert!(get_comment_with_options_regex()
-            .is_match("t('key', { other: 1, defaultValue: 'value' })"));
+    #[test]
+    fn test_parse_comment_key_literal() {
+        assert_eq!(parse_comment_key_literal("'a.b'").as_deref(), Some("a.b"));
+        assert_eq!(parse_comment_key_literal("\"a.b\"").as_deref(), Some("a.b"));
+        assert_eq!(parse_comment_key_literal("`a.b`").as_deref(), Some("a.b"));
+        assert!(parse_comment_key_literal("dynamicKey").is_none());
     }
 }

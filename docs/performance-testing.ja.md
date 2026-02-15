@@ -42,3 +42,21 @@ node scripts/run-benchmark.mjs 5 \
 
 - 計測時間はプロセス起動とI/Oを含みます。
 - 比較時は同一マシン・低負荷状態で実行してください。
+
+## プラグインオーバーヘッド測定
+
+```bash
+npm install
+npm run benchmark:plugin
+# または
+node scripts/run-plugin-benchmark.mjs 5 --json benchmarks/plugin-latest.json
+```
+
+しきい値判定:
+
+```bash
+node scripts/run-plugin-benchmark.mjs 5 --max-overhead 0.20
+```
+
+- 同一fixtureで plugin off/on を比較
+- オーバーヘッド比率 `(withPlugin.avg - withoutPlugin.avg) / withoutPlugin.avg` を出力
