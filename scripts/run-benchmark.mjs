@@ -11,6 +11,7 @@
  *   runs               number of warmup + timed runs per CLI (default 3)
  *   --json <path>      write machine-readable benchmark report
  *   --min-speedup <n>  fail if turbo is less than n times faster than cli
+ *   --run-timeout-ms <n> fail a single extract run if it exceeds n milliseconds
  *
  * Example:
  *   node scripts/run-benchmark.mjs 5 --json benchmarks/latest.json --min-speedup 10
@@ -30,6 +31,7 @@ function parseArgs(argv) {
     runs: 3,
     jsonPath: null,
     minSpeedup: null,
+    runTimeoutMs: null,
   };
   let i = 0;
   if (argv[i] && !argv[i].startsWith('-')) {
@@ -52,6 +54,12 @@ function parseArgs(argv) {
       i += 2;
       continue;
     }
+    if (arg === '--run-timeout-ms') {
+      const parsed = Number(argv[i + 1]);
+      out.runTimeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+      i += 2;
+      continue;
+    }
     i += 1;
   }
   return out;
@@ -60,7 +68,7 @@ function parseArgs(argv) {
 const parsedArgs = parseArgs(process.argv.slice(2));
 const runs = parsedArgs.runs;
 
-function runExtract(name, command, args, cwd) {
+function runExtract(name, command, args, cwd, runTimeoutMs) {
   return new Promise((resolve, reject) => {
     const start = performance.now();
     const child = spawn(command, args, {
@@ -68,9 +76,24 @@ function runExtract(name, command, args, cwd) {
       // Ignore stdout to avoid pipe backpressure deadlock in CI.
       stdio: ['ignore', 'ignore', 'pipe'],
     });
+    let timeoutId = null;
+    let timedOut = false;
     let stderr = '';
     child.stderr?.on('data', (d) => { stderr += d; });
+    if (runTimeoutMs != null) {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+        reject(
+          new Error(
+            `${name} timed out after ${runTimeoutMs}ms: ${command} ${args.join(' ')}`
+          )
+        );
+      }, runTimeoutMs);
+    }
     child.on('close', (code) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (timedOut) return;
       const elapsed = performance.now() - start;
       if (code !== 0) {
         reject(new Error(`${name} exited ${code}: ${stderr.slice(0, 500)}`));
@@ -82,13 +105,13 @@ function runExtract(name, command, args, cwd) {
   });
 }
 
-async function measure(name, command, args, cwd, warmup = 1, count = runs) {
+async function measure(name, command, args, cwd, warmup = 1, count = runs, runTimeoutMs = null) {
   for (let i = 0; i < warmup; i++) {
-    await runExtract(name, command, args, cwd);
+    await runExtract(name, command, args, cwd, runTimeoutMs);
   }
   const times = [];
   for (let i = 0; i < count; i++) {
-    times.push(await runExtract(name, command, args, cwd));
+    times.push(await runExtract(name, command, args, cwd, runTimeoutMs));
   }
   return times;
 }
@@ -120,14 +143,30 @@ async function main() {
 
   try {
     console.log('i18next-turbo ...');
-    results.turbo = await measure('i18next-turbo', turboCmd, turboArgs, fixtureDir);
+    results.turbo = await measure(
+      'i18next-turbo',
+      turboCmd,
+      turboArgs,
+      fixtureDir,
+      1,
+      runs,
+      parsedArgs.runTimeoutMs
+    );
   } catch (e) {
     console.warn('i18next-turbo failed:', e.message);
   }
 
   try {
     console.log('i18next-cli ...');
-    results.cli = await measure('i18next-cli', cliCmd, cliArgs, fixtureDir);
+    results.cli = await measure(
+      'i18next-cli',
+      cliCmd,
+      cliArgs,
+      fixtureDir,
+      1,
+      runs,
+      parsedArgs.runTimeoutMs
+    );
   } catch (e) {
     console.warn('i18next-cli failed:', e.message);
   }
