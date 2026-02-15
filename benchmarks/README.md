@@ -44,6 +44,12 @@ node scripts/run-benchmark.mjs [runs]
 node scripts/run-benchmark.mjs 5
 ```
 
+CI 向けオプション例（速度しきい値 + 1 実行あたりタイムアウト）:
+
+```bash
+node scripts/run-benchmark.mjs 5 --json benchmarks/latest.json --min-speedup 10 --run-timeout-ms 120000
+```
+
 ## 手動で個別に計測する場合
 
 フィクスチャディレクトリで `extract` を実行し、所要時間を計測します。
