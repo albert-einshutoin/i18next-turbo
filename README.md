@@ -64,6 +64,7 @@ Create `i18next-turbo.json` in your project root:
 - [Installation and Binary Resolution](docs/installation.md)
 - [API Reference](docs/api.md)
 - [Plugin Runtime Design](docs/plugin-runtime.md)
+- [Parser Migration Plan](docs/parser-migration.md)
 - [Migration Guide](docs/migration-guide.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Usage Examples](docs/usage-examples.md)
