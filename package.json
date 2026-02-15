@@ -33,6 +33,7 @@
     "postinstall": "node bin/postinstall.js",
     "sync-version": "node scripts/sync-version.mjs",
     "benchmark": "node scripts/run-benchmark.mjs",
+    "benchmark:plugin": "node scripts/run-plugin-benchmark.mjs",
     "benchmark:ci": "node scripts/run-benchmark.mjs 5 --json benchmarks/latest.json --min-speedup 10",
     "bench:fixtures": "node scripts/generate-bench-fixtures.mjs"
   },

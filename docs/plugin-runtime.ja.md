@@ -1,0 +1,76 @@
+# プラグインランタイム設計（Issue #59）
+
+## 目的
+
+- Rustバイナリ配布時に JS プラグインがどう動くかを明確化する。
+- プラグイン失敗時の安全な挙動を定義する。
+- プラグイン有無の性能差を定量化する。
+
+## 実行モデル
+
+- 抽出/同期のコア処理は Rust バイナリで実行。
+- 動的 JS プラグインは Node ラッパー（`bin/cli.js`）で実行。
+- 方式は「単一 Node プロセス + 子 Rust プロセス」。
+  - Node が `onLoad` 前処理と `onVisitNode`/`afterSync` 後処理を担当。
+  - Rust はプラグイン非依存で、JSON設定を stdin から受け取る。
+
+Rust コアの決定性を保つため、Rust への JS ランタイム埋め込みは行わない。
+
+## フック境界
+
+- `setup(context)`:
+  前処理・Rust実行前。
+- `onLoad({ filePath, relativePath, source, ... })`:
+  Rust解析前のソース前処理。
+- `onVisitNode(node)`:
+  Rust ASTイベント中継と翻訳ツリー走査イベントを受け取る。
+- `onEnd(context)`:
+  Rust実行後・ランタイム変換後。
+- `afterSync(context)`:
+  同期後の最終フック。
+
+## 失敗ポリシー
+
+`pluginErrorMode` でプラグイン load/hook 失敗時の挙動を制御する。
+
+- `continue`（デフォルト）:
+  warning を出して処理継続。
+- `fail-fast`:
+  即時エラー終了（非ゼロ終了コード）。
+
+設定場所:
+
+- トップレベル: `pluginErrorMode`
+- extract配下: `extract.pluginErrorMode`
+
+両方ある場合は `extract.pluginErrorMode` を優先。
+
+## Node なし環境での互換性
+
+- JS/TS 設定ロードとプラグイン実行には Node ラッパーが必要。
+- 純 Rust バイナリ実行では JS プラグインは評価されない。
+- 推奨運用:
+  - プラグインが必要な場合は Node ラッパー経由で実行。
+  - 最小・決定的な運用が必要な場合は JSON 設定 + Rust のみを使用。
+
+## ベンチマーク
+
+- 基本比較:
+  `npm run benchmark`（turbo vs i18next-cli）
+- プラグインオーバーヘッド:
+  `npm run benchmark:plugin`（同一fixtureで plugin off/on 比較）
+
+計測指標:
+
+- 平均/最小/最大プロセス時間
+- オーバーヘッド比率 `((withPlugin.avg - withoutPlugin.avg) / withoutPlugin.avg)`
+
+しきい値判定:
+
+- `node scripts/run-plugin-benchmark.mjs 5 --max-overhead 0.20`
+
+## セキュリティ境界
+
+- プラグインは Node プロセス権限で実行される。
+- 追加サンドボックスはデフォルトで提供しない。
+- サードパーティプラグインは信頼コードとして扱うこと。
