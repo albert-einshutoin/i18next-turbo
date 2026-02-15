@@ -1,5 +1,13 @@
 # i18next-turbo
 
+[![npm version](https://img.shields.io/npm/v/i18next-turbo.svg)](https://www.npmjs.com/package/i18next-turbo)
+[![npm downloads](https://img.shields.io/npm/dm/i18next-turbo.svg)](https://www.npmjs.com/package/i18next-turbo)
+[![Node.js](https://img.shields.io/node/v/i18next-turbo.svg)](https://www.npmjs.com/package/i18next-turbo)
+[![CI](https://github.com/albert-einshutoin/i18next-turbo/actions/workflows/ci.yml/badge.svg)](https://github.com/albert-einshutoin/i18next-turbo/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/albert-einshutoin/i18next-turbo/graph/badge.svg)](https://codecov.io/gh/albert-einshutoin/i18next-turbo)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.85%2B-DEA584?logo=rust)](https://www.rust-lang.org/)
+
 モダンな TypeScript/JavaScript コードベース向けの高速 i18next キー抽出ツールです。
 
 `i18next-turbo` は Rust + SWC ベースの抽出器で、i18next ワークフローとの互換性を重視して設計されています。CI の高速化と、開発時の低遅延な watch 実行を目的としています。
