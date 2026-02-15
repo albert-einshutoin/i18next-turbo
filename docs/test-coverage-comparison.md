@@ -83,12 +83,14 @@
 
 - t()/i18n.t()/Trans/useTranslation/comment など主要パターンの抽出回帰
 
-**node_wrapper_integration.rs（4 テスト、Node と cosmiconfig/jiti がある場合のみ）**
+**node_wrapper_integration.rs（6 テスト、Node と cosmiconfig/jiti がある場合のみ）**
 
 - node_wrapper_supports_default_value_and_sort_function_forms
 - node_wrapper_plugin_onload_transforms_source_and_aftersync_runs
 - node_wrapper_plugin_onvisitnode_receives_rust_ast_events
 - node_wrapper_merge_namespaces_without_namespace_placeholder_writes_single_file
+- node_wrapper_plugin_errors_continue_by_default
+- node_wrapper_plugin_errors_fail_fast_when_configured
 
 ---
 
@@ -110,7 +112,7 @@
 | **init** | init.test | commands::init::tests | ○ 両方で検証 |
 | **config** | config.test, config.ensureConfig.test | config::tests::* | ◎ 設定解釈を両方で検証 |
 | **locize** | locize.test, locize-output-function | commands::locize::tests | ○ 両方で検証（CLI は E2E 的） |
-| **plugin** | plugin.*.test.ts（Vue, Svelte, Astro, Handlebars, HTML, TypeScript, afterSync 等） | node_wrapper の 3 テスト（defaultValue/sort, onload/aftersync, onvisitnode） | △  CLI はプラグイン多様、turbo は Node ラッパー経由の一部のみ |
+| **plugin** | plugin.*.test.ts（Vue, Svelte, Astro, Handlebars, HTML, TypeScript, afterSync 等） | node_wrapper の 5 テスト（defaultValue/sort, onload/aftersync, onvisitnode, error mode） | △  CLI はプラグイン多様、turbo は Node ラッパー経由の一部のみ |
 | **CLI 入口** | cli.test, cli.config.test | main.rs の tests（3 件すべて通過） | ○ 基本分岐は検証済み |
 
 ---
@@ -133,7 +135,7 @@
 
 ### turbo で不足しがちな部分（△）
 
-- **プラグイン**: turbo は Node ラッパー経由の 3 テストのみ。Vue/Svelte/Astro/Handlebars/HTML 等の個別プラグインに相当するテストは CLI にしかない。
+- **プラグイン**: turbo は Node ラッパー経由の 5 テスト（エラーモード含む）を持つが、Vue/Svelte/Astro/Handlebars/HTML 等の個別プラグイン群は CLI 側が依然厚い。
 - **カバレッジ運用**: turbo は `cargo llvm-cov` で計測可能。現在は手動計測ベースのため、CI 常時収集は未導入。
 - **CLI 入口**: main.rs テストの失敗は解消済み。
 

@@ -39,6 +39,22 @@
 - `onEnd(context)`
 - `afterSync(context)`
 
+## Plugin Runtime Error Policy
+
+Set `pluginErrorMode` to control hook failure behavior.
+
+```js
+module.exports = {
+  pluginErrorMode: 'continue', // or 'fail-fast'
+  extract: {
+    pluginErrorMode: 'fail-fast' // extract scope takes precedence
+  }
+};
+```
+
+- `continue` (default): log warning and continue.
+- `fail-fast`: exit with non-zero code on plugin load/hook error.
+
 For detailed examples, see:
 - `examples/plugins/html-plugin.js`
 - `examples/plugins/handlebars-plugin.js`
