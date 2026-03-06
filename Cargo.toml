@@ -47,7 +47,7 @@ icu_locid = { version = "1", features = ["serde"] }
 icu_plurals = { version = "1", features = ["compiled_data"] }
 
 # NAPI (Node-API) for Node.js integration
-napi = { version = "2", optional = true, features = ["napi4", "napi5", "napi6", "napi7", "napi8"] }
+napi = { version = "2", optional = true, features = ["napi4", "napi5", "napi6", "napi7", "napi8", "dyn-symbols"] }
 napi-derive = { version = "2", optional = true }
 
 [build-dependencies]

@@ -271,6 +271,42 @@ fn sync_adds_missing_keys_to_secondary_locale() {
 }
 
 #[test]
+fn sync_supports_js_module_locale_format() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "console.log('sync');").unwrap();
+    let config_path = write_config_with_options(project, &["en", "ja"], Some("js"));
+
+    fs::create_dir_all(project.join("locales/en")).unwrap();
+    fs::create_dir_all(project.join("locales/ja")).unwrap();
+    fs::write(
+        project.join("locales/en/translation.js"),
+        "export default {\n  \"hello\": \"Hello\"\n};\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("locales/ja/translation.js"),
+        "export default {};\n",
+    )
+    .unwrap();
+
+    let output = run_cli(
+        project,
+        &["--config", config_path.to_str().unwrap(), "sync"],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let synced = fs::read_to_string(project.join("locales/ja/translation.js")).unwrap();
+    assert!(synced.contains("\"hello\": \"\""));
+}
+
+#[test]
 fn sync_remove_unused_respects_dry_run() {
     let tmp = tempdir().unwrap();
     let project = tmp.path();
@@ -448,6 +484,74 @@ fn check_dry_run_reports_dead_keys() {
 
     let locale = read_json(&project.join("locales/en/translation.json"));
     assert!(locale["dead"]["key"].is_string());
+}
+
+#[test]
+fn check_dry_run_reports_dead_keys_for_json5() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('keep.me');").unwrap();
+    let config_path = write_config_with_options(project, &["en"], Some("json5"));
+
+    fs::create_dir_all(project.join("locales/en")).unwrap();
+    fs::write(
+        project.join("locales/en/translation.json5"),
+        "{ keep: { me: '' }, stale: { key: '' } }\n",
+    )
+    .unwrap();
+
+    let output = run_cli(
+        project,
+        &[
+            "--config",
+            config_path.to_str().unwrap(),
+            "check",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stale.key"));
+}
+
+#[test]
+fn status_counts_json5_locale_files() {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('hello.json5');").unwrap();
+    let config_path = write_config_with_options(project, &["en"], Some("json5"));
+
+    fs::create_dir_all(project.join("locales/en")).unwrap();
+    fs::write(
+        project.join("locales/en/translation.json5"),
+        "{ hello: { json5: '' } }\n",
+    )
+    .unwrap();
+
+    let output = run_cli(
+        project,
+        &[
+            "--config",
+            config_path.to_str().unwrap(),
+            "status",
+            "--fail-on-incomplete",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("All keys are synchronized"));
 }
 
 #[test]

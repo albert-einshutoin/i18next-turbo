@@ -37,6 +37,47 @@ fn run_node_cli<P: AsRef<Path>>(cwd: P, args: &[&str]) -> Output {
         .expect("failed to run node wrapper")
 }
 
+fn run_node_script<P: AsRef<Path>>(cwd: P, script: &str) -> Output {
+    Command::new("node")
+        .arg("-e")
+        .arg(script)
+        .current_dir(cwd)
+        .output()
+        .expect("failed to run node script")
+}
+
+#[cfg(feature = "napi")]
+fn native_addon_require_script_body() -> String {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string();
+    format!(
+        r#"
+const path = require('path');
+const repoRoot = {repo_root:?};
+const platformMap = {{ darwin: 'darwin', linux: 'linux', win32: 'win32' }};
+const archMap = {{ x64: 'x64', arm64: 'arm64', ia32: 'ia32' }};
+const rustPlatform = platformMap[process.platform];
+const rustArch = archMap[process.arch];
+if (!rustPlatform || !rustArch) {{
+  throw new Error(`unsupported test platform: ${{process.platform}}/${{process.arch}}`);
+}}
+const candidates = [
+  path.join(repoRoot, 'target', 'debug', `i18next-turbo.${{rustPlatform}}-${{rustArch}}.node`),
+  path.join(repoRoot, 'target', 'release', `i18next-turbo.${{rustPlatform}}-${{rustArch}}.node`)
+];
+let nativeAddon = null;
+for (const candidate of candidates) {{
+  try {{
+    nativeAddon = require(candidate);
+    break;
+  }} catch (_error) {{}}
+}}
+if (!nativeAddon) {{
+  throw new Error('native addon could not be loaded from target/debug or target/release');
+}}
+"#
+    )
+}
+
 fn read_json(path: &Path) -> Value {
     let content = fs::read_to_string(path).expect("missing json file");
     serde_json::from_str(&content).expect("invalid json")
@@ -252,6 +293,253 @@ module.exports = {
     assert!(
         !project.join("locales/en/translation.json").exists(),
         "translation.json should not be created for this output template"
+    );
+}
+
+#[test]
+fn node_api_fallback_returns_structured_results() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('api.hello');").unwrap();
+
+    let script = format!(
+        r#"
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const Module = require('module');
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {{
+  if (String(request).endsWith('.node') && String(request).includes('i18next-turbo.')) {{
+    throw new Error('forced native load failure for fallback test');
+  }}
+  return originalLoad.apply(this, arguments);
+}};
+const api = require('{}');
+(async () => {{
+  const project = process.cwd();
+  const extractResult = await api.extract({{
+    input: ['src/**/*.ts'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t']
+  }});
+  if (!extractResult || extractResult.unique_keys !== 1) {{
+    throw new Error(`unexpected extract result: ${{JSON.stringify(extractResult)}}`);
+  }}
+  const lintResult = await api.lint({{
+    input: ['src/**/*.ts'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t']
+  }});
+  if (!lintResult || !Array.isArray(lintResult.issues)) {{
+    throw new Error(`unexpected lint result: ${{JSON.stringify(lintResult)}}`);
+  }}
+  const checkResult = await api.check({{
+    input: ['src/**/*.ts'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t']
+  }}, {{ dry_run: true }});
+  if (!checkResult || !Array.isArray(checkResult.dead_keys)) {{
+    throw new Error(`unexpected check result: ${{JSON.stringify(checkResult)}}`);
+  }}
+}})().catch((err) => {{
+  console.error(err);
+  process.exit(1);
+}});
+"#,
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("lib")
+            .join("index.js")
+            .display()
+    );
+
+    let output = run_node_script(project, &script);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(feature = "napi")]
+#[test]
+fn native_node_api_extract_matches_documented_result_shape() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('api.native');").unwrap();
+
+    let script = format!(
+        r#"
+{}
+(async () => {{
+  const fs = require('fs');
+  const path = require('path');
+  process.chdir({project:?});
+  const result = await nativeAddon.extract({{
+    input: ['src/**/*.ts'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t']
+  }});
+  const expectedKeys = [
+    'conflicts',
+    'extraction_warnings',
+    'files_processed',
+    'keys_added',
+    'keys_removed',
+    'message',
+    'success',
+    'unique_keys',
+    'updated_files',
+    'warnings'
+  ];
+  const resultKeys = Object.keys(result).sort();
+  if (JSON.stringify(resultKeys) !== JSON.stringify(expectedKeys)) {{
+    throw new Error(`unexpected native extract keys: ${{JSON.stringify(resultKeys)}}`);
+  }}
+  if (result.unique_keys !== 1 || result.keys_added !== 1 || result.conflicts !== 0) {{
+    throw new Error(`unexpected native extract result: ${{JSON.stringify(result)}}`);
+  }}
+  if (!fs.existsSync(path.join(process.cwd(), 'locales', 'en', 'translation.json'))) {{
+    throw new Error('translation.json was not created');
+  }}
+}})().catch((err) => {{
+  console.error(err);
+  process.exit(1);
+}});
+"#,
+        native_addon_require_script_body(),
+        project = project.display().to_string()
+    );
+
+    let output = run_node_script(project, &script);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(feature = "napi")]
+#[test]
+fn native_node_api_extract_respects_fail_on_warnings_for_conflicts() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(project.join("locales/en")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('hello.world');").unwrap();
+    fs::write(
+        project.join("locales/en/translation.json"),
+        "{\n  \"hello\": \"scalar\"\n}\n",
+    )
+    .unwrap();
+
+    let script = format!(
+        r#"
+{}
+(async () => {{
+  process.chdir({project:?});
+  let rejected = false;
+  try {{
+    await nativeAddon.extract({{
+      input: ['src/**/*.ts'],
+      output: 'locales',
+      locales: ['en'],
+      functions: ['t']
+    }}, {{
+      fail_on_warnings: true
+    }});
+  }} catch (error) {{
+    rejected = /warning\(s\) encountered/.test(String(error && error.message));
+  }}
+  if (!rejected) {{
+    throw new Error('native extract did not reject on conflict warning');
+  }}
+}})().catch((err) => {{
+  console.error(err);
+  process.exit(1);
+}});
+"#,
+        native_addon_require_script_body(),
+        project = project.display().to_string()
+    );
+
+    let output = run_node_script(project, &script);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(feature = "napi")]
+#[test]
+fn native_node_api_lint_honors_lint_configuration() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("src/app.tsx"),
+        "<input placeholder=\"Name\" />\n",
+    )
+    .unwrap();
+
+    let script = format!(
+        r#"
+{}
+(async () => {{
+  process.chdir({project:?});
+  const result = await nativeAddon.lint({{
+    input: ['src/**/*.tsx'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t'],
+    lint: {{
+      ignoredAttributes: ['placeholder']
+    }}
+  }});
+  if (!result || !Array.isArray(result.issues) || result.issues.length !== 0) {{
+    throw new Error(`native lint ignored config: ${{JSON.stringify(result)}}`);
+  }}
+}})().catch((err) => {{
+  console.error(err);
+  process.exit(1);
+}});
+"#,
+        native_addon_require_script_body(),
+        project = project.display().to_string()
+    );
+
+    let output = run_node_script(project, &script);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

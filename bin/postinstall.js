@@ -2,12 +2,9 @@
 
 /**
  * Post-install script for i18next-turbo
- * 
- * This script is run after npm install. It checks if the Rust binary exists,
- * and if not, provides instructions for building it.
- * 
- * In the future, this will download pre-built binaries from GitHub Releases
- * or optionalDependencies.
+ *
+ * This script is run after npm install. It checks whether a local development
+ * build exists and prints actionable fallback guidance when it does not.
  */
 
 const fs = require('fs');
@@ -25,11 +22,11 @@ if (fs.existsSync(binaryPath)) {
 }
 
 // Binary not found - provide instructions
-console.log('⚠ i18next-turbo binary not found');
+console.log('⚠ i18next-turbo local release binary not found');
 console.log('');
-console.log('To build the binary, run:');
+console.log('The package normally resolves a platform binary via optionalDependencies.');
+console.log('If you are developing from source, build the CLI binary with:');
 console.log('  cargo build --release');
 console.log('');
-console.log('Or install from npm package which includes pre-built binaries.');
-console.log('(Pre-built binaries will be available in future releases)');
-
+console.log('If you need the native Node addon as well, build:');
+console.log('  cargo build --release --features napi');

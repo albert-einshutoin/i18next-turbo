@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
@@ -8,18 +9,38 @@ use std::time::Duration;
 use crate::config::Config;
 use crate::lint::{self, LintOptions};
 
+#[derive(Debug, Serialize)]
+pub struct LintIssueReport {
+    pub file_path: String,
+    pub line: usize,
+    pub column: usize,
+    pub message: String,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LintCommandResult {
+    pub files_checked: usize,
+    pub issues: Vec<LintIssueReport>,
+}
+
 pub fn run(config: &Config, fail_on_error: bool, watch: bool) -> Result<()> {
     if watch {
         return run_watch(config, fail_on_error);
     }
 
     println!("=== i18next-turbo lint ===\n");
-
     println!("Configuration:");
     println!("  Input patterns: {:?}", config.input);
     println!();
 
     println!("Scanning for hardcoded strings...");
+    let result = execute(config, fail_on_error)?;
+    print_result(&result);
+    Ok(())
+}
+
+pub fn execute(config: &Config, fail_on_error: bool) -> Result<LintCommandResult> {
     let lint_options = LintOptions {
         ignored_attributes: config.lint.ignored_attributes.clone(),
         ignored_tags: config.lint.ignored_tags.clone(),
@@ -28,14 +49,39 @@ pub fn run(config: &Config, fail_on_error: bool, watch: bool) -> Result<()> {
         ignore_patterns: config.lint.ignore.clone(),
     };
     let result = lint::lint_from_glob_with_options(&config.input, &lint_options)?;
+    let issues: Vec<LintIssueReport> = result
+        .issues
+        .iter()
+        .map(|issue| LintIssueReport {
+            file_path: issue.file_path.clone(),
+            line: issue.line,
+            column: issue.column,
+            message: issue.message.clone(),
+            text: issue.text.clone(),
+        })
+        .collect();
 
+    if fail_on_error && !issues.is_empty() {
+        bail!(
+            "{} lint issue(s) found (--fail-on-error enabled)",
+            issues.len()
+        );
+    }
+
+    Ok(LintCommandResult {
+        files_checked: result.files_checked,
+        issues,
+    })
+}
+
+fn print_result(result: &LintCommandResult) {
     println!("  Files checked: {}", result.files_checked);
     println!("  Issues found: {}", result.issues.len());
     println!();
 
     if result.issues.is_empty() {
         println!("No hardcoded strings found. All text appears to be translated!");
-        return Ok(());
+        return;
     }
 
     println!("{}", "=".repeat(60));
@@ -50,15 +96,6 @@ pub fn run(config: &Config, fail_on_error: bool, watch: bool) -> Result<()> {
 
     println!("\n{}", "=".repeat(60));
     println!("Total: {} issue(s)", result.issues.len());
-
-    if fail_on_error {
-        bail!(
-            "{} lint issue(s) found (--fail-on-error enabled)",
-            result.issues.len()
-        );
-    }
-
-    Ok(())
 }
 
 fn run_watch(config: &Config, fail_on_error: bool) -> Result<()> {
@@ -101,15 +138,7 @@ fn handle_watch_events(
 }
 
 fn run_once(config: &Config, fail_on_error: bool) -> Result<()> {
-    let lint_options = LintOptions {
-        ignored_attributes: config.lint.ignored_attributes.clone(),
-        ignored_tags: config.lint.ignored_tags.clone(),
-        accepted_attributes: config.lint.accepted_attributes.clone(),
-        accepted_tags: config.lint.accepted_tags.clone(),
-        ignore_patterns: config.lint.ignore.clone(),
-    };
-    let result = lint::lint_from_glob_with_options(&config.input, &lint_options)?;
-
+    let result = execute(config, fail_on_error)?;
     println!("  Files checked: {}", result.files_checked);
     println!("  Issues found: {}", result.issues.len());
     if result.issues.is_empty() {
@@ -124,13 +153,6 @@ fn run_once(config: &Config, fail_on_error: bool) -> Result<()> {
         );
     }
     println!();
-
-    if fail_on_error {
-        bail!(
-            "{} lint issue(s) found (--fail-on-error enabled)",
-            result.issues.len()
-        );
-    }
     Ok(())
 }
 

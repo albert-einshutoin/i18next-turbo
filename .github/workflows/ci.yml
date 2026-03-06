@@ -50,6 +50,11 @@ jobs:
       - name: Verify CLI command via npx --no-install
         run: |
           npx --no-install i18next-turbo --config benchmarks/fixtures/large/i18next-turbo.json extract
+      - name: Build release addon with napi feature
+        run: cargo build --release --features napi
+      - name: Verify Node API native addon execution
+        run: |
+          node -e "(async()=>{const fs=require('fs');const os=require('os');const path=require('path');const api=require('./');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'iturbo-native-ci-'));fs.mkdirSync(path.join(dir,'src'),{recursive:true});fs.writeFileSync(path.join(dir,'src','app.ts'),\"t('ci.native')\\n\");process.chdir(dir);const result=await api.extract({input:['src/**/*.ts'],output:'locales',locales:['en'],functions:['t']});if(!result||result.unique_keys!==1){throw new Error('unexpected extract result: '+JSON.stringify(result));}})().catch(e=>{console.error(e);process.exit(1)})"
 
   lint:
     runs-on: ubuntu-latest
@@ -65,6 +70,8 @@ jobs:
         run: cargo clippy --all-targets
       - name: Run tests
         run: cargo test --all
+      - name: Run tests with napi feature
+        run: cargo test --features napi
 
   build:
     runs-on: ${{ matrix.os }}

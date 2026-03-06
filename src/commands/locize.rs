@@ -24,8 +24,9 @@ pub fn upload(
     if locize.source_language_only.unwrap_or(false) {
         locales = vec![resolve_source_locale(config, locize)];
     }
-    let extension = config.output_format.extension().to_string();
-    let namespaces = resolve_namespaces(config, locize, namespace.as_deref(), &extension)?;
+    let output_format = config.output_format();
+    let extension = output_format.extension().to_string();
+    let namespaces = resolve_namespaces(config, locize, namespace.as_deref())?;
     let api_key = resolve_api_key(locize)?;
     let dry_run = dry_run || locize.dry_run.unwrap_or(false);
     let version = locize
@@ -36,7 +37,7 @@ pub fn upload(
 
     for locale in locales {
         for ns in &namespaces {
-            let file_path = locale_namespace_path(config, &locale, ns, &extension);
+            let file_path = locale_namespace_path(config, &locale, ns);
             if !file_path.exists() {
                 println!(
                     "⚠︎ {} をスキップ (ファイルが見つかりません)",
@@ -112,8 +113,9 @@ pub fn download(
     if locize.source_language_only.unwrap_or(false) {
         locales = vec![resolve_source_locale(config, locize)];
     }
-    let extension = config.output_format.extension().to_string();
-    let namespaces = resolve_namespaces(config, locize, namespace.as_deref(), &extension)?;
+    let output_format = config.output_format();
+    let extension = output_format.extension().to_string();
+    let namespaces = resolve_namespaces(config, locize, namespace.as_deref())?;
     let api_key = resolve_api_key(locize)?;
     let dry_run = dry_run || locize.dry_run.unwrap_or(false);
     let version = locize
@@ -149,7 +151,7 @@ pub fn download(
                 .json()
                 .with_context(|| format!("Failed to parse Locize response: {}", url))?;
 
-            let file_path = locale_namespace_path(config, &locale, ns, &extension);
+            let file_path = locale_namespace_path(config, &locale, ns);
             if locize.compare_modification_time.unwrap_or(false)
                 && should_skip_download_due_to_mtime(&file_path, remote_last_modified)?
             {
@@ -160,8 +162,13 @@ pub fn download(
                 fs::create_dir_all(parent)
                     .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
             }
-            let formatted = serde_json::to_string_pretty(&payload)?;
-            fs::write(&file_path, format!("{}\n", formatted))
+            let map = payload.as_object().cloned().ok_or_else(|| {
+                anyhow!(
+                    "Locize payload must be a JSON object: {}",
+                    file_path.display()
+                )
+            })?;
+            json_sync::write_locale_file(&file_path, &map, output_format, None)
                 .with_context(|| format!("Failed to write {}", file_path.display()))?;
             println!("✓ Downloaded {} / {}", locale, ns);
         }
@@ -389,7 +396,6 @@ fn resolve_namespaces(
     config: &Config,
     locize: &LocizeConfig,
     override_namespace: Option<&str>,
-    extension: &str,
 ) -> Result<Vec<String>> {
     if let Some(ns) = override_namespace {
         return Ok(vec![ns.to_string()]);
@@ -401,33 +407,16 @@ fn resolve_namespaces(
         }
     }
 
-    detect_namespaces_from_files(config, extension)
+    detect_namespaces_from_files(config)
 }
 
-fn detect_namespaces_from_files(config: &Config, extension: &str) -> Result<Vec<String>> {
+fn detect_namespaces_from_files(config: &Config) -> Result<Vec<String>> {
     let output_dir = Path::new(&config.output);
     for locale in &config.locales {
-        let locale_dir = output_dir.join(locale);
-        if !locale_dir.exists() {
-            continue;
-        }
-
         let mut namespaces = Vec::new();
-        for entry in fs::read_dir(&locale_dir)
-            .with_context(|| format!("Failed to read directory: {}", locale_dir.display()))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file()
-                && path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case(extension))
-                    .unwrap_or(false)
-            {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    namespaces.push(stem.to_string());
-                }
+        for path in json_sync::list_locale_files(output_dir, locale, config.output_format())? {
+            if let Some(stem) = json_sync::locale_namespace_from_path(&path) {
+                namespaces.push(stem);
             }
         }
 
@@ -441,25 +430,17 @@ fn detect_namespaces_from_files(config: &Config, extension: &str) -> Result<Vec<
     Ok(vec![config.effective_default_namespace().to_string()])
 }
 
-fn locale_namespace_path(
-    config: &Config,
-    locale: &str,
-    namespace: &str,
-    extension: &str,
-) -> PathBuf {
-    Path::new(&config.output)
-        .join(locale)
-        .join(format!("{}.{}", namespace, extension))
+fn locale_namespace_path(config: &Config, locale: &str, namespace: &str) -> PathBuf {
+    json_sync::locale_namespace_path(
+        Path::new(&config.output),
+        locale,
+        namespace,
+        config.output_format(),
+    )
 }
 
 fn read_local_payload(config: &Config, path: &Path) -> Result<Value> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read translation file: {}", path.display()))?;
-    match config.output_format {
-        OutputFormat::Json => Ok(serde_json::from_str(&content)?),
-        OutputFormat::Json5 => Ok(json5::from_str(&content)?),
-        _ => bail!("Unsupported output format for Locize upload"),
-    }
+    json_sync::read_locale_value(path, config.output_format())
 }
 
 fn ensure_success(response: Response, url: &str) -> Result<Response> {
