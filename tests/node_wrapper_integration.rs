@@ -37,6 +37,15 @@ fn run_node_cli<P: AsRef<Path>>(cwd: P, args: &[&str]) -> Output {
         .expect("failed to run node wrapper")
 }
 
+fn run_node_script<P: AsRef<Path>>(cwd: P, script: &str) -> Output {
+    Command::new("node")
+        .arg("-e")
+        .arg(script)
+        .current_dir(cwd)
+        .output()
+        .expect("failed to run node script")
+}
+
 fn read_json(path: &Path) -> Value {
     let content = fs::read_to_string(path).expect("missing json file");
     serde_json::from_str(&content).expect("invalid json")
@@ -252,6 +261,72 @@ module.exports = {
     assert!(
         !project.join("locales/en/translation.json").exists(),
         "translation.json should not be created for this output template"
+    );
+}
+
+#[test]
+fn node_api_fallback_returns_structured_results() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/app.ts"), "t('api.hello');").unwrap();
+
+    let script = format!(
+        r#"
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const api = require('{}');
+(async () => {{
+  const project = process.cwd();
+  const extractResult = await api.extract({{
+    input: ['src/**/*.ts'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t']
+  }});
+  if (!extractResult || extractResult.unique_keys !== 1) {{
+    throw new Error(`unexpected extract result: ${{JSON.stringify(extractResult)}}`);
+  }}
+  const lintResult = await api.lint({{
+    input: ['src/**/*.ts'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t']
+  }});
+  if (!lintResult || !Array.isArray(lintResult.issues)) {{
+    throw new Error(`unexpected lint result: ${{JSON.stringify(lintResult)}}`);
+  }}
+  const checkResult = await api.check({{
+    input: ['src/**/*.ts'],
+    output: 'locales',
+    locales: ['en'],
+    functions: ['t']
+  }}, {{ dry_run: true }});
+  if (!checkResult || !Array.isArray(checkResult.dead_keys)) {{
+    throw new Error(`unexpected check result: ${{JSON.stringify(checkResult)}}`);
+  }}
+}})().catch((err) => {{
+  console.error(err);
+  process.exit(1);
+}});
+"#,
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("lib")
+            .join("index.js")
+            .display()
+    );
+
+    let output = run_node_script(project, &script);
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

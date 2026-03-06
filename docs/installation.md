@@ -38,20 +38,15 @@ Then run:
 i18next-turbo extract
 ```
 
+To build the native Node addon used by `lib/index.js`:
+
+```bash
+cargo build --release --features napi
+```
+
 ## CI Recommendations
 
 - Cache npm dependencies and Rust target artifacts separately.
 - Keep `package.json` and `package-lock.json` aligned.
 - Run extraction/lint/check in CI with explicit config path when needed (`--config`).
-
-## Known Registry Limitation (as of February 14, 2026)
-
-At the time of writing, `i18next-turbo-win32-x64-msvc` may fail to publish due to npm spam-detection moderation (`403`).
-
-If this occurs:
-
-1. Open a support request at [npm support](https://www.npmjs.com/support).
-2. Ask for package-name moderation review for `i18next-turbo-win32-x64-msvc`.
-3. Re-run release publish after approval.
-
-Until then, Windows users should use source build fallback (`cargo build --release`).
+- Validate both `cargo test` and `cargo test --features napi`.

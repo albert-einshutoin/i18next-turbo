@@ -402,13 +402,15 @@ pub fn check(config: NapiConfig, options: Option<CheckOptions>) -> Result<CheckR
         config.preserve_context_variants,
         &config.context_separator,
         locale,
+        config.output_format(),
     )
     .map_err(|e| napi::Error::from_reason(format!("Check failed: {}", e)))?;
 
     let mut removed_count = 0usize;
     if remove && !dry_run && !dead_keys.is_empty() {
-        removed_count = cleanup_mod::purge_dead_keys(locales_path, &dead_keys)
-            .map_err(|e| napi::Error::from_reason(format!("Cleanup failed: {}", e)))?;
+        removed_count =
+            cleanup_mod::purge_dead_keys(locales_path, &dead_keys, config.output_format())
+                .map_err(|e| napi::Error::from_reason(format!("Cleanup failed: {}", e)))?;
     }
 
     Ok(CheckResult {

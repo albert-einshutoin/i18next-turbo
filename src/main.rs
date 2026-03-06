@@ -38,6 +38,10 @@ struct Cli {
     #[arg(long, global = true)]
     log_level: Option<String>,
 
+    /// Emit machine-readable JSON for supported commands
+    #[arg(long, global = true, hide = true)]
+    json_output: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -354,18 +358,33 @@ fn main() -> Result<()> {
             sync_all,
         } => {
             let resolved_types_output = types_output.unwrap_or_else(|| config.types_output_path());
-            commands::extract::run(
-                &config,
-                output,
-                fail_on_warnings,
-                generate_types,
-                &resolved_types_output,
-                dry_run,
-                ci,
-                sync_primary,
-                sync_all,
-                cli.verbose,
-            )?;
+            if cli.json_output {
+                let result = commands::extract::execute(
+                    &config,
+                    output,
+                    fail_on_warnings,
+                    generate_types,
+                    &resolved_types_output,
+                    dry_run,
+                    ci,
+                    sync_primary,
+                    sync_all,
+                )?;
+                println!("{}", serde_json::to_string(&result)?);
+            } else {
+                commands::extract::run(
+                    &config,
+                    output,
+                    fail_on_warnings,
+                    generate_types,
+                    &resolved_types_output,
+                    dry_run,
+                    ci,
+                    sync_primary,
+                    sync_all,
+                    cli.verbose,
+                )?;
+            }
         }
         Commands::Watch { output } => {
             println!("=== i18next-turbo watch ===\n");
@@ -392,7 +411,12 @@ fn main() -> Result<()> {
             dry_run,
             locale,
         } => {
-            commands::check::run(&config, remove, dry_run, locale)?;
+            if cli.json_output {
+                let result = commands::check::execute(&config, remove, dry_run, locale)?;
+                println!("{}", serde_json::to_string(&result)?);
+            } else {
+                commands::check::run(&config, remove, dry_run, locale)?;
+            }
         }
         Commands::Status {
             locale,
@@ -411,7 +435,12 @@ fn main() -> Result<()> {
             fail_on_error,
             watch,
         } => {
-            commands::lint::run(&config, fail_on_error, watch)?;
+            if cli.json_output && !watch {
+                let result = commands::lint::execute(&config, fail_on_error)?;
+                println!("{}", serde_json::to_string(&result)?);
+            } else {
+                commands::lint::run(&config, fail_on_error, watch)?;
+            }
         }
         Commands::RenameKey {
             old_key,

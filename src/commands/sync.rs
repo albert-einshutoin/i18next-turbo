@@ -30,7 +30,6 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
     println!();
 
     let locales_path = Path::new(&config.output);
-    let extension = config.output_extension();
     let output_format = config.output_format();
 
     // Read all namespaces from primary locale
@@ -47,79 +46,60 @@ pub fn run(config: &Config, remove_unused: bool, dry_run: bool) -> Result<()> {
     let mut total_removed = 0;
 
     // Process each namespace file in primary locale
-    for entry in std::fs::read_dir(&primary_dir)? {
-        let entry = entry?;
-        let path = entry.path();
+    for path in json_sync::list_locale_files(locales_path, &primary_locale, output_format)? {
+        let namespace = json_sync::locale_namespace_from_path(&path)
+            .unwrap_or_else(|| "translation".to_string());
+        let primary_json = json_sync::read_locale_value(&path, output_format)
+            .with_context(|| format!("Failed to parse primary file: {}", path.display()))?;
 
-        if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|ext| ext == extension)
-            .unwrap_or(false)
-        {
-            let namespace = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("translation");
+        // Sync to each secondary locale
+        for secondary_locale in &secondary_locales {
+            let secondary_path = json_sync::locale_namespace_path(
+                locales_path,
+                secondary_locale,
+                &namespace,
+                output_format,
+            );
 
-            let primary_content = std::fs::read_to_string(&path)?;
-            if primary_content.trim().is_empty() {
-                continue;
-            }
+            let mut secondary_json = if secondary_path.exists() {
+                json_sync::read_locale_value(&secondary_path, output_format).with_context(|| {
+                    format!(
+                        "Failed to parse secondary file: {}",
+                        secondary_path.display()
+                    )
+                })?
+            } else {
+                Value::Object(Map::new())
+            };
 
-            let primary_json =
-                json_sync::parse_locale_value_str(&primary_content, output_format, &path)
-                    .with_context(|| format!("Failed to parse primary file: {}", path.display()))?;
+            // Sync keys
+            let (added, removed) =
+                sync_json_keys(&primary_json, &mut secondary_json, remove_unused);
 
-            // Sync to each secondary locale
-            for secondary_locale in &secondary_locales {
-                let secondary_path = locales_path
-                    .join(secondary_locale)
-                    .join(format!("{}.{}", namespace, extension));
+            if added > 0 || removed > 0 {
+                println!(
+                    "  {}/{}.{}: +{} added, -{} removed",
+                    secondary_locale,
+                    namespace,
+                    output_format.extension(),
+                    added,
+                    removed
+                );
 
-                let mut secondary_json = if secondary_path.exists() {
-                    let content = std::fs::read_to_string(&secondary_path)?;
-                    json_sync::parse_locale_value_str(&content, output_format, &secondary_path)
-                        .with_context(|| {
-                            format!(
-                                "Failed to parse secondary file: {}",
-                                secondary_path.display()
-                            )
-                        })?
-                } else {
-                    Value::Object(Map::new())
-                };
-
-                // Sync keys
-                let (added, removed) =
-                    sync_json_keys(&primary_json, &mut secondary_json, remove_unused);
-
-                if added > 0 || removed > 0 {
-                    println!(
-                        "  {}/{}.{}: +{} added, -{} removed",
-                        secondary_locale, namespace, extension, added, removed
-                    );
-
-                    if !dry_run {
-                        // Ensure directory exists
-                        if let Some(parent) = secondary_path.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-                        // Sort and write
-                        if let Some(obj) = secondary_json.as_object() {
-                            let sorted = json_sync::sort_keys_alphabetically(obj);
-                            json_sync::write_locale_file(
-                                &secondary_path,
-                                &sorted,
-                                output_format,
-                                None,
-                            )?;
-                        }
+                if !dry_run {
+                    if let Some(obj) = secondary_json.as_object() {
+                        let sorted = json_sync::sort_keys_alphabetically(obj);
+                        json_sync::write_locale_file(
+                            &secondary_path,
+                            &sorted,
+                            output_format,
+                            None,
+                        )?;
                     }
-
-                    total_added += added;
-                    total_removed += removed;
                 }
+
+                total_added += added;
+                total_removed += removed;
             }
         }
     }

@@ -4,19 +4,43 @@
 
 ### `extract(config, options?)`
 - Purpose: extract translation keys and sync locale files.
-- Returns: `Promise<object>` (JSON-serializable result from native addon).
+- Returns: `Promise<object>`.
+- Result shape:
+  - `success`
+  - `files_processed`
+  - `unique_keys`
+  - `keys_added`
+  - `keys_removed`
+  - `updated_files`
+  - `warnings`
+  - `extraction_warnings`
+  - `conflicts`
+  - `message`
 
 ### `lint(config, options?)`
 - Purpose: detect hardcoded user-facing strings.
-- Returns: `Promise<object>`.
+- Returns: `Promise<object>` with `files_checked` and `issues`.
 
 ### `check(config, options?)`
 - Purpose: detect dead keys and optionally remove them.
-- Returns: `Promise<object>` with dead key details.
+- Returns: `Promise<object>` with `dead_keys` and `removed_count`.
 
 ### `watch(config, options?)`
 - Purpose: run continuous extraction.
 - Returns: `Promise<void>` (long-running).
+
+## Node API Contract
+
+- `lib/index.js` prefers the native addon when available.
+- If the native addon is unavailable, it falls back to the CLI wrapper.
+- Both paths return the same structured result shape for `extract`, `lint`, and `check`.
+- `watch` is intentionally long-running and does not return a summary object.
+
+## Locale Format Coverage
+
+- `extract`, `status`, `check`, `sync`, and `rename-key` share the same locale format handling.
+- Supported locale file formats: `json`, `json5`, `js`/`js-esm`, `js-cjs`, `ts`.
+- `locize` is limited to `json` and `json5`.
 
 ## CLI Commands
 

@@ -49,12 +49,28 @@ Create `i18next-turbo.json` in your project root:
 ```json
 {
   "input": ["src/**/*.{ts,tsx,js,jsx}"],
-  "output": "locales/$LOCALE/$NAMESPACE.json",
+  "output": "locales",
   "locales": ["en", "ja"],
   "defaultNamespace": "translation",
   "functions": ["t", "i18n.t"]
 }
 ```
+
+`output` is the locale root directory. File naming and extension are derived from `outputFormat`.
+
+## Format Contract
+
+- Supported locale output formats: `json`, `json5`, `js`/`js-esm`, `js-cjs`, `ts`
+- Guaranteed consistent handling across `extract`, `status`, `check`, `sync`, and `rename-key`
+- `locize` currently supports `json` and `json5` only
+- The Node API returns structured objects on both native-addon and CLI-fallback paths
+
+## Compatibility Policy
+
+- First-class target: i18next-style key extraction workflows for TS/JS codebases
+- Config auto-discovery supports `i18next-turbo.json` plus selected `i18next-parser` / `i18next.config.*` shapes
+- This is not a drop-in implementation of every `i18next-parser` plugin or config edge case
+- Watch mode, plugin hooks, and runtime transforms are project features, not compatibility guarantees with other tools
 
 ## CLI Commands
 
@@ -72,6 +88,7 @@ Create `i18next-turbo.json` in your project root:
 
 - [Installation and Binary Resolution](docs/installation.md)
 - [API Reference](docs/api.md)
+- [Compatibility and Format Guarantees](docs/compatibility.md)
 - [Plugin Runtime Design](docs/plugin-runtime.md)
 - [Parser Migration Plan](docs/parser-migration.md)
 - [Migration Guide](docs/migration-guide.md)

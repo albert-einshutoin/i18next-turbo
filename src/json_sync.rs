@@ -13,6 +13,60 @@ use crate::config::{Config, OutputFormat};
 use crate::extractor::ExtractedKey;
 use crate::fs::FileSystem;
 
+pub fn locale_namespace_path(
+    output_dir: &Path,
+    locale: &str,
+    namespace: &str,
+    format: OutputFormat,
+) -> std::path::PathBuf {
+    output_dir
+        .join(locale)
+        .join(format!("{}.{}", namespace, format.extension()))
+}
+
+pub fn locale_path_matches_format(path: &Path, format: OutputFormat) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case(format.extension()))
+        .unwrap_or(false)
+}
+
+pub fn locale_namespace_from_path(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+}
+
+pub fn read_locale_value(path: &Path, format: OutputFormat) -> Result<Value> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read locale file: {}", path.display()))?;
+    parse_locale_value_str(&content, format, path)
+}
+
+pub fn list_locale_files(
+    output_dir: &Path,
+    locale: &str,
+    format: OutputFormat,
+) -> Result<Vec<std::path::PathBuf>> {
+    let locale_dir = output_dir.join(locale);
+    if !locale_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&locale_dir)
+        .with_context(|| format!("Failed to read directory: {}", locale_dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && locale_path_matches_format(&path, format) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 fn effective_namespace(default_namespace: &str) -> &str {
     if default_namespace.is_empty() {
         "translation"

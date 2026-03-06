@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::cleanup;
 use crate::config::Config;
 use crate::extractor::{self, ExtractedKey};
+use crate::json_sync;
 
 pub fn run(
     config: &Config,
@@ -87,37 +88,27 @@ pub fn run(
     let mut locale_keys: HashSet<String> = HashSet::new();
 
     if locale_dir.exists() {
-        for entry in std::fs::read_dir(&locale_dir)? {
-            let entry = entry?;
-            let path = entry.path();
+        for path in
+            json_sync::list_locale_files(locales_path, check_locale, config.output_format())?
+        {
+            let namespace = json_sync::locale_namespace_from_path(&path)
+                .unwrap_or_else(|| "translation".to_string());
 
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
-                let namespace = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("translation");
-
-                if let Some(filter) = namespace_filter {
-                    if namespace != filter {
-                        continue;
-                    }
-                }
-
-                let content = std::fs::read_to_string(&path)?;
-                if content.trim().is_empty() {
+            if let Some(filter) = namespace_filter {
+                if namespace != filter {
                     continue;
                 }
+            }
 
-                if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                    count_json_keys(
-                        &json,
-                        namespace,
-                        "",
-                        namespace_less_mode,
-                        config.merge_namespaces,
-                        &mut locale_keys,
-                    );
-                }
+            if let Ok(json) = json_sync::read_locale_value(&path, config.output_format()) {
+                count_json_keys(
+                    &json,
+                    &namespace,
+                    "",
+                    namespace_less_mode,
+                    config.merge_namespaces,
+                    &mut locale_keys,
+                );
             }
         }
     }
@@ -134,6 +125,7 @@ pub fn run(
         config.preserve_context_variants,
         &config.context_separator,
         check_locale,
+        config.output_format(),
     )?;
     let dead_keys: Vec<_> = dead_keys
         .into_iter()

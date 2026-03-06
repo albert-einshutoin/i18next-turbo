@@ -49,12 +49,28 @@ i18next-turbo watch
 ```json
 {
   "input": ["src/**/*.{ts,tsx,js,jsx}"],
-  "output": "locales/$LOCALE/$NAMESPACE.json",
+  "output": "locales",
   "locales": ["en", "ja"],
   "defaultNamespace": "translation",
   "functions": ["t", "i18n.t"]
 }
 ```
+
+`output` はロケールのルートディレクトリです。実際のファイル名と拡張子は `outputFormat` から決まります。
+
+## フォーマット契約
+
+- 対応 locale 出力形式: `json`, `json5`, `js`/`js-esm`, `js-cjs`, `ts`
+- `extract`, `status`, `check`, `sync`, `rename-key` は同じ形式解決ロジックを共有します
+- `locize` は現時点で `json` と `json5` のみ対応です
+- Node API は native addon 経路でも CLI fallback 経路でも構造化オブジェクトを返します
+
+## 互換性ポリシー
+
+- 主対象は TS/JS コードベース向けの i18next 風キー抽出ワークフローです
+- 設定自動検出は `i18next-turbo.json` と、一部の `i18next-parser` / `i18next.config.*` 形式を扱います
+- すべての `i18next-parser` 設定やプラグインの完全ドロップイン互換は保証しません
+- watch mode、plugin hook、runtime transform はプロジェクト機能であり、他ツール互換の保証そのものではありません
 
 ## CLI コマンド
 
@@ -72,6 +88,7 @@ i18next-turbo watch
 
 - [インストールとバイナリ解決](docs/installation.ja.md)
 - [API リファレンス](docs/api.ja.md)
+- [互換性とフォーマット保証](docs/compatibility.ja.md)
 - [移行ガイド](docs/migration-guide.ja.md)
 - [トラブルシューティング](docs/troubleshooting.ja.md)
 - [使用例](docs/usage-examples.ja.md)

@@ -5,7 +5,9 @@ use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::config::OutputFormat;
 use crate::extractor::ExtractedKey;
+use crate::json_sync;
 
 /// Result of dead key detection
 #[derive(Debug, Default)]
@@ -32,6 +34,7 @@ pub fn find_dead_keys(
     preserve_context_variants: bool,
     context_separator: &str,
     locale: &str,
+    format: OutputFormat,
 ) -> Result<Vec<DeadKey>> {
     let mut dead_keys = Vec::new();
 
@@ -53,75 +56,57 @@ pub fn find_dead_keys(
         return Ok(dead_keys);
     }
 
-    for entry in std::fs::read_dir(&locale_dir)
-        .with_context(|| format!("Failed to read: {}", locale_dir.display()))?
-    {
-        let entry = entry?;
-        let path = entry.path();
+    for path in json_sync::list_locale_files(locales_dir, locale, format)? {
+        let namespace = json_sync::locale_namespace_from_path(&path)
+            .unwrap_or_else(|| "translation".to_string());
+        let json = json_sync::read_locale_value(&path, format)
+            .with_context(|| format!("Failed to parse: {}", path.display()))?;
 
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
-            let namespace = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("translation")
-                .to_string();
-
-            let content = std::fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read: {}", path.display()))?;
-
-            if content.trim().is_empty() {
-                continue;
-            }
-
-            let json: Value = serde_json::from_str(&content)
-                .with_context(|| format!("Failed to parse: {}", path.display()))?;
-
-            if let Value::Object(obj) = json {
-                let file_path = path.display().to_string();
-                if merge_namespaces && !namespace_less_mode {
-                    for (root_ns, value) in obj {
-                        match value {
-                            Value::Object(nested) => {
-                                find_dead_keys_in_object(
-                                    &nested,
-                                    &root_ns,
-                                    "",
-                                    &extracted_set,
-                                    &object_root_set,
-                                    namespace_less_mode,
-                                    preserve_context_variants,
-                                    context_separator,
-                                    &file_path,
-                                    &mut dead_keys,
-                                );
-                            }
-                            Value::String(_) => {
-                                let full_key = format_key_id(&root_ns, "", namespace_less_mode);
-                                if !extracted_set.contains(&full_key) {
-                                    dead_keys.push(DeadKey {
-                                        file_path: file_path.clone(),
-                                        key_path: root_ns.clone(),
-                                        namespace: root_ns.clone(),
-                                    });
-                                }
-                            }
-                            _ => {}
+        if let Value::Object(obj) = json {
+            let file_path = path.display().to_string();
+            if merge_namespaces && !namespace_less_mode {
+                for (root_ns, value) in obj {
+                    match value {
+                        Value::Object(nested) => {
+                            find_dead_keys_in_object(
+                                &nested,
+                                &root_ns,
+                                "",
+                                &extracted_set,
+                                &object_root_set,
+                                namespace_less_mode,
+                                preserve_context_variants,
+                                context_separator,
+                                &file_path,
+                                &mut dead_keys,
+                            );
                         }
+                        Value::String(_) => {
+                            let full_key = format_key_id(&root_ns, "", namespace_less_mode);
+                            if !extracted_set.contains(&full_key) {
+                                dead_keys.push(DeadKey {
+                                    file_path: file_path.clone(),
+                                    key_path: root_ns.clone(),
+                                    namespace: root_ns.clone(),
+                                });
+                            }
+                        }
+                        _ => {}
                     }
-                } else {
-                    find_dead_keys_in_object(
-                        &obj,
-                        &namespace,
-                        "",
-                        &extracted_set,
-                        &object_root_set,
-                        namespace_less_mode,
-                        preserve_context_variants,
-                        context_separator,
-                        &file_path,
-                        &mut dead_keys,
-                    );
                 }
+            } else {
+                find_dead_keys_in_object(
+                    &obj,
+                    &namespace,
+                    "",
+                    &extracted_set,
+                    &object_root_set,
+                    namespace_less_mode,
+                    preserve_context_variants,
+                    context_separator,
+                    &file_path,
+                    &mut dead_keys,
+                );
             }
         }
     }
@@ -226,7 +211,11 @@ fn format_key_id(namespace: &str, key_path: &str, namespace_less_mode: bool) -> 
 }
 
 /// Remove dead keys from locale files (purge mode)
-pub fn purge_dead_keys(_locales_dir: &Path, dead_keys: &[DeadKey]) -> Result<usize> {
+pub fn purge_dead_keys(
+    _locales_dir: &Path,
+    dead_keys: &[DeadKey],
+    format: OutputFormat,
+) -> Result<usize> {
     use std::collections::HashMap;
 
     // Group dead keys by file
@@ -246,8 +235,7 @@ pub fn purge_dead_keys(_locales_dir: &Path, dead_keys: &[DeadKey]) -> Result<usi
             continue;
         }
 
-        let content = std::fs::read_to_string(path)?;
-        let mut json: Value = serde_json::from_str(&content)?;
+        let mut json = json_sync::read_locale_value(path, format)?;
 
         if let Value::Object(ref mut obj) = json {
             for key_path in &key_paths {
@@ -258,8 +246,10 @@ pub fn purge_dead_keys(_locales_dir: &Path, dead_keys: &[DeadKey]) -> Result<usi
         }
 
         // Write back
-        let output = serde_json::to_string_pretty(&json)?;
-        std::fs::write(path, format!("{}\n", output))?;
+        if let Value::Object(ref obj) = json {
+            let sorted = json_sync::sort_keys_alphabetically(obj);
+            json_sync::write_locale_file(path, &sorted, format, None)?;
+        }
     }
 
     Ok(removed_count)
@@ -379,6 +369,7 @@ mod tests {
             false,
             "_",
             "en",
+            crate::config::OutputFormat::Json,
         )
         .unwrap();
 

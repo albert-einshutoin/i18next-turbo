@@ -82,13 +82,10 @@ pub fn run(
     // Step 2: Rename in locale files
     println!("\nUpdating locale files...");
     let locales_path = std::path::Path::new(&config.output);
-    let extension = config.output_extension();
     let format = config.output_format();
 
     for locale in &config.locales {
-        let ns_file = locales_path
-            .join(locale)
-            .join(format!("{}.{}", old_ns, extension));
+        let ns_file = json_sync::locale_namespace_path(locales_path, locale, &old_ns, format);
 
         if !ns_file.exists() {
             continue;
@@ -120,9 +117,8 @@ pub fn run(
                 }
 
                 // Add to new namespace file
-                let new_ns_file = locales_path
-                    .join(locale)
-                    .join(format!("{}.{}", new_ns, extension));
+                let new_ns_file =
+                    json_sync::locale_namespace_path(locales_path, locale, &new_ns, format);
 
                 let mut new_json = if new_ns_file.exists() {
                     let new_content = std::fs::read_to_string(&new_ns_file)?;
@@ -145,7 +141,12 @@ pub fn run(
 
                 println!(
                     "  {}/{}.{} -> {}/{}.{}",
-                    locale, old_ns, extension, locale, new_ns, extension
+                    locale,
+                    old_ns,
+                    format.extension(),
+                    locale,
+                    new_ns,
+                    format.extension()
                 );
             } else {
                 // Same namespace, just rename key path
@@ -158,7 +159,7 @@ pub fn run(
                     }
                 }
 
-                println!("  {}/{}.{}", locale, old_ns, extension);
+                println!("  {}/{}.{}", locale, old_ns, format.extension());
             }
 
             locale_changes += 1;
@@ -246,6 +247,26 @@ mod tests {
         assert!(!old_ns.contains("admin"));
         let new_ns = std::fs::read_to_string(locale_dir.join("common.json")).unwrap();
         assert!(new_ns.contains("superAdmin"));
+    }
+
+    #[test]
+    fn rename_key_updates_json5_locale_files() {
+        let tmp = tempdir().unwrap();
+        let mut config = test_config(tmp.path());
+        config.output_format = crate::config::OutputFormat::Json5;
+        let locale_dir = Path::new(&config.output).join("en");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        std::fs::write(
+            locale_dir.join("translation.json5"),
+            "{ greeting: { old: 'hi' } }\n",
+        )
+        .unwrap();
+
+        run(&config, "greeting.old", "greeting.new", false, true).unwrap();
+
+        let updated = std::fs::read_to_string(locale_dir.join("translation.json5")).unwrap();
+        assert!(updated.contains("new"));
+        assert!(!updated.contains("old"));
     }
 }
 

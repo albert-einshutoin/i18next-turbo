@@ -38,20 +38,15 @@ cargo build --release
 i18next-turbo extract
 ```
 
+`lib/index.js` が利用する native Node addon をビルドする場合:
+
+```bash
+cargo build --release --features napi
+```
+
 ## CI 運用の推奨
 
 - npm 依存キャッシュと Rust ターゲットキャッシュを分離する。
 - `package.json` と `package-lock.json` の整合性を保つ。
 - 必要に応じて `--config` で設定ファイルパスを明示して実行する。
-
-## 既知のレジストリ制約（2026-02-14 時点）
-
-執筆時点では `i18next-turbo-win32-x64-msvc` の publish が npm のスパム判定（`403`）で失敗する可能性があります。
-
-この場合の対応:
-
-1. [npm support](https://www.npmjs.com/support) に問い合わせる。
-2. `i18next-turbo-win32-x64-msvc` のパッケージ名審査解除を依頼する。
-3. 承認後に release publish を再実行する。
-
-それまで Windows ではソースビルド（`cargo build --release`）での利用を推奨します。
+- `cargo test` に加えて `cargo test --features napi` も検証する。
