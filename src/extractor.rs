@@ -67,8 +67,8 @@ fn write_ast_event_line(event: &JsonValue) {
 }
 
 #[derive(Debug, Clone)]
-struct TagBlock {
-    content: String,
+pub(crate) struct TagBlock {
+    pub(crate) content: String,
     range: Range<usize>,
 }
 
@@ -119,7 +119,7 @@ fn find_tag_end(source: &[u8], mut index: usize) -> Option<usize> {
     None
 }
 
-fn find_tag_blocks_by_name(source: &str, tag_name: &str) -> Vec<TagBlock> {
+pub(crate) fn find_tag_blocks_by_name(source: &str, tag_name: &str) -> Vec<TagBlock> {
     let bytes = source.as_bytes();
     let tag = tag_name.as_bytes();
     let mut blocks = Vec::new();
@@ -2930,6 +2930,39 @@ pub fn extract_from_glob_with_options(
     interpolation_prefix: &str,
     interpolation_suffix: &str,
 ) -> Result<ExtractionResult> {
+    extract_from_glob_with_index(
+        patterns,
+        ignore_patterns,
+        functions,
+        extract_from_comments,
+        plural_config,
+        trans_components,
+        trans_keep_basic_html_nodes_for,
+        use_translation_names,
+        nesting_prefix,
+        nesting_suffix,
+        nesting_options_separator,
+        interpolation_prefix,
+        interpolation_suffix,
+    )
+    .map(|(extraction, _)| extraction)
+}
+
+pub(crate) fn extract_from_glob_with_index(
+    patterns: &[String],
+    ignore_patterns: &[String],
+    functions: &[String],
+    extract_from_comments: bool,
+    plural_config: &PluralConfig,
+    trans_components: &[String],
+    trans_keep_basic_html_nodes_for: &[String],
+    use_translation_names: &[UseTranslationName],
+    nesting_prefix: &str,
+    nesting_suffix: &str,
+    nesting_options_separator: &str,
+    interpolation_prefix: &str,
+    interpolation_suffix: &str,
+) -> Result<(ExtractionResult, Arc<FiniteIndex>)> {
     use rayon::prelude::*;
 
     let expanded_patterns: Vec<String> = patterns
@@ -3088,12 +3121,15 @@ pub fn extract_from_glob_with_options(
         }
     }
 
-    Ok(ExtractionResult {
-        requires_project_scan,
-        files,
-        warning_count,
-        errors,
-    })
+    Ok((
+        ExtractionResult {
+            requires_project_scan,
+            files,
+            warning_count,
+            errors,
+        },
+        finite_index,
+    ))
 }
 
 /// Extract keys with early deduplication using fold/reduce pattern.

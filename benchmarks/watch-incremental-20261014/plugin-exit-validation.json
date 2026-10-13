@@ -1,0 +1,145 @@
+{
+  "date": "2026-10-14 JST",
+  "base_head": "d9019bddef21cf7d8f3fd8850279c4495136b211",
+  "source_sha256": {
+    "bin/cli.js": "00c82dec8cd35dfcf2ad1a3c2494b12216f8a359b23160b55c486f2ab39a08e3",
+    "tests/node_wrapper_integration.rs": "9e295f695b1bd13c8185e5950bc39b171bbdafd44aec8af6fb5a50db10734deb",
+    ".github/workflows/ci.yml": "f8e82f527b51520c0976b54b9e7b9faa4bcf01270da04113b8e10bbf6548d587",
+    "AGENTS.md": "165b24f47aa831889f41b87627446674ec989396a9b18ed1dddfccdf16f634ca"
+  },
+  "regression": {
+    "before": "three active-handle cases timed out at 5 seconds",
+    "after": "all three cases passed; success 0, child failure 7, hook failure 1; stdout/stderr 256KiB each and full large diagnostic"
+  },
+  "test_counts": {
+    "targeted": 16,
+    "all-targets": 207,
+    "all-features-parallel": 223
+  },
+  "parallelism": "RUST_TEST_THREADS unset; no serialization",
+  "commands": [
+    {
+      "name": "native-build",
+      "command": [
+        "cargo",
+        "build",
+        "--lib",
+        "--all-features",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 3.591580874985084,
+      "rust_test_threads": "unset; default parallelism"
+    },
+    {
+      "name": "all-targets",
+      "command": [
+        "cargo",
+        "test",
+        "--all-targets",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 24.613414040999487,
+      "rust_test_threads": "unset; default parallelism"
+    },
+    {
+      "name": "all-features-parallel",
+      "command": [
+        "cargo",
+        "test",
+        "--all-targets",
+        "--all-features",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 19.9037778750062,
+      "rust_test_threads": "unset; default parallelism"
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-targets",
+        "--all-features",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.0150089579983614,
+      "rust_test_threads": "unset; default parallelism"
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.19248887497815304,
+      "rust_test_threads": "unset; default parallelism"
+    },
+    {
+      "name": "node-syntax",
+      "command": [
+        "node",
+        "--check",
+        "bin/cli.js"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.02858074998948723,
+      "rust_test_threads": "unset; default parallelism"
+    },
+    {
+      "name": "workflow-syntax",
+      "command": [
+        "node",
+        "-e",
+        "const fs=require(\"fs\"),yaml=require(\"yaml\");const w=yaml.parse(fs.readFileSync(\".github/workflows/ci.yml\",\"utf8\"));const s=w.jobs[\"node-smoke\"].steps;const i=s.findIndex(x=>x.name===\"Run Node wrapper integration tests\");if(i<0||s[i-1].name!==\"Install local npm package\"||s[i].run!==\"cargo test --test node_wrapper_integration --locked\")throw Error(\"regression CI step/dependency order mismatch\");"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.029887292010243982,
+      "rust_test_threads": "unset; default parallelism"
+    },
+    {
+      "name": "workflow-actionlint",
+      "command": [
+        "actionlint",
+        ".github/workflows/ci.yml"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.6212165839970112
+    },
+    {
+      "name": "release-build",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.9044938330189325
+    },
+    {
+      "name": "diff-check",
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.01998400001320988
+    }
+  ],
+  "workflow_check_note": "Node YAML attempt could not load optional validator module; retained failure; installed actionlint then passed without a source change",
+  "specialist_reviews": {
+    "node_and_ci": "static ALLOW",
+    "rust_process_test": "static ALLOW"
+  }
+}
