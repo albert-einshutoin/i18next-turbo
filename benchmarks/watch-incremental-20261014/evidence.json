@@ -10,25 +10,11 @@
     "src/json_sync.rs": "8b42a1d296124c9f9655915d7d54ba47a02f8d1deb5ff5493d5cb56aa769b818"
   },
   "p1_measured_wrapper_sha256": "7550dcf5566e8b6fe8b32682f0c3f133db9348094ef27af5a2ad3bfbe60f1fd3",
-  "final_validated_source_sha256": {
-    "src/watcher.rs": "669edac102ed8db96cd1cc7e9b66305622f9bb5b7959809015065bda8d58e98d",
-    "src/finite_values.rs": "e13b244eea2b3036f4d94c4f196074705b60e48ec7d4a9b7e692450d3425e9dd",
-    "src/extractor.rs": "bdf0302ffc39208a230239437adb8ec699a37c7018e3c031707a227dbdd75472",
-    "src/config.rs": "c2087e6f9f09f4a700b90de91fec5362fbe8caca75acc4649670ff2fcd866301",
-    "src/json_sync.rs": "8b42a1d296124c9f9655915d7d54ba47a02f8d1deb5ff5493d5cb56aa769b818",
-    "bin/cli.js": "4b1f6675bf264a3fceade1cacd644e3d23cabbd44ee45daa440aef7e10336d1f",
-    "tests/node_wrapper_integration.rs": "2e25d6cf0b9ea700788bcd1806a0574c917408c338051c64ad3db974566f531c"
-  },
   "same_fixture_config_seed_hash_checks": 144,
   "watch_checks": 120,
   "post_operation_full_checks": 180,
   "initial_full_checks": 30,
   "retained_translations_per_check": 18,
-  "final_validation_test_counts": {
-    "targeted": 13,
-    "all-targets": 204,
-    "all-features-parallel": 220
-  },
   "review_verdicts": {
     "rust_p1": "static ALLOW",
     "node_exit": "static ALLOW",
@@ -49,11 +35,40 @@
     "validation.json": "2b0f4084753b55c24125c1931fcbd339914bc4d54f9eda490961d1104cd11101",
     "packaging-checks.json": "332f60240894ab33e26b0d692da27f8b76d4116823c16d1cdbb5cf989987f855",
     "packaging-watch.json": "1ae136e186772759c1694088abf4409e8484d1a1de346dfcbbb5d7e201819f71",
-    "packaging-node.json": "a268edb5de7664c79a515ba6c25255c4dc09aef38d6b9be95c0e654713f8ef23"
+    "packaging-node.json": "a268edb5de7664c79a515ba6c25255c4dc09aef38d6b9be95c0e654713f8ef23",
+    "plugin-exit-validation.json": "2537de23e56c6208c309d68e1adeaed988f4b8ed89282bb1adce9645d090daec"
   },
   "source_equivalent_commits": {
     "p1_measurement_snapshot": "01af467a52cc93485575a332caf52674d95d49b7",
-    "final_parallel_validation_snapshot": "9c6490cc220a681970fe956481dcb559e343dbe9"
+    "initial_node_parallel_validation_snapshot": "9c6490cc220a681970fe956481dcb559e343dbe9"
   },
-  "root_wrapper_lock_sha256": "7b7ac309f42a3bbe90ba7b3a275d624b4273a3bb67c99a1470f3c14b6c55c537"
+  "root_wrapper_lock_sha256": "7b7ac309f42a3bbe90ba7b3a275d624b4273a3bb67c99a1470f3c14b6c55c537",
+  "initial_node_validated_source_sha256": {
+    "src/watcher.rs": "669edac102ed8db96cd1cc7e9b66305622f9bb5b7959809015065bda8d58e98d",
+    "src/finite_values.rs": "e13b244eea2b3036f4d94c4f196074705b60e48ec7d4a9b7e692450d3425e9dd",
+    "src/extractor.rs": "bdf0302ffc39208a230239437adb8ec699a37c7018e3c031707a227dbdd75472",
+    "src/config.rs": "c2087e6f9f09f4a700b90de91fec5362fbe8caca75acc4649670ff2fcd866301",
+    "src/json_sync.rs": "8b42a1d296124c9f9655915d7d54ba47a02f8d1deb5ff5493d5cb56aa769b818",
+    "bin/cli.js": "4b1f6675bf264a3fceade1cacd644e3d23cabbd44ee45daa440aef7e10336d1f",
+    "tests/node_wrapper_integration.rs": "2e25d6cf0b9ea700788bcd1806a0574c917408c338051c64ad3db974566f531c"
+  },
+  "initial_node_validation_test_counts": {
+    "targeted": 13,
+    "all-targets": 204,
+    "all-features-parallel": 220
+  },
+  "latest_plugin_exit_fix": {
+    "validation_file": "plugin-exit-validation.json",
+    "source_sha256": {
+      "bin/cli.js": "00c82dec8cd35dfcf2ad1a3c2494b12216f8a359b23160b55c486f2ab39a08e3",
+      "tests/node_wrapper_integration.rs": "9e295f695b1bd13c8185e5950bc39b171bbdafd44aec8af6fb5a50db10734deb",
+      ".github/workflows/ci.yml": "f8e82f527b51520c0976b54b9e7b9faa4bcf01270da04113b8e10bbf6548d587",
+      "AGENTS.md": "165b24f47aa831889f41b87627446674ec989396a9b18ed1dddfccdf16f634ca"
+    },
+    "test_counts": {
+      "targeted": 16,
+      "all-targets": 207,
+      "all-features-parallel": 223
+    }
+  }
 }

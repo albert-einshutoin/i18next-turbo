@@ -2,7 +2,7 @@
 
 相対importのある入力では変更ごとに全抽出していたwatchを、変更ファイルと影響する利用先の再解析へ切り替えた。初回の有限値indexを保持し、旧・新import候補の逆依存をたどる。rename後の同内容通知は解析・同期を省略する。入力/ignore境界を維持し、未解決・曖昧な値はprune前に拒否する。旧namespaceも同期し、削除cacheは影響sourceすべての解析成功後に更新する。
 
-Node側はchild終了後のprocess.exitによる親stdout/stderrの切捨てを修正した。非同期処理後の3箇所をprocess.exitCodeへ置換し、childの非0 codeは保持してreturnする。既存assertと並列設定は変更していない。
+Node側はchild終了後の出力切捨てを防ぎ、stdout/stderrの先行write後のcallbackを両方待って明示終了する。child非0 codeを保持し、失敗時は後続hookを実行しない。既存assertと並列設定は変更していない。
 
 ## 一致・保持・影響範囲
 
@@ -33,7 +33,7 @@ Node側はchild終了後のprocess.exitによる親stdout/stderrの切捨てを�
 
 1,200件では16.6〜22.5%短縮。300件の型/定数変更はCLIの方が速い。CLI watchの追加/削除/純rename（両サイズ）と1,200件の依存renameは8秒で打ち切り、欠測として保持し残4回は未実施。成功まで再試行しない。純renameも完了ログを必須とし同値catalogだけで0msとは扱わない。全samples、min/max、全抽出時間と差分は[p0-watch.json](p0-watch.json) / [p1-watch.json](p1-watch.json)。
 
-## Node修正・最終全体検証
+## Node修正の初期検証（最終結果は追補）
 
 - 修正前の既存Node13件は並列でdrainとplugin fail-fastの2件が失敗。修正後は同13件が成功。
 - 成功/child code7/plugin例外の3条件×8回、8worker並列で、child stdout/stderr各262,144 bytesと大きな例外診断を検証。保存した旧24条件は全件で出力保持失敗、新24条件は全件で完全出力・code0/7/1保持・非0でafterSync非実行を確認。[node-output.json](node-output.json)。
@@ -72,3 +72,13 @@ Hosted CIの結果はPR上の最終headに対する別証拠とし、この資�
 保存測定とsource bytesが一致するコミット: P1 `01af467a52cc93485575a332caf52674d95d49b7`、Node修正後の全体検証 `9c6490cc220a681970fe956481dcb559e343dbe9`。測定は未commit時に実行しており、ここでは後から一致するtreeを照合した。配布位置を直したscriptの30件×1回確認（全抽出21/watch12）とNode24件は[packaging-checks.json](packaging-checks.json)に分離した。
 
 公開script確認のrawは[packaging-watch.json](packaging-watch.json) / [packaging-node.json](packaging-node.json)。実行command・exit status・日時はpackaging-checks.json、各ファイルSHAはevidence.jsonに保存。root wrapper依存は追跡済みpackage-lock.json、CLI依存は専用cli-lock.jsonで固定する。
+
+## PR #80の終了処理P1指摘への追補
+
+自然終了だけではsetupのinterval等が残るとCLIが終了しない回帰を確認した。終了コードをmainから返し、stdout/stderrの空write callbackが両方完了した後にprocess.exitする共通経路へ修正。正常drain時は0/child非0/例外1を保持し、write失敗は1。新規依存・固定sleep・汎用teardownは追加しない。
+
+成功0、child failure7、afterSync failure1の3回帰testを追加。pluginのintervalを残し、child stdout/stderr各256KiBと大きな診断の全byte、後続hookの実行有無、5秒以内の終了を検証。両pipeを並列読取し、timeout時は所有するCLIをkill/waitして回収する。修正前は3件ともtimeout、修正後はNode/native16件・通常207件・全feature通常並列223件が成功。Clippy -D warnings、fmt、JS構文、actionlint、release/native build、diff checkも成功。
+
+CIのnode-smokeはnpm依存導入後にcargo test --test node_wrapper_integration --lockedを実行する。lintで依存未導入のためtestがskipする状況と区別し、回帰を実際に実行する。source SHA・全実command・結果は[plugin-exit-validation.json](plugin-exit-validation.json)。任意のbackground outputの無期限継続を保証するものではなく、command/hook完了時の先行writeをdrainしてCLIを終了させる。
+
+P0/P1の大規模測定は保存済みの歴史的結果のまま保持し、この追補で速度再測定したとは扱わない。initial_node_*は初期Node修正のsource/検証、latest_plugin_exit_fixが今回の最終検証を示す。Hosted CIはPRの最終headとmerge後mainの別証拠として確認する。

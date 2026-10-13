@@ -23,6 +23,7 @@ commit・push・merge・releaseはユーザーが依頼した工程だけで行�
 | Release build | `cargo build --release --locked` |
 | Node wrapper dependencies | `npm install --ignore-scripts --omit=optional --no-audit --no-fund --package-lock=false` |
 | Native library | `cargo build --lib --all-features --locked` |
+| Node wrapper integration | `cargo test --test node_wrapper_integration --locked` |
 
 Native integration tests require the built library to be installed as a `.node`
 file in the target directory. Mac/arm64 setup and pinned extraction comparison

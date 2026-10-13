@@ -137,10 +137,8 @@ async function main() {
       config: runtimeConfig
     }, pluginRuntime);
   }
-  // Let pending stdout/stderr writes finish before Node exits.
   if (exitCode !== 0) {
-    process.exitCode = exitCode;
-    return;
+    return exitCode;
   }
 
   const postSyncResult = await applyRuntimeTransforms(features);
@@ -160,13 +158,24 @@ async function main() {
     postSyncResult
   }, pluginRuntime);
 
-  process.exitCode = 0;
+  return 0;
 }
 
-main().catch((error) => {
+main().then(exitAfterDrain, (error) => {
   console.error(`Error: ${error.message}`);
-  process.exitCode = 1;
+  exitAfterDrain(1);
 });
+
+function exitAfterDrain(exitCode) {
+  let pending = 2;
+  const flushed = (error) => {
+    if (error) exitCode = 1;
+    if (--pending === 0) process.exit(exitCode);
+  };
+  // Queue behind earlier writes, then exit even if plugins left active handles.
+  process.stdout.write('', flushed);
+  process.stderr.write('', flushed);
+}
 
 async function resolveConfigArgs(argv) {
   const processedArgs = [];

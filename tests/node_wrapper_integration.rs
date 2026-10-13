@@ -184,6 +184,116 @@ fn node_wrapper_drains_captured_child_output() {
     assert_eq!(output.stderr, vec![b'y'; 262144]);
 }
 
+#[cfg(unix)]
+fn assert_exit_with_active_plugin(exit_code: i32, plugin_error: bool) {
+    use std::io::Read;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Stdio;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let binary = tmp.path().join("child.cjs");
+    fs::write(
+        &binary,
+        format!("#!/usr/bin/env node\nprocess.stdout.write('x'.repeat(262144));\nprocess.stderr.write('y'.repeat(262144));\nprocess.exitCode = {exit_code};\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        tmp.path().join("plugin.cjs"),
+        format!(r#"module.exports = {{
+  setup() {{ setInterval(() => {{}}, 50); }},
+  afterSync() {{
+    require('fs').writeFileSync('.after-sync', 'done');
+    if ({plugin_error}) throw new Error('DIAGNOSTIC-BEGIN:' + 'z'.repeat(262144) + ':DIAGNOSTIC-END');
+  }}
+}};
+"#),
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("i18next.config.cjs"),
+        "module.exports = {locales:['en'],pluginErrorMode:'fail-fast',plugins:[{resolve:'./plugin.cjs'}],extract:{input:'src/**/*.ts',output:'locales/{{language}}/{{namespace}}.json'}};",
+    )
+    .unwrap();
+    let mut child = Command::new("node")
+        .arg(wrapper_bin())
+        .args(["--config", "i18next.config.cjs", "extract"])
+        .env("I18NEXT_TURBO_BINARY", &binary)
+        .current_dir(tmp.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    // Read both pipes while waiting: large output must not turn the timeout into pipe deadlock.
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (status, timed_out) = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break (status, false);
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            break (child.wait().unwrap(), true);
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let stdout = stdout_reader.join().unwrap();
+    let stderr = stderr_reader.join().unwrap();
+    assert!(
+        !timed_out,
+        "CLI must exit even when a plugin leaves an interval active"
+    );
+    assert_eq!(
+        status.code(),
+        Some(if plugin_error { 1 } else { exit_code })
+    );
+    assert_eq!(stdout.len(), 262144);
+    assert!(stdout.iter().all(|byte| *byte == b'x'));
+    assert!(stderr.starts_with(&vec![b'y'; 262144]));
+    assert_eq!(tmp.path().join(".after-sync").exists(), exit_code == 0);
+    if plugin_error {
+        let diagnostic = format!("DIAGNOSTIC-BEGIN:{}:DIAGNOSTIC-END\n", "z".repeat(262144));
+        assert!(stderr.ends_with(diagnostic.as_bytes()));
+        assert!(String::from_utf8_lossy(&stderr).contains("plugin hook \"afterSync\" failed"));
+    } else {
+        assert_eq!(stderr.len(), 262144);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn node_wrapper_exits_with_active_plugin_after_success() {
+    assert_exit_with_active_plugin(0, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn node_wrapper_exits_with_active_plugin_after_child_failure() {
+    assert_exit_with_active_plugin(7, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn node_wrapper_exits_with_active_plugin_after_hook_failure() {
+    assert_exit_with_active_plugin(0, true);
+}
+
 #[test]
 fn node_wrapper_plugin_onload_transforms_source_and_aftersync_runs() {
     if !should_run_node_wrapper_tests() {
