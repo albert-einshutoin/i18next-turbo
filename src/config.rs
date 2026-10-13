@@ -563,12 +563,41 @@ pub struct NapiConfig {
     pub interpolationPrefix: Option<String>,
     pub interpolationSuffix: Option<String>,
     pub types: Option<NapiTypesConfig>,
+    pub lint: Option<NapiLintConfig>,
     pub locize: Option<NapiLocizeConfig>,
     pub primaryLanguage: Option<String>,
     pub secondaryLanguages: Option<Vec<String>>,
     /// Indentation: number (spaces) or string (e.g., "\t")
     pub indentation: Option<NapiIndentation>,
     pub logLevel: Option<String>,
+}
+
+#[cfg(feature = "napi")]
+#[napi(object)]
+pub struct NapiLintConfig {
+    pub ignored_attributes: Option<Vec<String>>,
+    pub ignored_tags: Option<Vec<String>>,
+    pub accepted_attributes: Option<Vec<String>>,
+    pub accepted_tags: Option<Vec<String>>,
+    pub ignore: Option<Vec<String>>,
+}
+
+#[cfg(feature = "napi")]
+impl From<NapiLintConfig> for LintConfig {
+    fn from(config: NapiLintConfig) -> Self {
+        let defaults = Self::default();
+        Self {
+            ignored_attributes: config
+                .ignored_attributes
+                .unwrap_or(defaults.ignored_attributes),
+            ignored_tags: config.ignored_tags.unwrap_or(defaults.ignored_tags),
+            accepted_attributes: config
+                .accepted_attributes
+                .unwrap_or(defaults.accepted_attributes),
+            accepted_tags: config.accepted_tags.unwrap_or(defaults.accepted_tags),
+            ignore: config.ignore.unwrap_or(defaults.ignore),
+        }
+    }
 }
 
 /// NAPI-compatible indentation type
@@ -1351,7 +1380,7 @@ impl Config {
             primary_language: config.primaryLanguage,
             secondary_languages: config.secondaryLanguages,
             indentation: config.indentation.map(Indentation::from),
-            lint: defaults.lint.clone(),
+            lint: config.lint.map(LintConfig::from).unwrap_or_default(),
             log_level: config
                 .logLevel
                 .unwrap_or_else(|| defaults.log_level.clone()),

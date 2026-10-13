@@ -414,8 +414,24 @@ fn native_node_api_extract_matches_documented_result_shape() {
   if (result.unique_keys !== 1 || result.keys_added !== 1 || result.conflicts !== 0) {{
     throw new Error(`unexpected native extract result: ${{JSON.stringify(result)}}`);
   }}
+  if (result.message !== null) {{
+    throw new Error('extract message must be null when absent');
+  }}
   if (!fs.existsSync(path.join(process.cwd(), 'locales', 'en', 'translation.json'))) {{
     throw new Error('translation.json was not created');
+  }}
+  const localeFile = path.join(process.cwd(), 'locales', 'en', 'translation.json');
+  const catalog = JSON.parse(fs.readFileSync(localeFile, 'utf8'));
+  catalog.obsolete = 'KEEP';
+  fs.writeFileSync(localeFile, JSON.stringify(catalog));
+  const beforeCheck = fs.readFileSync(localeFile, 'utf8');
+  const checked = nativeAddon.check({{
+    input: ['src/**/*.ts'], output: 'locales', locales: ['en'], functions: ['t']
+  }}, {{ remove: true, dry_run: true }});
+  if (checked.dead_keys.length !== 1 || checked.dead_keys[0].key_path !== 'obsolete'
+      || typeof checked.dead_keys[0].file_path !== 'string'
+      || checked.removed_count !== 0 || fs.readFileSync(localeFile, 'utf8') !== beforeCheck) {{
+    throw new Error(`native check contract/dry_run failed: ${{JSON.stringify(checked)}}`);
   }}
 }})().catch((err) => {{
   console.error(err);
@@ -519,12 +535,27 @@ fn native_node_api_lint_honors_lint_configuration() {
     locales: ['en'],
     functions: ['t'],
     lint: {{
-      ignoredAttributes: ['placeholder']
+      ignoredAttributes: ['placeholder'], acceptedTags: ['input']
     }}
   }});
-  if (!result || !Array.isArray(result.issues) || result.issues.length !== 0) {{
+  if (!result || result.files_checked !== 1 || !Array.isArray(result.issues) || result.issues.length !== 0) {{
     throw new Error(`native lint ignored config: ${{JSON.stringify(result)}}`);
   }}
+  const unignored = nativeAddon.lint({{
+    input: ['src/**/*.tsx'], output: 'locales', locales: ['en'], functions: ['t'],
+    lint: {{ ignoredAttributes: [], acceptedTags: ['input'] }}
+  }});
+  if (unignored.issues.length !== 1 || typeof unignored.issues[0].file_path !== 'string') {{
+    throw new Error(`native lint issue contract failed: ${{JSON.stringify(unignored)}}`);
+  }}
+  let rejected = false;
+  try {{
+    nativeAddon.lint({{
+      input: ['src/**/*.tsx'], output: 'locales', locales: ['en'], functions: ['t'],
+      lint: {{ ignoredAttributes: [], acceptedTags: ['input'] }}
+    }}, {{ fail_on_error: true }});
+  }} catch (error) {{ rejected = /Lint failed/.test(String(error.message)); }}
+  if (!rejected) {{ throw new Error('native lint ignored fail_on_error'); }}
 }})().catch((err) => {{
   console.error(err);
   process.exit(1);

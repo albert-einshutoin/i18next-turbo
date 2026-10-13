@@ -715,7 +715,7 @@ async function applyRuntimeTransforms(features) {
       }
 
       if (changed) {
-        const serialized = JSON.stringify(parsed, null, style.indent);
+        const serialized = JSON.stringify(parsed, null, style.indent).replace(/\n/g, style.newline);
         const nextContent = style.trailingNewline
           ? `${serialized}${style.newline}`
           : serialized;

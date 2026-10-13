@@ -1,4 +1,5 @@
 use crate::config::{Config, LocizeConfig, OutputFormat};
+use crate::json_sync;
 use crate::logging;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::blocking::{Client, Response};
@@ -24,8 +25,6 @@ pub fn upload(
     if locize.source_language_only.unwrap_or(false) {
         locales = vec![resolve_source_locale(config, locize)];
     }
-    let output_format = config.output_format();
-    let extension = output_format.extension().to_string();
     let namespaces = resolve_namespaces(config, locize, namespace.as_deref())?;
     let api_key = resolve_api_key(locize)?;
     let dry_run = dry_run || locize.dry_run.unwrap_or(false);
@@ -114,7 +113,6 @@ pub fn download(
         locales = vec![resolve_source_locale(config, locize)];
     }
     let output_format = config.output_format();
-    let extension = output_format.extension().to_string();
     let namespaces = resolve_namespaces(config, locize, namespace.as_deref())?;
     let api_key = resolve_api_key(locize)?;
     let dry_run = dry_run || locize.dry_run.unwrap_or(false);
@@ -554,7 +552,7 @@ mod tests {
         config.output = base.to_string_lossy().to_string();
         config.locales = vec!["en".into()];
 
-        let namespaces = detect_namespaces_from_files(&config, "json").unwrap();
+        let namespaces = detect_namespaces_from_files(&config).unwrap();
         assert_eq!(namespaces, vec!["common".to_string(), "home".to_string()]);
     }
 
@@ -566,7 +564,7 @@ mod tests {
 
         let mut config = Config::default();
         config.output = base.to_string_lossy().to_string();
-        let namespaces = detect_namespaces_from_files(&config, "json").unwrap();
+        let namespaces = detect_namespaces_from_files(&config).unwrap();
         assert_eq!(
             namespaces,
             vec![config.effective_default_namespace().to_string()]
@@ -639,7 +637,7 @@ mod tests {
             cdn_type: None,
             dry_run: None,
         };
-        let resolved = resolve_namespaces(&config, &locize, Some("forced"), "json").unwrap();
+        let resolved = resolve_namespaces(&config, &locize, Some("forced")).unwrap();
         assert_eq!(resolved, vec!["forced".to_string()]);
     }
 
@@ -659,7 +657,7 @@ mod tests {
             cdn_type: None,
             dry_run: None,
         };
-        let resolved = resolve_namespaces(&config, &locize, None, "json").unwrap();
+        let resolved = resolve_namespaces(&config, &locize, None).unwrap();
         assert_eq!(resolved, vec!["a".to_string(), "b".to_string()]);
     }
 
@@ -684,7 +682,7 @@ mod tests {
     fn locale_namespace_path_builds_expected_path() {
         let mut config = Config::default();
         config.output = "locales".to_string();
-        let p = locale_namespace_path(&config, "en", "common", "json");
+        let p = locale_namespace_path(&config, "en", "common");
         assert!(p.ends_with(Path::new("locales/en/common.json")));
     }
 

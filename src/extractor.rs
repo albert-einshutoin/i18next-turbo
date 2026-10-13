@@ -2802,7 +2802,7 @@ fn extract_svelte_component(
     for block in style_blocks {
         removal_ranges.push(block.range);
     }
-    removal_ranges.sort_by(|a, b| b.start.cmp(&a.start));
+    removal_ranges.sort_by_key(|range| std::cmp::Reverse(range.start));
     for range in removal_ranges {
         let len = range.end.saturating_sub(range.start);
         if len == 0 || range.end > trimmed_template.len() {
