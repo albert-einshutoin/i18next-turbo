@@ -5,6 +5,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod extractor;
+mod finite_values;
 pub mod fs;
 pub mod json_sync;
 pub mod lint;

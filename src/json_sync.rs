@@ -590,6 +590,7 @@ pub(crate) fn merge_keys(
     target_namespace: &str,
     config: &Config,
     preserve_matcher: &PreserveMatcher,
+    target_locale: &str,
 ) -> SyncResult {
     let mut result = SyncResult::default();
     let mut seen_paths: HashSet<String> = HashSet::new();
@@ -599,6 +600,13 @@ pub(crate) fn merge_keys(
     let key_separator = config.key_separator.as_str();
 
     for key in keys {
+        if key
+            .locales
+            .as_ref()
+            .is_some_and(|locales| !locales.iter().any(|locale| locale == target_locale))
+        {
+            continue;
+        }
         let key_namespace = key.namespace.as_deref().unwrap_or(default_namespace);
 
         if !config.merge_namespaces && key_namespace != target_namespace {
@@ -611,17 +619,35 @@ pub(crate) fn merge_keys(
             key.key.clone()
         };
 
+        let value = (target_locale == config.primary_language())
+            .then_some(key.default_value.as_deref())
+            .flatten()
+            .or(fallback_default)
+            .unwrap_or("");
+
         if let Some(root) = effective_key.strip_suffix(".*") {
             seen_paths.insert(root.to_string());
             seen_object_roots.push(root.to_string());
+            let parts: Vec<_> = if key_separator.is_empty() {
+                vec![root]
+            } else {
+                root.split(key_separator).collect()
+            };
+            let mut current = existing.get(parts[0]);
+            for part in &parts[1..] {
+                current = current
+                    .and_then(Value::as_object)
+                    .and_then(|object| object.get(*part));
+            }
+            if current.is_none() {
+                match insert_nested_key(existing, &parts, value) {
+                    InsertResult::Added => result.added_keys.push(root.to_string()),
+                    InsertResult::Conflict(conflict) => result.conflicts.push(conflict),
+                    InsertResult::Existed => {}
+                }
+            }
             continue;
         }
-
-        let value = key
-            .default_value
-            .as_deref()
-            .or(fallback_default)
-            .unwrap_or("");
 
         seen_paths.insert(effective_key.clone());
 
@@ -1383,6 +1409,7 @@ pub(crate) fn sync_locale_file_locked(
     config: &Config,
     preserve_matcher: &PreserveMatcher,
     dry_run: bool,
+    target_locale: &str,
 ) -> Result<SyncResult> {
     sync_locale_file_locked_with_fs(
         path,
@@ -1392,6 +1419,7 @@ pub(crate) fn sync_locale_file_locked(
         preserve_matcher,
         dry_run,
         &crate::fs::RealFileSystem,
+        target_locale,
     )
 }
 
@@ -1408,6 +1436,7 @@ pub(crate) fn sync_locale_file_locked_with_fs<F: FileSystem>(
     preserve_matcher: &PreserveMatcher,
     dry_run: bool,
     fs: &F,
+    target_locale: &str,
 ) -> Result<SyncResult> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
@@ -1457,6 +1486,7 @@ pub(crate) fn sync_locale_file_locked_with_fs<F: FileSystem>(
         target_namespace,
         config,
         preserve_matcher,
+        target_locale,
     );
     sync_result.file_path = path.display().to_string();
 
@@ -1494,6 +1524,21 @@ pub fn collect_namespaces(
     namespaces
 }
 
+fn validate_catalog_paths(locales: &[String], namespaces: &[String]) -> Result<()> {
+    use std::path::Component;
+    for name in locales.iter().chain(namespaces) {
+        if name.contains('\0')
+            || name.contains('\\')
+            || Path::new(name)
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            bail!("Invalid locale or namespace path: {:?}", name);
+        }
+    }
+    Ok(())
+}
+
 /// Sync extracted keys to specific namespace files only (for incremental updates)
 /// This is more efficient when only a subset of namespaces have changed.
 ///
@@ -1516,6 +1561,7 @@ pub fn sync_namespaces(
     } else {
         namespaces.iter().cloned().collect()
     };
+    validate_catalog_paths(&config.locales, &target_namespaces)?;
 
     // Process only the specified namespace files
     for locale in &config.locales {
@@ -1530,6 +1576,7 @@ pub fn sync_namespaces(
                 config,
                 &preserve_matcher,
                 dry_run,
+                locale,
             )?;
 
             results.push(sync_result);
@@ -1550,6 +1597,10 @@ pub fn sync_locales(
     let preserve_matcher = PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator)?;
     let mut results = Vec::new();
     let namespaces = collect_namespaces(keys, &config.default_namespace, config.merge_namespaces);
+    validate_catalog_paths(
+        target_locales,
+        &namespaces.iter().cloned().collect::<Vec<_>>(),
+    )?;
 
     for locale in target_locales {
         for namespace in &namespaces {
@@ -1562,6 +1613,7 @@ pub fn sync_locales(
                 config,
                 &preserve_matcher,
                 dry_run,
+                locale,
             )?;
             results.push(sync_result);
         }
@@ -1684,11 +1736,13 @@ mod tests {
 
         let keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "existing".to_string(),
                 namespace: None,
                 default_value: None,
             },
             ExtractedKey {
+                locales: None,
                 key: "new.key".to_string(),
                 namespace: None,
                 default_value: None,
@@ -1698,7 +1752,7 @@ mod tests {
         let config = Config::default();
         let matcher =
             PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
-        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher, "en");
 
         assert_eq!(result.added_keys.len(), 1);
         assert_eq!(result.added_keys[0], "new.key");
@@ -1716,11 +1770,13 @@ mod tests {
 
         let keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "greeting".to_string(),
                 namespace: None,
                 default_value: Some("Hello World!".to_string()),
             },
             ExtractedKey {
+                locales: None,
                 key: "no_default".to_string(),
                 namespace: None,
                 default_value: None,
@@ -1730,7 +1786,7 @@ mod tests {
         let config = Config::default();
         let matcher =
             PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
-        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher, "en");
 
         assert_eq!(result.added_keys.len(), 2);
         // Key with default_value should use that value
@@ -1751,11 +1807,13 @@ mod tests {
 
         let keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "button.submit".to_string(),
                 namespace: None,
                 default_value: Some("Submit".to_string()),
             },
             ExtractedKey {
+                locales: None,
                 key: "form.validation.required".to_string(),
                 namespace: None,
                 default_value: None,
@@ -1767,7 +1825,7 @@ mod tests {
         config.key_separator = String::new();
         let matcher =
             PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
-        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher, "en");
 
         assert_eq!(result.added_keys.len(), 2);
         // Keys should be stored as-is, not nested
@@ -1789,11 +1847,13 @@ mod tests {
         let mut existing = Map::new();
         let keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "hello".to_string(),
                 namespace: Some("common".to_string()),
                 default_value: Some("Hello".to_string()),
             },
             ExtractedKey {
+                locales: None,
                 key: "title".to_string(),
                 namespace: Some("home".to_string()),
                 default_value: Some("Home".to_string()),
@@ -1804,7 +1864,7 @@ mod tests {
         config.merge_namespaces = true;
         let matcher =
             PreserveMatcher::new(&config.preserve_patterns, &config.ns_separator).unwrap();
-        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher);
+        let result = merge_keys(&mut existing, &keys, "translation", &config, &matcher, "en");
         assert_eq!(result.added_keys.len(), 2);
         let common = existing
             .get("common")
@@ -1930,11 +1990,13 @@ mod tests {
 
         let keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "hello".to_string(),
                 namespace: None,
                 default_value: Some("Hello World".to_string()),
             },
             ExtractedKey {
+                locales: None,
                 key: "button.submit".to_string(),
                 namespace: None,
                 default_value: Some("Submit".to_string()),
@@ -1953,6 +2015,7 @@ mod tests {
             &matcher,
             false, // dry_run
             &fs,
+            "en",
         )
         .unwrap();
 
@@ -1996,11 +2059,13 @@ mod tests {
 
         let keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "existing".to_string(),
                 namespace: None,
                 default_value: Some("New value".to_string()), // Different value
             },
             ExtractedKey {
+                locales: None,
                 key: "new_key".to_string(),
                 namespace: None,
                 default_value: Some("New key value".to_string()),
@@ -2020,6 +2085,7 @@ mod tests {
             &matcher,
             false, // dry_run
             &fs,
+            "en",
         )
         .unwrap();
 
@@ -2066,6 +2132,7 @@ mod tests {
             &matcher,
             false, // dry_run
             &fs,
+            "en",
         )
         .unwrap();
 
@@ -2092,6 +2159,7 @@ mod tests {
         );
 
         let keys = vec![ExtractedKey {
+            locales: None,
             key: "countries.*".to_string(),
             namespace: None,
             default_value: None,
@@ -2108,6 +2176,7 @@ mod tests {
             &matcher,
             false,
             &fs,
+            "en",
         )
         .unwrap();
 
@@ -2151,6 +2220,7 @@ mod tests {
             &matcher,
             false, // dry_run
             &fs,
+            "en",
         )
         .unwrap();
 
@@ -2176,6 +2246,7 @@ mod tests {
         fs.add_file("locales/en/translation.json5", "{ greeting: 'Hello' }");
 
         let keys = vec![ExtractedKey {
+            locales: None,
             key: "farewell".to_string(),
             namespace: None,
             default_value: Some("Goodbye".to_string()),
@@ -2194,6 +2265,7 @@ mod tests {
             &matcher,
             false, // dry_run
             &fs,
+            "en",
         )
         .unwrap();
 
@@ -2263,21 +2335,25 @@ mod tests {
 
         let keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "count".to_string(),
                 namespace: None,
                 default_value: None,
             },
             ExtractedKey {
+                locales: None,
                 key: "hex".to_string(),
                 namespace: None,
                 default_value: None,
             },
             ExtractedKey {
+                locales: None,
                 key: "greeting".to_string(),
                 namespace: None,
                 default_value: Some("Hello".to_string()),
             },
             ExtractedKey {
+                locales: None,
                 key: "farewell".to_string(),
                 namespace: None,
                 default_value: Some("Goodbye".to_string()),
@@ -2297,6 +2373,7 @@ mod tests {
             &matcher,
             false,
             &fs,
+            "en",
         )
         .unwrap();
 

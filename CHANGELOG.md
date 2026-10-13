@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
+- Resolve bound translation aliases and `getFixedT` calls without repeating their names in `functions`.
+- Resolve finite string unions, constant maps, and array loop keys within the configured input files, with bounded expansion and diagnostics for unresolved values.
+- Keep generated cardinal and ordinal forms specific to each locale, and preserve literal keys with plural-like suffixes.
+- Apply call/Trans defaults to the primary locale, preserve existing translations, and create missing `returnObjects` root defaults.
+- Reanalyze watched source dependencies and refuse catalog pruning when extraction is incomplete.
+
+### Rust API
+- `ExtractedKey` adds `locales`; literal keys use `None`. `PluralConfig` adds ordinal and locale suffix metadata, and `ExtractionResult` adds `requires_project_scan`. Rust struct literals must initialize the added fields. Node API result shapes are unchanged.
 
 ### Security
 

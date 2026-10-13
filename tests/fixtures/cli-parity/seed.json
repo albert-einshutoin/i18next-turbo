@@ -1,0 +1,164 @@
+{
+  "en": {
+    "common": {
+      "existing": {
+        "title": "KEEP:en:common"
+      },
+      "obsolete": {
+        "keep": "UNUSED:en:common"
+      }
+    },
+    "account": {
+      "existing": {
+        "title": "KEEP:en:account"
+      },
+      "obsolete": {
+        "keep": "UNUSED:en:account"
+      }
+    },
+    "checkout": {
+      "existing": {
+        "title": "KEEP:en:checkout"
+      },
+      "obsolete": {
+        "keep": "UNUSED:en:checkout"
+      }
+    },
+    "dashboard": {
+      "existing": {
+        "title": "KEEP:en:dashboard"
+      },
+      "obsolete": {
+        "keep": "UNUSED:en:dashboard"
+      }
+    },
+    "settings": {
+      "existing": {
+        "title": "KEEP:en:settings"
+      },
+      "obsolete": {
+        "keep": "UNUSED:en:settings"
+      },
+      "options": {
+        "light": "en:Light",
+        "dark": "en:Dark"
+      }
+    },
+    "catalog": {
+      "existing": {
+        "title": "KEEP:en:catalog"
+      },
+      "obsolete": {
+        "keep": "UNUSED:en:catalog"
+      }
+    }
+  },
+  "ja": {
+    "common": {
+      "existing": {
+        "title": "KEEP:ja:common"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ja:common"
+      }
+    },
+    "account": {
+      "existing": {
+        "title": "KEEP:ja:account"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ja:account"
+      }
+    },
+    "checkout": {
+      "existing": {
+        "title": "KEEP:ja:checkout"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ja:checkout"
+      }
+    },
+    "dashboard": {
+      "existing": {
+        "title": "KEEP:ja:dashboard"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ja:dashboard"
+      }
+    },
+    "settings": {
+      "existing": {
+        "title": "KEEP:ja:settings"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ja:settings"
+      },
+      "options": {
+        "light": "ja:Light",
+        "dark": "ja:Dark"
+      }
+    },
+    "catalog": {
+      "existing": {
+        "title": "KEEP:ja:catalog"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ja:catalog"
+      }
+    }
+  },
+  "ru": {
+    "common": {
+      "existing": {
+        "title": "KEEP:ru:common"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ru:common"
+      }
+    },
+    "account": {
+      "existing": {
+        "title": "KEEP:ru:account"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ru:account"
+      }
+    },
+    "checkout": {
+      "existing": {
+        "title": "KEEP:ru:checkout"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ru:checkout"
+      }
+    },
+    "dashboard": {
+      "existing": {
+        "title": "KEEP:ru:dashboard"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ru:dashboard"
+      }
+    },
+    "settings": {
+      "existing": {
+        "title": "KEEP:ru:settings"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ru:settings"
+      },
+      "options": {
+        "light": "ru:Light",
+        "dark": "ru:Dark"
+      }
+    },
+    "catalog": {
+      "existing": {
+        "title": "KEEP:ru:catalog"
+      },
+      "obsolete": {
+        "keep": "UNUSED:ru:catalog"
+      }
+    }
+  }
+}

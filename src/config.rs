@@ -429,6 +429,9 @@ impl OutputFormat {
 pub struct PluralConfig {
     pub separator: String,
     pub suffixes: Vec<String>,
+    pub ordinal_suffixes: Vec<String>,
+    /// Locale applicability is explicit so literal keys ending in a plural suffix stay intact.
+    pub locale_suffixes: Vec<(String, Vec<String>, Vec<String>)>,
     /// Whether to generate base key alongside plural keys
     pub generate_base: bool,
     /// Context separator (e.g., "_" for "friend_male")
@@ -440,6 +443,8 @@ impl Default for PluralConfig {
         Self {
             separator: "_".to_string(),
             suffixes: vec!["one".to_string(), "other".to_string()],
+            ordinal_suffixes: vec!["one".to_string(), "other".to_string()],
+            locale_suffixes: Vec::new(),
             generate_base: false,
             context_separator: "_".to_string(),
         }
@@ -873,13 +878,22 @@ impl Config {
             return PluralConfig {
                 separator: self.plural_separator.clone(),
                 suffixes: Vec::new(),
+                ordinal_suffixes: Vec::new(),
+                locale_suffixes: Vec::new(),
                 generate_base: false,
                 context_separator: self.context_separator.clone(),
             };
         }
 
+        // Explicit sync targets can be outside `locales`.
+        let mut locales = self.locales.clone();
+        locales.push(self.primary_language().to_string());
+        locales.extend(self.secondary_languages());
+        locales.sort();
+        locales.dedup();
+
         let suffixes = if self.use_locale_plural_rules {
-            compute_plural_suffixes_from_locales(&self.locales)
+            compute_plural_suffixes_from_locales(&locales)
         } else {
             self.plural_suffixes.clone()
         };
@@ -897,6 +911,31 @@ impl Config {
         PluralConfig {
             separator: self.plural_separator.clone(),
             suffixes: final_suffixes,
+            ordinal_suffixes: if self.use_locale_plural_rules {
+                locales
+                    .iter()
+                    .filter_map(|locale| categories_for_locale(locale, true))
+                    .flatten()
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect()
+            } else {
+                self.plural_suffixes.clone()
+            },
+            locale_suffixes: if self.use_locale_plural_rules {
+                locales
+                    .iter()
+                    .filter_map(|locale| {
+                        Some((
+                            locale.clone(),
+                            categories_for_locale(locale, false)?,
+                            categories_for_locale(locale, true)?,
+                        ))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             generate_base: self.generate_base_plural_forms,
             context_separator: self.context_separator.clone(),
         }
@@ -918,6 +957,15 @@ impl Config {
 
         // Check for empty locale strings
         for (i, locale) in self.locales.iter().enumerate() {
+            if self.use_locale_plural_rules
+                && (categories_for_locale(locale, false).is_none()
+                    || categories_for_locale(locale, true).is_none())
+            {
+                bail!(
+                    "Configuration error: cannot determine plural rules for locale '{}'",
+                    locale
+                );
+            }
             if locale.trim().is_empty() {
                 bail!(
                     "Configuration error: 'locales[{}]' is empty.\n\
@@ -936,6 +984,22 @@ impl Config {
                         i
                     );
                 }
+            }
+        }
+
+        for locale in self
+            .primary_language
+            .iter()
+            .chain(self.secondary_languages.iter().flatten())
+        {
+            if self.use_locale_plural_rules
+                && (categories_for_locale(locale, false).is_none()
+                    || categories_for_locale(locale, true).is_none())
+            {
+                bail!(
+                    "Configuration error: cannot determine plural rules for locale '{}'",
+                    locale
+                );
             }
         }
 
@@ -1553,7 +1617,7 @@ fn compute_plural_suffixes_from_locales(locales: &[String]) -> Vec<String> {
     let mut categories = BTreeSet::new();
 
     for locale in locales {
-        if let Some(locale_categories) = categories_for_locale(locale) {
+        if let Some(locale_categories) = categories_for_locale(locale, false) {
             for cat in locale_categories {
                 categories.insert(cat);
             }
@@ -1571,7 +1635,7 @@ fn compute_plural_suffixes_from_locales(locales: &[String]) -> Vec<String> {
     categories.into_iter().collect()
 }
 
-fn categories_for_locale(locale: &str) -> Option<Vec<String>> {
+fn categories_for_locale(locale: &str, ordinal: bool) -> Option<Vec<String>> {
     let trimmed = locale.trim();
     if trimmed.is_empty() {
         return None;
@@ -1579,7 +1643,11 @@ fn categories_for_locale(locale: &str) -> Option<Vec<String>> {
 
     let parsed: Locale = trimmed.parse().ok()?;
     let data_locale = parsed.into();
-    let rules = PluralRules::try_new_cardinal(&data_locale).ok()?;
+    let rules = if ordinal {
+        PluralRules::try_new_ordinal(&data_locale).ok()?
+    } else {
+        PluralRules::try_new_cardinal(&data_locale).ok()?
+    };
     let supported: Vec<PluralCategory> = rules.categories().collect();
 
     let mut result = Vec::new();

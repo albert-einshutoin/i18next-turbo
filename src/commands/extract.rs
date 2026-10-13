@@ -124,6 +124,16 @@ fn execute_internal(
     )?;
     let first_extraction_error = extraction.errors.first().map(|error| error.message.clone());
 
+    if config.remove_unused_keys && extraction.warning_count > 0 {
+        bail!("Cannot prune translations while source extraction is incomplete");
+    }
+    if fail_on_warnings && extraction.warning_count > 0 {
+        bail!(
+            "{} warning(s) encountered (--fail-on-warnings enabled)",
+            extraction.warning_count
+        );
+    }
+
     let extraction_error_count = extraction.errors.len();
     if extraction.files.is_empty() {
         let warnings = extraction.warning_count;

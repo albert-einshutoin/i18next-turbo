@@ -1,0 +1,27 @@
+{
+  "input": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  "ignore": [
+    "src/ignored/**"
+  ],
+  "functions": [
+    "t",
+    "i18n.t"
+  ],
+  "extractFromComments": false,
+  "removeUnusedKeys": false,
+  "defaultValue": "",
+  "keySeparator": ".",
+  "nsSeparator": ":",
+  "primaryLanguage": "en",
+  "generateBasePluralForms": false,
+  "output": "locales",
+  "locales": [
+    "en",
+    "ja",
+    "ru"
+  ],
+  "defaultNamespace": "common"
+}

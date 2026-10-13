@@ -134,12 +134,15 @@ fn extract_fail_on_warnings_returns_error() {
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(
         project.join("src/app.ts"),
-        r#"const name = 'test';
+        r#"const name = runtimeName();
         t(`dynamic-${name}`);
         "#,
     )
     .unwrap();
     let config_path = write_config(project);
+    let mut config = read_json(&config_path);
+    config["removeUnusedKeys"] = Value::Bool(false);
+    write_locale_json(&config_path, config);
 
     let output = run_cli(
         project,
@@ -159,6 +162,10 @@ fn extract_fail_on_warnings_returns_error() {
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("warning"),
         "expected warning in stderr"
+    );
+    assert!(
+        !project.join("locales").exists(),
+        "strict extraction must not write partial output"
     );
 }
 
