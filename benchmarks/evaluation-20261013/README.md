@@ -4,6 +4,29 @@
 
 測定対象のコードは `3d61037`。結果は[results.json](results.json)、検証コマンドとsource/binary hashは[validation.json](validation.json)。この資料を追加するコミットは抽出器を変更しない。
 
+## PRレビュー修正後の最終検証
+
+PR #79の4指摘（Vue/Svelte scriptの有限import、parameter patternのalias shadow、文字列default後の第三引数options、`disablePlurals`時のICU検証）を最小修正した。全feature検証で見つかったNode子プロセスの非同期出力pipeとsignal終了の成功誤判定も修正し、signal終了とstdout/stderr各256 KiB転送の回帰チェックを追加した。
+
+最終測定対象は `3e5ff48a23b05621b8752cdbb0bbe2df9f07aeb7`。旧測定を残し、新結果を[results-after-review.json](results-after-review.json)、現在source/binary hashと検証結果を[validation-after-review.json](validation-after-review.json)に保存した。下記より後の節は旧測定の記録である。
+
+同じ条件・CLI 1.75.2・7回の再測定で、feature-probes 106組、300ファイル7,956組、混在308ファイル8,023組、1200ファイル31,716組は、Rust直接・Nodeラッパーとも欠落・余分・値違い0。seedも保持した。300/308/1200のsource hashは旧測定と同一。
+
+| 条件 | CLI ms | Rust直接 ms | Nodeラッパー ms | 対CLI倍率（ラッパー） |
+|---|---:|---:|---:|---:|
+| 300・初回同期 | 402.66 | 32.32 | 58.62 | 6.87x |
+| 300・再抽出 | 367.41 | 25.66 | 50.96 | 7.21x |
+| 混在308・初回同期 | 472.03 | 35.40 | 64.32 | 7.34x |
+| 混在308・再抽出 | 408.04 | 27.37 | 54.85 | 7.44x |
+| 1200・初回同期 | 1051.10 | 98.64 | 127.54 | 8.24x |
+| 1200・再抽出 | 928.97 | 82.97 | 108.32 | 8.58x |
+
+watchはCLI中央値739.18ms、Rust直接339.10ms（2.18x）。追加キーを含む31,734組も一致した。前回と今回の絶対時間には環境変動があるため、各回の同条件比較を判断に使う。大規模・頻繁な抽出/watchを対象とした開発継続価値は維持されている。
+
+ローカル全体検証は通常197件・全feature213件・失敗/ignored 0。Node integrationは13件（subset）、実buildしたnative addonを使用。Clippy `--all-targets --all-features --locked -- -D warnings`、fmt、JS syntax、diff check、release/native buildも成功。4修正・子プロセス・CI/運用文書の専門レビューは静的ALLOW。
+
+CI/運用文書はmain起点の短期ブランチからmainへPRを作るGitHub Flowに揃えた。未統合roadmapは `archive/issue-priority-roadmap-20261013` tagで `7bf66da69c83d7988bcfe20c9cd089b4ff9adb4c` を保全。hosted CI、PRのmerge、mainへの統合・branch整理は、このローカル結果とは別に確認する。
+
 ## 抽出結果
 
 比較単位は言語・namespace・leaf key・値。JSONの空白・順序は除外する。Rust直接とNodeラッパーの両経路で一致し、既存seed翻訳も保持した。
