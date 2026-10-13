@@ -137,8 +137,10 @@ async function main() {
       config: runtimeConfig
     }, pluginRuntime);
   }
+  // Let pending stdout/stderr writes finish before Node exits.
   if (exitCode !== 0) {
-    process.exit(exitCode);
+    process.exitCode = exitCode;
+    return;
   }
 
   const postSyncResult = await applyRuntimeTransforms(features);
@@ -158,12 +160,12 @@ async function main() {
     postSyncResult
   }, pluginRuntime);
 
-  process.exit(0);
+  process.exitCode = 0;
 }
 
 main().catch((error) => {
   console.error(`Error: ${error.message}`);
-  process.exit(1);
+  process.exitCode = 1;
 });
 
 async function resolveConfigArgs(argv) {
