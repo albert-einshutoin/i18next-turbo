@@ -29,6 +29,11 @@ Feature suggestions are welcome! Please open an issue with:
 
 ### Pull Requests
 
+We use GitHub Flow. `main` is the only long-lived branch. Create a short-lived
+branch from the latest `main`, open its pull request against `main`, and delete
+the work branch after merging. There is no `develop` integration branch.
+See [AGENTS.md](AGENTS.md) for the verification commands.
+
 1. **Fork the repository** and create a feature branch from `main`
 2. **Make your changes** following the coding standards below
 3. **Add tests** for new features or bug fixes
