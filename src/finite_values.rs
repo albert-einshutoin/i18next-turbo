@@ -54,16 +54,64 @@ enum Definition {
     Value(Option<Box<Expr>>, Option<Box<TsType>>),
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ModuleValues {
     source: String,
     definitions: HashMap<(String, bool), Definition>,
     exports: HashSet<(String, bool)>,
     imports: HashMap<String, (String, String, bool)>,
-    has_relative_imports: bool,
+    relative_sources: HashSet<String>,
 }
 
 impl ModuleValues {
+    fn parse(path: &Path, source: String) -> Self {
+        fn parse_module(path: &Path, source: &str) -> Option<Module> {
+            let cm: Lrc<SourceMap> = Default::default();
+            let file = cm.new_source_file(
+                FileName::Real(path.to_path_buf()).into(),
+                source.to_string(),
+            );
+            let syntax = Syntax::Typescript(TsSyntax {
+                tsx: path
+                    .extension()
+                    .is_some_and(|ext| ext == "tsx" || ext == "jsx"),
+                decorators: true,
+                ..Default::default()
+            });
+            let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*file), None);
+            let mut parser = Parser::new_from(lexer);
+            parser
+                .parse_module()
+                .ok()
+                .filter(|_| parser.take_errors().is_empty())
+        }
+        if path
+            .extension()
+            .is_some_and(|ext| ext == "vue" || ext == "svelte")
+        {
+            let mut values = Self {
+                source,
+                ..Default::default()
+            };
+            for block in crate::extractor::find_tag_blocks_by_name(&values.source, "script") {
+                if let Some(module) = parse_module(path, &block.content) {
+                    values
+                        .relative_sources
+                        .extend(Self::from_module(String::new(), &module).relative_sources);
+                }
+            }
+            values
+        } else {
+            match parse_module(path, &source) {
+                Some(module) => Self::from_module(source, &module),
+                None => Self {
+                    source,
+                    ..Default::default()
+                },
+            }
+        }
+    }
+
     fn from_module(source: String, module: &Module) -> Self {
         let mut values = Self {
             source,
@@ -82,7 +130,7 @@ impl ModuleValues {
                         .as_str()
                         .filter(|source| source.starts_with('.'))
                     {
-                        values.has_relative_imports = true;
+                        values.relative_sources.insert(source.to_string());
                         for specifier in &import.specifiers {
                             if let ImportSpecifier::Named(named) = specifier {
                                 let name = match &named.imported {
@@ -149,7 +197,22 @@ impl ModuleValues {
     }
 }
 
-#[derive(Default)]
+fn import_candidates(path: &Path, source: &str) -> Vec<PathBuf> {
+    let Some(parent) = path.parent() else {
+        return Vec::new();
+    };
+    let base = normalized(&parent.join(source));
+    if base.extension().is_some() {
+        vec![base]
+    } else {
+        ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"]
+            .iter()
+            .flat_map(|ext| [base.with_extension(ext), base.join(format!("index.{ext}"))])
+            .collect()
+    }
+}
+
+#[derive(Clone, Default)]
 pub(crate) struct FiniteIndex {
     modules: HashMap<PathBuf, ModuleValues>,
 }
@@ -180,28 +243,7 @@ impl FiniteIndex {
             .map(|path| {
                 let source = std::fs::read_to_string(path)
                     .with_context(|| format!("Failed to read file: {}", path.display()))?;
-                let cm: Lrc<SourceMap> = Default::default();
-                let file = cm.new_source_file(FileName::Real(path.clone()).into(), source.clone());
-                let syntax = Syntax::Typescript(TsSyntax {
-                    tsx: path
-                        .extension()
-                        .is_some_and(|ext| ext == "tsx" || ext == "jsx"),
-                    decorators: true,
-                    ..Default::default()
-                });
-                let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*file), None);
-                let mut parser = Parser::new_from(lexer);
-                let parsed = parser
-                    .parse_module()
-                    .ok()
-                    .filter(|_| parser.take_errors().is_empty());
-                let values = match parsed {
-                    Some(module) => ModuleValues::from_module(source, &module),
-                    None => ModuleValues {
-                        source,
-                        ..Default::default()
-                    },
-                };
+                let values = ModuleValues::parse(path, source);
                 Ok((normalized(path), values))
             })
             .collect();
@@ -219,21 +261,74 @@ impl FiniteIndex {
     pub(crate) fn has_dependencies(&self) -> bool {
         self.modules
             .values()
-            .any(|module| module.has_relative_imports)
+            .any(|module| !module.relative_sources.is_empty())
+    }
+
+    /// Refresh notified inputs, returning their old and new transitive consumers.
+    pub(crate) fn refresh(&mut self, paths: &[PathBuf]) -> Result<HashSet<PathBuf>> {
+        let updates: Result<Vec<_>> = paths
+            .par_iter()
+            .map(|path| {
+                let source = match std::fs::read_to_string(path) {
+                    Ok(source) => Some(source),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        return Err(error)
+                            .with_context(|| format!("Failed to read file: {}", path.display()))
+                    }
+                };
+                Ok((path.clone(), source))
+            })
+            .collect();
+        let updates: Vec<_> = updates?
+            .into_iter()
+            .filter(|(path, source)| self.source(path) != source.as_deref())
+            .collect();
+        if updates.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let roots: Vec<_> = updates.iter().map(|(path, _)| path.clone()).collect();
+        let mut affected = self.dependents(&roots);
+        for (path, source) in updates {
+            match source {
+                Some(source) => {
+                    self.modules
+                        .insert(path.clone(), ModuleValues::parse(&path, source));
+                }
+                None => {
+                    self.modules.remove(&path);
+                }
+            }
+        }
+        affected.extend(self.dependents(&roots));
+        Ok(affected)
+    }
+
+    fn dependents(&self, roots: &[PathBuf]) -> HashSet<PathBuf> {
+        let mut reverse: HashMap<PathBuf, Vec<&PathBuf>> = HashMap::new();
+        for (path, module) in &self.modules {
+            for source in &module.relative_sources {
+                // Include absent and ambiguous candidates: adding a target changes resolution too.
+                for candidate in import_candidates(path, source) {
+                    reverse.entry(candidate).or_default().push(path);
+                }
+            }
+        }
+        let mut affected = HashSet::new();
+        let mut pending = roots.to_vec();
+        while let Some(path) = pending.pop() {
+            if affected.insert(path.clone()) {
+                if let Some(consumers) = reverse.get(&path) {
+                    pending.extend(consumers.iter().map(|path| (*path).clone()));
+                }
+            }
+        }
+        affected
     }
 
     fn import_path(&self, path: &Path, source: &str) -> Option<PathBuf> {
-        let base = normalized(&path.parent()?.join(source));
-        let candidates = if base.extension().is_some() {
-            vec![base]
-        } else {
-            ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"]
-                .iter()
-                .flat_map(|ext| [base.with_extension(ext), base.join(format!("index.{ext}"))])
-                .collect()
-        };
         // Membership alone resolves imports; no existence checks or reads outside input.
-        let matches: Vec<_> = candidates
+        let matches: Vec<_> = import_candidates(path, source)
             .into_iter()
             .filter(|path| self.modules.contains_key(path))
             .collect();

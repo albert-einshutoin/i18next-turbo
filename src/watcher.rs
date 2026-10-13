@@ -19,7 +19,7 @@ pub struct FileWatcher {
     debounce_duration: Duration,
     /// Cache of extracted keys per file for incremental updates
     file_cache: HashMap<PathBuf, Vec<ExtractedKey>>,
-    requires_project_scan: bool,
+    finite_index: Arc<FiniteIndex>,
     ignore_patterns: Vec<Pattern>,
     input_patterns: Vec<Pattern>,
 }
@@ -43,7 +43,7 @@ impl FileWatcher {
             output_dir: output,
             debounce_duration: Duration::from_millis(300),
             file_cache: HashMap::new(),
-            requires_project_scan: false,
+            finite_index: Arc::default(),
             ignore_patterns,
         }
     }
@@ -116,7 +116,9 @@ impl FileWatcher {
 
     /// Check if a file should be processed based on its extension
     fn should_process_file(&self, path: &Path) -> bool {
-        let valid_extensions = ["ts", "tsx", "js", "jsx"];
+        let valid_extensions = [
+            "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "vue", "svelte",
+        ];
 
         if self.is_ignored(path)
             || !self
@@ -156,7 +158,7 @@ impl FileWatcher {
         println!("--- Initial extraction ---");
 
         let plural_config = self.config.plural_config();
-        let extraction = extractor::extract_from_glob_with_options(
+        let (extraction, finite_index) = extractor::extract_from_glob_with_index(
             &self.config.input,
             &self.config.ignore,
             &self.config.functions,
@@ -175,7 +177,7 @@ impl FileWatcher {
         if self.config.remove_unused_keys && extraction.warning_count > 0 {
             anyhow::bail!("Cannot prune translations while source extraction is incomplete");
         }
-        self.requires_project_scan = extraction.requires_project_scan;
+        self.finite_index = finite_index;
         // Populate cache
         self.file_cache.clear();
         for (file_path, keys) in &extraction.files {
@@ -211,81 +213,77 @@ impl FileWatcher {
 
     /// Handle debounced file events
     fn handle_events(&mut self, result: DebounceEventResult) -> Result<()> {
-        let events = match result {
-            Ok(events) => events,
-            Err(error) => {
-                eprintln!("Watch error: {:?}", error);
-                return Ok(());
-            }
-        };
+        let events =
+            result.context("Watch events lost; incremental extraction cannot continue safely")?;
+        let mut notified: Vec<_> = events
+            .into_iter()
+            .map(|event| normalized(&event.path))
+            .filter(|path| self.should_process_file(path))
+            .collect();
+        notified.sort();
+        notified.dedup();
+        let mut affected = Arc::make_mut(&mut self.finite_index).refresh(&notified)?;
+        if affected.is_empty() {
+            return Ok(());
+        }
 
+        // Read affected consumers now: rename notifications can arrive after their imports changed.
+        // Byte-identical delayed events then produce no second extraction or sync.
+        let mut seen: HashSet<_> = notified.into_iter().collect();
+        loop {
+            let pending: Vec<_> = affected
+                .iter()
+                .filter(|path| !seen.contains(*path) && self.should_process_file(path))
+                .cloned()
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            seen.extend(pending.iter().cloned());
+            affected.extend(Arc::make_mut(&mut self.finite_index).refresh(&pending)?);
+        }
         let mut changed_files = Vec::new();
         let mut removed_files = Vec::new();
-
-        for event in events {
-            let path = normalized(&event.path);
-
-            // Filter by extension
-            if !self.should_process_file(&path) {
-                continue;
+        let mut affected_namespaces = HashSet::new();
+        for path in affected {
+            if let Some(keys) = self.file_cache.get(&path) {
+                for key in keys {
+                    affected_namespaces.insert(
+                        key.namespace
+                            .clone()
+                            .unwrap_or_else(|| self.config.default_namespace.clone()),
+                    );
+                }
             }
-
-            if path.exists() {
+            if self.finite_index.source(&path).is_some() {
                 changed_files.push(path);
             } else {
                 removed_files.push(path);
             }
         }
-
-        // Deduplicate
         changed_files.sort();
-        changed_files.dedup();
         removed_files.sort();
-        removed_files.dedup();
 
-        let finite_index = Arc::new(FiniteIndex::load(&changed_files)?);
-        if (self.requires_project_scan || finite_index.has_dependencies())
-            && (!changed_files.is_empty() || !removed_files.is_empty())
-        {
-            // Imported types/constants can change consumers even when their source is untouched.
-            return self.full_extract();
-        }
-
-        // Collect namespaces from removed files before removing from cache
-        let mut affected_namespaces = HashSet::new();
+        let finite_index = Arc::clone(&self.finite_index);
+        let changed_keys = self.incremental_extract(&changed_files, &finite_index)?;
+        // Do not discard deleted keys until every affected source has passed the prune guard.
         for path in &removed_files {
-            if let Some(keys) = self.file_cache.get(path) {
-                for key in keys {
-                    if let Some(ns) = &key.namespace {
-                        affected_namespaces.insert(ns.clone());
-                    } else {
-                        affected_namespaces.insert(self.config.default_namespace.clone());
-                    }
-                }
-            }
             self.file_cache.remove(path);
         }
-
-        if changed_files.is_empty() && removed_files.is_empty() {
-            return Ok(());
-        }
-
-        println!("--- Change detected ---");
-        for f in &changed_files {
-            println!("  Modified: {}", f.display());
-        }
-        for f in &removed_files {
-            println!("  Removed: {}", f.display());
-        }
-
-        // Re-extract only changed files and collect their namespaces
-        let changed_keys = self.incremental_extract(&changed_files, &finite_index)?;
         for key in &changed_keys {
-            if let Some(ns) = &key.namespace {
-                affected_namespaces.insert(ns.clone());
-            } else {
-                affected_namespaces.insert(self.config.default_namespace.clone());
-            }
+            affected_namespaces.insert(
+                key.namespace
+                    .clone()
+                    .unwrap_or_else(|| self.config.default_namespace.clone()),
+            );
+        }
+        println!("--- Change detected ---");
+        println!("  Reparsed files: {}", changed_files.len());
+        for path in &changed_files {
+            println!("  Modified: {}", path.display());
+        }
+        for path in &removed_files {
+            println!("  Removed: {}", path.display());
         }
 
         // Merge all cached keys but only sync affected namespaces
@@ -464,11 +462,14 @@ mod tests {
             "import {State} from './types'; declare const state:State; t(`state.${state}`);",
         )
         .unwrap();
+        let unrelated = src.join("Unrelated.ts");
+        std::fs::write(&unrelated, "t('unrelated');").unwrap();
         let mut config = make_test_config(vec![format!("{}/*.ts", src.display())], vec![]);
         config.output = tmp.path().join("locales").display().to_string();
         let mut watcher = FileWatcher::new(config, None);
         watcher.full_extract().unwrap();
-        assert!(watcher.requires_project_scan);
+        // No event was delivered for this file: dependency updates must not reread it.
+        std::fs::write(&unrelated, [0xff]).unwrap();
         std::fs::write(&types, "export type State='new';").unwrap();
         watcher
             .handle_events(Ok(vec![DebouncedEvent {
@@ -481,5 +482,208 @@ mod tests {
             serde_json::from_slice(&std::fs::read(locale).unwrap()).unwrap();
         assert_eq!(value["state"]["new"], "");
         assert!(value["state"]["old"].is_null());
+        assert_eq!(value["unrelated"], "");
+    }
+
+    fn event(path: &Path) -> notify_debouncer_mini::DebouncedEvent {
+        notify_debouncer_mini::DebouncedEvent {
+            path: path.to_path_buf(),
+            kind: notify_debouncer_mini::DebouncedEventKind::Any,
+        }
+    }
+
+    #[test]
+    fn dependency_rename_reads_consumers_before_their_delayed_events() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        let old = src.join("labels.ts");
+        let new = src.join("moved.ts");
+        let app = src.join("App.ts");
+        let unrelated = src.join("Other.ts");
+        std::fs::write(&old, "export const KEY='kept';").unwrap();
+        std::fs::write(&app, "import {KEY} from './labels'; t(KEY);").unwrap();
+        std::fs::write(&unrelated, "t('other');").unwrap();
+        let mut config = make_test_config(vec![format!("{}/*.ts", src.display())], vec![]);
+        config.output = tmp.path().join("locales").display().to_string();
+        let mut watcher = FileWatcher::new(config, None);
+        watcher.full_extract().unwrap();
+        std::fs::rename(&old, &new).unwrap();
+        std::fs::write(&app, "import {KEY} from './moved'; t(KEY);").unwrap();
+        watcher
+            .handle_events(Ok(vec![event(&old), event(&new)]))
+            .unwrap();
+        let locale = tmp.path().join("locales/en/translation.json");
+        let before = std::fs::read(&locale).unwrap();
+        std::fs::write(&unrelated, [0xff]).unwrap();
+        watcher
+            .handle_events(Ok(vec![event(&app), event(&new), event(&old)]))
+            .unwrap();
+        assert_eq!(std::fs::read(&locale).unwrap(), before);
+        // A later real content change must still be processed.
+        std::fs::write(&app, "import {KEY} from './moved'; t(KEY); t('later');").unwrap();
+        watcher.handle_events(Ok(vec![event(&app)])).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&locale).unwrap()).unwrap();
+        assert_eq!(value["kept"], "");
+        assert_eq!(value["later"], "");
+    }
+
+    #[test]
+    fn changed_file_prunes_its_previous_namespace() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let app = tmp.path().join("App.ts");
+        std::fs::write(&app, "t('account:old');").unwrap();
+        let mut config = make_test_config(vec![app.display().to_string()], vec![]);
+        config.output = tmp.path().join("locales").display().to_string();
+        let mut watcher = FileWatcher::new(config, None);
+        watcher.full_extract().unwrap();
+        std::fs::write(&app, "t('common:new');").unwrap();
+        watcher.handle_events(Ok(vec![event(&app)])).unwrap();
+        let account: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(tmp.path().join("locales/en/account.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(account["old"].is_null());
+        let common: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(tmp.path().join("locales/en/common.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(common["new"], "");
+    }
+
+    #[test]
+    fn unresolved_dependency_and_removal_refuse_pruning_without_mutating_cache() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        let types = src.join("types.ts");
+        let removed = src.join("Removed.ts");
+        std::fs::write(&types, "export type State='kept';").unwrap();
+        std::fs::write(
+            src.join("App.ts"),
+            "import {State} from './types'; declare const state:State; t(`state.${state}`);",
+        )
+        .unwrap();
+        std::fs::write(&removed, "t('removed');").unwrap();
+        let mut config = make_test_config(vec![format!("{}/*.ts", src.display())], vec![]);
+        config.output = tmp.path().join("locales").display().to_string();
+        let mut watcher = FileWatcher::new(config, None);
+        watcher.full_extract().unwrap();
+        let locale = tmp.path().join("locales/en/translation.json");
+        let before = std::fs::read(&locale).unwrap();
+        std::fs::write(&types, "export type State=string;").unwrap();
+        std::fs::remove_file(&removed).unwrap();
+        let error = watcher
+            .handle_events(Ok(vec![event(&types), event(&removed)]))
+            .unwrap_err();
+        assert!(error.to_string().contains("Cannot prune"));
+        assert_eq!(std::fs::read(&locale).unwrap(), before);
+        assert!(watcher.file_cache.contains_key(&normalized(&removed)));
+    }
+
+    #[test]
+    fn adding_an_ambiguous_import_target_refuses_pruning() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("types.ts"), "export type State='kept';").unwrap();
+        std::fs::write(
+            src.join("App.ts"),
+            "import {State} from './types'; declare const state:State; t(`state.${state}`);",
+        )
+        .unwrap();
+        let mut config = make_test_config(vec![format!("{}/*.*", src.display())], vec![]);
+        config.output = tmp.path().join("locales").display().to_string();
+        let mut watcher = FileWatcher::new(config, None);
+        watcher.full_extract().unwrap();
+        let locale = tmp.path().join("locales/en/translation.json");
+        let before = std::fs::read(&locale).unwrap();
+        let added = src.join("types.tsx");
+        std::fs::write(&added, "export type State='wrong';").unwrap();
+        assert!(watcher.handle_events(Ok(vec![event(&added)])).is_err());
+        assert_eq!(std::fs::read(&locale).unwrap(), before);
+    }
+
+    #[test]
+    fn transitive_consumers_refresh_without_reading_ignored_inputs() {
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let types = tmp.path().join("types.ts");
+        let ignored = tmp.path().join("ignored.ts");
+        std::fs::write(&types, "export type State='old';").unwrap();
+        std::fs::write(
+            tmp.path().join("model.ts"),
+            "import {State} from './types'; export type Combined=State;",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("App.ts"),
+            "import {Combined} from './model'; declare const state:Combined; t(`state.${state}`);",
+        )
+        .unwrap();
+        std::fs::write(&ignored, [0xff]).unwrap();
+        let mut config = make_test_config(
+            vec![format!("{}/*.ts", tmp.path().display())],
+            vec![ignored.display().to_string()],
+        );
+        config.output = tmp.path().join("locales").display().to_string();
+        let mut watcher = FileWatcher::new(config, None);
+        watcher.full_extract().unwrap();
+        std::fs::write(&types, "export type State='new';").unwrap();
+        watcher
+            .handle_events(Ok(vec![event(&types), event(&ignored)]))
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(tmp.path().join("locales/en/translation.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["state"]["new"], "");
+        assert!(value["state"]["old"].is_null());
+    }
+
+    #[test]
+    fn component_scripts_refresh_imported_constants() {
+        for extension in ["vue", "svelte"] {
+            let cwd = std::env::current_dir().unwrap();
+            let tmp = tempdir_in(&cwd).unwrap();
+            let labels = tmp.path().join("labels.ts");
+            std::fs::write(&labels, "export const KEY='old';").unwrap();
+            std::fs::write(
+                tmp.path().join(format!("App.{extension}")),
+                "<script lang=\"ts\">import {KEY} from './labels'; t(KEY);</script>",
+            )
+            .unwrap();
+            let mut config = make_test_config(
+                vec![format!("{}/*.{{ts,{extension}}}", tmp.path().display())],
+                vec![],
+            );
+            config.output = tmp.path().join("locales").display().to_string();
+            let mut watcher = FileWatcher::new(config, None);
+            watcher.full_extract().unwrap();
+            std::fs::write(&labels, "export const KEY='new';").unwrap();
+            watcher.handle_events(Ok(vec![event(&labels)])).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(tmp.path().join("locales/en/translation.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(value["new"], "", "{extension}");
+            assert!(value["old"].is_null(), "{extension}");
+        }
+    }
+
+    #[test]
+    fn watcher_errors_invalidate_incremental_state() {
+        let watcher_config = make_test_config(vec!["src/*.ts".to_string()], vec![]);
+        let mut watcher = FileWatcher::new(watcher_config, None);
+        assert!(watcher
+            .handle_events(Err(notify_debouncer_mini::notify::Error::generic(
+                "events lost"
+            )))
+            .is_err());
     }
 }
