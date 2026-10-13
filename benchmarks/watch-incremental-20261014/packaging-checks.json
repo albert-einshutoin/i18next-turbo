@@ -1,0 +1,47 @@
+{
+  "watch_smoke": {
+    "sizes": [
+      30
+    ],
+    "runs": 1,
+    "full_checks": 21,
+    "watch_checks": 12,
+    "source_sha256": {
+      "src/watcher.rs": "669edac102ed8db96cd1cc7e9b66305622f9bb5b7959809015065bda8d58e98d",
+      "src/finite_values.rs": "e13b244eea2b3036f4d94c4f196074705b60e48ec7d4a9b7e692450d3425e9dd",
+      "src/extractor.rs": "bdf0302ffc39208a230239437adb8ec699a37c7018e3c031707a227dbdd75472",
+      "src/config.rs": "c2087e6f9f09f4a700b90de91fec5362fbe8caca75acc4649670ff2fcd866301",
+      "src/json_sync.rs": "8b42a1d296124c9f9655915d7d54ba47a02f8d1deb5ff5493d5cb56aa769b818"
+    },
+    "wrapper_sha256": "4b1f6675bf264a3fceade1cacd644e3d23cabbd44ee45daa440aef7e10336d1f",
+    "report_sha256": "1ae136e186772759c1694088abf4409e8484d1a1de346dfcbbb5d7e201819f71",
+    "command": [
+      "python3",
+      "benchmarks/watch-incremental-20261014/run.py",
+      "--sizes",
+      "30",
+      "--runs",
+      "1"
+    ],
+    "exit_code": 0,
+    "completed_at": "2026-10-14T00:45:48+0900",
+    "run_id": "1791906293473626000",
+    "raw_report": "packaging-watch.json"
+  },
+  "node_probe": {
+    "workers": 8,
+    "before_passed": 1,
+    "after_passed": 24,
+    "result_sha256": "a268edb5de7664c79a515ba6c25255c4dc09aef38d6b9be95c0e654713f8ef23",
+    "command": [
+      "python3",
+      "benchmarks/watch-incremental-20261014/node_output.py"
+    ],
+    "exit_code": 0,
+    "raw_report": "packaging-node.json",
+    "started_at_utc": "2026-10-13T15:43:30.172215+00:00",
+    "timestamp_origin": "generated run directory name"
+  },
+  "syntax_and_json": "passed",
+  "targeted_absolute_path_and_secret_scan": "passed"
+}

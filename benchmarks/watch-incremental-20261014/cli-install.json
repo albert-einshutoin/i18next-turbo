@@ -1,0 +1,9 @@
+{
+  "version": "1.75.3",
+  "gitHead": "3c957348b396910daa3bb3f6e7fa25d3b266d9d5",
+  "tarball": "https://registry.npmjs.org/i18next-cli/-/i18next-cli-1.75.3.tgz",
+  "integrity": "sha512-JsQ9i0nVD2YhZEYpVcHAJuZ/jUjfiX5iD8JbIwb8OnzMNWeXySv1TKvTigsGBrfJ4Q6AVh1pNVOMrwTXHAUzaw==",
+  "install_command": "npm install --prefix target/watch-import-evaluation-20261013/toolchain --ignore-scripts --no-audit --no-fund --save-exact i18next-cli@1.75.3",
+  "install_log": "install-cli.log",
+  "cli_version_probe": "1.75.3"
+}

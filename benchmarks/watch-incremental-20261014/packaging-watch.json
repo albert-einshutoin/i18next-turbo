@@ -1,0 +1,1035 @@
+{
+  "run_id": "1791906293473626000",
+  "status": "completed",
+  "runs_requested": 1,
+  "watch_timeout_seconds": 8.0,
+  "poll_ms": 5,
+  "registration_settle_seconds": 1,
+  "metric": "source mutation start to completed watch cycle and all-locale full-catalog equality; includes debounce and polling",
+  "environment": {
+    "node": "v24.2.0",
+    "python": "3.14.6",
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M4",
+    "turbo_source_sha256": {
+      "src/watcher.rs": "669edac102ed8db96cd1cc7e9b66305622f9bb5b7959809015065bda8d58e98d",
+      "src/finite_values.rs": "e13b244eea2b3036f4d94c4f196074705b60e48ec7d4a9b7e692450d3425e9dd",
+      "src/extractor.rs": "bdf0302ffc39208a230239437adb8ec699a37c7018e3c031707a227dbdd75472",
+      "src/config.rs": "c2087e6f9f09f4a700b90de91fec5362fbe8caca75acc4649670ff2fcd866301",
+      "src/json_sync.rs": "8b42a1d296124c9f9655915d7d54ba47a02f8d1deb5ff5493d5cb56aa769b818"
+    },
+    "turbo_uncommitted_diff_sha256": "a089848cc6321953192038db9a513af902c06a91bf2dc1cbe9206fdaab1bc41b",
+    "turbo_commit": "260ed4ea8e5634352984c445be35e3ca37263cbb",
+    "cli_version": "1.75.3",
+    "cli_entry_sha256": "c3eb51c4ecf6c3a502d4425cbb7480fa1dc8e08194f7586a69abbb9e336ddd8b",
+    "toolchain_lock_sha256": "afc32e4e350b6746935f302bcb60e30d074bcb90bb8137e53093ae9a95a79cd7",
+    "cli_install_provenance": {
+      "version": "1.75.3",
+      "gitHead": "3c957348b396910daa3bb3f6e7fa25d3b266d9d5",
+      "tarball": "https://registry.npmjs.org/i18next-cli/-/i18next-cli-1.75.3.tgz",
+      "integrity": "sha512-JsQ9i0nVD2YhZEYpVcHAJuZ/jUjfiX5iD8JbIwb8OnzMNWeXySv1TKvTigsGBrfJ4Q6AVh1pNVOMrwTXHAUzaw==",
+      "install_command": "npm install --prefix target/watch-import-evaluation-20261013/toolchain --ignore-scripts --no-audit --no-fund --save-exact i18next-cli@1.75.3",
+      "install_log": "install-cli.log",
+      "cli_version_probe": "1.75.3"
+    },
+    "turbo_binary_sha256": "be355c2b4cc08b6f36a4e11feff9d8be8510713673c1af306b88399bd4865e59",
+    "wrapper_sha256": "4b1f6675bf264a3fceade1cacd644e3d23cabbd44ee45daa440aef7e10336d1f"
+  },
+  "cases": {
+    "30": {
+      "base_workload_files": 30,
+      "initial_input_files": 33,
+      "finite_dependency_consumers": 20,
+      "retained_translations": 18,
+      "steps": {
+        "type_change": {
+          "source_delta": {
+            "added": [],
+            "removed": [],
+            "modified": [
+              "src/model/status.ts"
+            ]
+          },
+          "full_key_value_count": 933,
+          "full_extraction_timings": {
+            "cli": {
+              "samples_ms": [
+                259.83870899653994
+              ],
+              "median_ms": 259.83870899653994,
+              "mean_ms": 259.83870899653994,
+              "min_ms": 259.83870899653994,
+              "max_ms": 259.83870899653994
+            },
+            "turbo": {
+              "samples_ms": [
+                14.362625021021813
+              ],
+              "median_ms": 14.362625021021813,
+              "mean_ms": 14.362625021021813,
+              "min_ms": 14.362625021021813,
+              "max_ms": 14.362625021021813
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                42.53649999736808
+              ],
+              "median_ms": 42.53649999736808,
+              "mean_ms": 42.53649999736808,
+              "min_ms": 42.53649999736808,
+              "max_ms": 42.53649999736808
+            }
+          },
+          "full_source_sha256": {
+            "cli": "5d9909e7a551b04b869e83c19ae0c79dcf5262423447804b2f61212733c0df3c",
+            "turbo": "5d9909e7a551b04b869e83c19ae0c79dcf5262423447804b2f61212733c0df3c",
+            "turbo-wrapper": "5d9909e7a551b04b869e83c19ae0c79dcf5262423447804b2f61212733c0df3c"
+          },
+          "full_cross_tool_parity": {
+            "turbo": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            },
+            "turbo-wrapper": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            }
+          },
+          "watch": {
+            "cli": [
+              {
+                "status": "matched",
+                "elapsed_ms": 74.67858301242813,
+                "observation_ms": 74.67858301242813,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "5d9909e7a551b04b869e83c19ae0c79dcf5262423447804b2f61212733c0df3c",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true
+              }
+            ],
+            "turbo": [
+              {
+                "status": "matched",
+                "elapsed_ms": 341.35600001900457,
+                "observation_ms": 341.35600001900457,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "5d9909e7a551b04b869e83c19ae0c79dcf5262423447804b2f61212733c0df3c",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  21
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ],
+            "turbo-wrapper": [
+              {
+                "status": "matched",
+                "elapsed_ms": 323.2653340091929,
+                "observation_ms": 323.2653340091929,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "5d9909e7a551b04b869e83c19ae0c79dcf5262423447804b2f61212733c0df3c",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  21
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ]
+          },
+          "watch_timings": {
+            "cli": {
+              "samples_ms": [
+                74.67858301242813
+              ],
+              "median_ms": 74.67858301242813,
+              "mean_ms": 74.67858301242813,
+              "min_ms": 74.67858301242813,
+              "max_ms": 74.67858301242813
+            },
+            "turbo": {
+              "samples_ms": [
+                341.35600001900457
+              ],
+              "median_ms": 341.35600001900457,
+              "mean_ms": 341.35600001900457,
+              "min_ms": 341.35600001900457,
+              "max_ms": 341.35600001900457
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                323.2653340091929
+              ],
+              "median_ms": 323.2653340091929,
+              "mean_ms": 323.2653340091929,
+              "min_ms": 323.2653340091929,
+              "max_ms": 323.2653340091929
+            }
+          }
+        },
+        "constant_change": {
+          "source_delta": {
+            "added": [],
+            "removed": [],
+            "modified": [
+              "src/model/labels.ts"
+            ]
+          },
+          "full_key_value_count": 933,
+          "full_extraction_timings": {
+            "cli": {
+              "samples_ms": [
+                244.89708300097845
+              ],
+              "median_ms": 244.89708300097845,
+              "mean_ms": 244.89708300097845,
+              "min_ms": 244.89708300097845,
+              "max_ms": 244.89708300097845
+            },
+            "turbo": {
+              "samples_ms": [
+                14.402625005459413
+              ],
+              "median_ms": 14.402625005459413,
+              "mean_ms": 14.402625005459413,
+              "min_ms": 14.402625005459413,
+              "max_ms": 14.402625005459413
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                43.86362500372343
+              ],
+              "median_ms": 43.86362500372343,
+              "mean_ms": 43.86362500372343,
+              "min_ms": 43.86362500372343,
+              "max_ms": 43.86362500372343
+            }
+          },
+          "full_source_sha256": {
+            "cli": "f5a9ddd529255243398fe36039e6b716d93938b1cc1de9c15650d6b8df4be8a9",
+            "turbo": "f5a9ddd529255243398fe36039e6b716d93938b1cc1de9c15650d6b8df4be8a9",
+            "turbo-wrapper": "f5a9ddd529255243398fe36039e6b716d93938b1cc1de9c15650d6b8df4be8a9"
+          },
+          "full_cross_tool_parity": {
+            "turbo": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            },
+            "turbo-wrapper": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            }
+          },
+          "watch": {
+            "cli": [
+              {
+                "status": "matched",
+                "elapsed_ms": 65.18879201030359,
+                "observation_ms": 65.18879201030359,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "f5a9ddd529255243398fe36039e6b716d93938b1cc1de9c15650d6b8df4be8a9",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true
+              }
+            ],
+            "turbo": [
+              {
+                "status": "matched",
+                "elapsed_ms": 332.6265829964541,
+                "observation_ms": 332.6265829964541,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "f5a9ddd529255243398fe36039e6b716d93938b1cc1de9c15650d6b8df4be8a9",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  21
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ],
+            "turbo-wrapper": [
+              {
+                "status": "matched",
+                "elapsed_ms": 320.2884169877507,
+                "observation_ms": 320.2884169877507,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "f5a9ddd529255243398fe36039e6b716d93938b1cc1de9c15650d6b8df4be8a9",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  21
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ]
+          },
+          "watch_timings": {
+            "cli": {
+              "samples_ms": [
+                65.18879201030359
+              ],
+              "median_ms": 65.18879201030359,
+              "mean_ms": 65.18879201030359,
+              "min_ms": 65.18879201030359,
+              "max_ms": 65.18879201030359
+            },
+            "turbo": {
+              "samples_ms": [
+                332.6265829964541
+              ],
+              "median_ms": 332.6265829964541,
+              "mean_ms": 332.6265829964541,
+              "min_ms": 332.6265829964541,
+              "max_ms": 332.6265829964541
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                320.2884169877507
+              ],
+              "median_ms": 320.2884169877507,
+              "mean_ms": 320.2884169877507,
+              "min_ms": 320.2884169877507,
+              "max_ms": 320.2884169877507
+            }
+          }
+        },
+        "file_add": {
+          "source_delta": {
+            "added": [
+              "src/features/dashboard/Added.tsx"
+            ],
+            "removed": [],
+            "modified": []
+          },
+          "full_key_value_count": 942,
+          "full_extraction_timings": {
+            "cli": {
+              "samples_ms": [
+                248.66208399180323
+              ],
+              "median_ms": 248.66208399180323,
+              "mean_ms": 248.66208399180323,
+              "min_ms": 248.66208399180323,
+              "max_ms": 248.66208399180323
+            },
+            "turbo": {
+              "samples_ms": [
+                14.727750007295981
+              ],
+              "median_ms": 14.727750007295981,
+              "mean_ms": 14.727750007295981,
+              "min_ms": 14.727750007295981,
+              "max_ms": 14.727750007295981
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                45.44570902362466
+              ],
+              "median_ms": 45.44570902362466,
+              "mean_ms": 45.44570902362466,
+              "min_ms": 45.44570902362466,
+              "max_ms": 45.44570902362466
+            }
+          },
+          "full_source_sha256": {
+            "cli": "40dc9e8f49575089bc3d01a0d878f5891b4a2b0ce8e0a5ee71c76ed3b3ac9fa8",
+            "turbo": "40dc9e8f49575089bc3d01a0d878f5891b4a2b0ce8e0a5ee71c76ed3b3ac9fa8",
+            "turbo-wrapper": "40dc9e8f49575089bc3d01a0d878f5891b4a2b0ce8e0a5ee71c76ed3b3ac9fa8"
+          },
+          "full_cross_tool_parity": {
+            "turbo": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            },
+            "turbo-wrapper": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            }
+          },
+          "watch": {
+            "cli": [
+              {
+                "status": "event_unobserved",
+                "elapsed_ms": null,
+                "observation_ms": 8007.459417014616,
+                "completion_events": 0,
+                "watch_vs_full": {
+                  "equal": false,
+                  "missing": [
+                    "en/dashboard:added.state.open",
+                    "en/dashboard:added.state.pending",
+                    "en/dashboard:added.title",
+                    "ja/dashboard:added.state.open",
+                    "ja/dashboard:added.state.pending",
+                    "ja/dashboard:added.title",
+                    "ru/dashboard:added.state.open",
+                    "ru/dashboard:added.state.pending",
+                    "ru/dashboard:added.title"
+                  ],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "40dc9e8f49575089bc3d01a0d878f5891b4a2b0ce8e0a5ee71c76ed3b3ac9fa8",
+                "process_exit_before_cleanup": null
+              }
+            ],
+            "turbo": [
+              {
+                "status": "matched",
+                "elapsed_ms": 319.72908397438005,
+                "observation_ms": 319.72908397438005,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "40dc9e8f49575089bc3d01a0d878f5891b4a2b0ce8e0a5ee71c76ed3b3ac9fa8",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  1
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ],
+            "turbo-wrapper": [
+              {
+                "status": "matched",
+                "elapsed_ms": 324.97504097409546,
+                "observation_ms": 324.97504097409546,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "40dc9e8f49575089bc3d01a0d878f5891b4a2b0ce8e0a5ee71c76ed3b3ac9fa8",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  1
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ]
+          },
+          "watch_timings": {
+            "cli": null,
+            "turbo": {
+              "samples_ms": [
+                319.72908397438005
+              ],
+              "median_ms": 319.72908397438005,
+              "mean_ms": 319.72908397438005,
+              "min_ms": 319.72908397438005,
+              "max_ms": 319.72908397438005
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                324.97504097409546
+              ],
+              "median_ms": 324.97504097409546,
+              "mean_ms": 324.97504097409546,
+              "min_ms": 324.97504097409546,
+              "max_ms": 324.97504097409546
+            }
+          }
+        },
+        "file_delete": {
+          "source_delta": {
+            "added": [],
+            "removed": [
+              "src/features/settings/Page0028.tsx"
+            ],
+            "modified": []
+          },
+          "full_key_value_count": 909,
+          "full_extraction_timings": {
+            "cli": {
+              "samples_ms": [
+                246.42250000033528
+              ],
+              "median_ms": 246.42250000033528,
+              "mean_ms": 246.42250000033528,
+              "min_ms": 246.42250000033528,
+              "max_ms": 246.42250000033528
+            },
+            "turbo": {
+              "samples_ms": [
+                15.005583001766354
+              ],
+              "median_ms": 15.005583001766354,
+              "mean_ms": 15.005583001766354,
+              "min_ms": 15.005583001766354,
+              "max_ms": 15.005583001766354
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                46.37495899805799
+              ],
+              "median_ms": 46.37495899805799,
+              "mean_ms": 46.37495899805799,
+              "min_ms": 46.37495899805799,
+              "max_ms": 46.37495899805799
+            }
+          },
+          "full_source_sha256": {
+            "cli": "5effe16262b3c2d3d9f38931d506423d6196b7cd504252870668d75e8e43d88f",
+            "turbo": "5effe16262b3c2d3d9f38931d506423d6196b7cd504252870668d75e8e43d88f",
+            "turbo-wrapper": "5effe16262b3c2d3d9f38931d506423d6196b7cd504252870668d75e8e43d88f"
+          },
+          "full_cross_tool_parity": {
+            "turbo": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            },
+            "turbo-wrapper": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            }
+          },
+          "watch": {
+            "cli": [
+              {
+                "status": "event_unobserved",
+                "elapsed_ms": null,
+                "observation_ms": 8010.756417002995,
+                "completion_events": 0,
+                "watch_vs_full": {
+                  "equal": false,
+                  "missing": [],
+                  "extra": [
+                    "en/settings:page28.cancel",
+                    "en/settings:page28.details.body",
+                    "en/settings:page28.empty",
+                    "en/settings:page28.error",
+                    "en/settings:page28.help",
+                    "en/settings:page28.loading",
+                    "en/settings:page28.save",
+                    "en/settings:page28.shared",
+                    "en/settings:page28.subtitle",
+                    "en/settings:page28.table.header",
+                    "en/settings:page28.title",
+                    "ja/settings:page28.cancel",
+                    "ja/settings:page28.details.body",
+                    "ja/settings:page28.empty",
+                    "ja/settings:page28.error",
+                    "ja/settings:page28.help",
+                    "ja/settings:page28.loading",
+                    "ja/settings:page28.save",
+                    "ja/settings:page28.shared",
+                    "ja/settings:page28.subtitle",
+                    "ja/settings:page28.table.header",
+                    "ja/settings:page28.title",
+                    "ru/settings:page28.cancel",
+                    "ru/settings:page28.details.body",
+                    "ru/settings:page28.empty",
+                    "ru/settings:page28.error",
+                    "ru/settings:page28.help",
+                    "ru/settings:page28.loading",
+                    "ru/settings:page28.save",
+                    "ru/settings:page28.shared",
+                    "ru/settings:page28.subtitle",
+                    "ru/settings:page28.table.header",
+                    "ru/settings:page28.title"
+                  ],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "5effe16262b3c2d3d9f38931d506423d6196b7cd504252870668d75e8e43d88f",
+                "process_exit_before_cleanup": null
+              }
+            ],
+            "turbo": [
+              {
+                "status": "matched",
+                "elapsed_ms": 323.4792919829488,
+                "observation_ms": 323.4792919829488,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "5effe16262b3c2d3d9f38931d506423d6196b7cd504252870668d75e8e43d88f",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  0
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ],
+            "turbo-wrapper": [
+              {
+                "status": "matched",
+                "elapsed_ms": 319.40404101624154,
+                "observation_ms": 319.40404101624154,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "5effe16262b3c2d3d9f38931d506423d6196b7cd504252870668d75e8e43d88f",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  0
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ]
+          },
+          "watch_timings": {
+            "cli": null,
+            "turbo": {
+              "samples_ms": [
+                323.4792919829488
+              ],
+              "median_ms": 323.4792919829488,
+              "mean_ms": 323.4792919829488,
+              "min_ms": 323.4792919829488,
+              "max_ms": 323.4792919829488
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                319.40404101624154
+              ],
+              "median_ms": 319.40404101624154,
+              "mean_ms": 319.40404101624154,
+              "min_ms": 319.40404101624154,
+              "max_ms": 319.40404101624154
+            }
+          }
+        },
+        "file_rename": {
+          "source_delta": {
+            "added": [
+              "src/features/dashboard/AddedMoved.tsx"
+            ],
+            "removed": [
+              "src/features/dashboard/Added.tsx"
+            ],
+            "modified": []
+          },
+          "full_key_value_count": 909,
+          "full_extraction_timings": {
+            "cli": {
+              "samples_ms": [
+                258.0449579982087
+              ],
+              "median_ms": 258.0449579982087,
+              "mean_ms": 258.0449579982087,
+              "min_ms": 258.0449579982087,
+              "max_ms": 258.0449579982087
+            },
+            "turbo": {
+              "samples_ms": [
+                14.135916979284957
+              ],
+              "median_ms": 14.135916979284957,
+              "mean_ms": 14.135916979284957,
+              "min_ms": 14.135916979284957,
+              "max_ms": 14.135916979284957
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                44.210625026607886
+              ],
+              "median_ms": 44.210625026607886,
+              "mean_ms": 44.210625026607886,
+              "min_ms": 44.210625026607886,
+              "max_ms": 44.210625026607886
+            }
+          },
+          "full_source_sha256": {
+            "cli": "864b7c5a74c0d57ba9d9d1ffd51046673df7cc8bc11b2526523e39761928d9e9",
+            "turbo": "864b7c5a74c0d57ba9d9d1ffd51046673df7cc8bc11b2526523e39761928d9e9",
+            "turbo-wrapper": "864b7c5a74c0d57ba9d9d1ffd51046673df7cc8bc11b2526523e39761928d9e9"
+          },
+          "full_cross_tool_parity": {
+            "turbo": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            },
+            "turbo-wrapper": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            }
+          },
+          "watch": {
+            "cli": [
+              {
+                "status": "event_unobserved",
+                "elapsed_ms": null,
+                "observation_ms": 8003.93899998744,
+                "completion_events": 0,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "864b7c5a74c0d57ba9d9d1ffd51046673df7cc8bc11b2526523e39761928d9e9",
+                "process_exit_before_cleanup": null
+              }
+            ],
+            "turbo": [
+              {
+                "status": "matched",
+                "elapsed_ms": 328.4250420110766,
+                "observation_ms": 328.4250420110766,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "864b7c5a74c0d57ba9d9d1ffd51046673df7cc8bc11b2526523e39761928d9e9",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  1
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ],
+            "turbo-wrapper": [
+              {
+                "status": "matched",
+                "elapsed_ms": 330.2702499786392,
+                "observation_ms": 330.2702499786392,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "864b7c5a74c0d57ba9d9d1ffd51046673df7cc8bc11b2526523e39761928d9e9",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  1
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ]
+          },
+          "watch_timings": {
+            "cli": null,
+            "turbo": {
+              "samples_ms": [
+                328.4250420110766
+              ],
+              "median_ms": 328.4250420110766,
+              "mean_ms": 328.4250420110766,
+              "min_ms": 328.4250420110766,
+              "max_ms": 328.4250420110766
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                330.2702499786392
+              ],
+              "median_ms": 330.2702499786392,
+              "mean_ms": 330.2702499786392,
+              "min_ms": 330.2702499786392,
+              "max_ms": 330.2702499786392
+            }
+          }
+        },
+        "dependency_rename": {
+          "source_delta": {
+            "added": [
+              "src/model/labels-moved.ts"
+            ],
+            "removed": [
+              "src/model/labels.ts"
+            ],
+            "modified": [
+              "src/features/account/Page0001.tsx",
+              "src/features/account/Page0007.tsx",
+              "src/features/account/Page0013.tsx",
+              "src/features/account/Page0025.tsx",
+              "src/features/catalog/Page0005.tsx",
+              "src/features/catalog/Page0011.tsx",
+              "src/features/catalog/Page0017.tsx",
+              "src/features/catalog/Page0023.tsx",
+              "src/features/checkout/Page0002.tsx",
+              "src/features/checkout/Page0008.tsx",
+              "src/features/checkout/Page0020.tsx",
+              "src/features/checkout/Page0026.tsx",
+              "src/features/common/Page0000.tsx",
+              "src/features/common/Page0006.tsx",
+              "src/features/common/Page0012.tsx",
+              "src/features/common/Page0018.tsx",
+              "src/features/dashboard/AddedMoved.tsx",
+              "src/features/dashboard/Page0003.tsx",
+              "src/features/dashboard/Page0015.tsx",
+              "src/features/dashboard/Page0021.tsx",
+              "src/features/dashboard/Page0027.tsx"
+            ]
+          },
+          "full_key_value_count": 909,
+          "full_extraction_timings": {
+            "cli": {
+              "samples_ms": [
+                246.99487499310635
+              ],
+              "median_ms": 246.99487499310635,
+              "mean_ms": 246.99487499310635,
+              "min_ms": 246.99487499310635,
+              "max_ms": 246.99487499310635
+            },
+            "turbo": {
+              "samples_ms": [
+                12.942208995809779
+              ],
+              "median_ms": 12.942208995809779,
+              "mean_ms": 12.942208995809779,
+              "min_ms": 12.942208995809779,
+              "max_ms": 12.942208995809779
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                42.13549999985844
+              ],
+              "median_ms": 42.13549999985844,
+              "mean_ms": 42.13549999985844,
+              "min_ms": 42.13549999985844,
+              "max_ms": 42.13549999985844
+            }
+          },
+          "full_source_sha256": {
+            "cli": "e7c78cd160725d0a5b5d2eeaabc0081c0c6fbc9ea2e601c371fd020609ce0336",
+            "turbo": "e7c78cd160725d0a5b5d2eeaabc0081c0c6fbc9ea2e601c371fd020609ce0336",
+            "turbo-wrapper": "e7c78cd160725d0a5b5d2eeaabc0081c0c6fbc9ea2e601c371fd020609ce0336"
+          },
+          "full_cross_tool_parity": {
+            "turbo": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            },
+            "turbo-wrapper": {
+              "equal": true,
+              "missing": [],
+              "extra": [],
+              "changed_values": []
+            }
+          },
+          "watch": {
+            "cli": [
+              {
+                "status": "matched",
+                "elapsed_ms": 518.0889589828439,
+                "observation_ms": 518.0889589828439,
+                "completion_events": 21,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "e7c78cd160725d0a5b5d2eeaabc0081c0c6fbc9ea2e601c371fd020609ce0336",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true
+              }
+            ],
+            "turbo": [
+              {
+                "status": "matched",
+                "elapsed_ms": 321.5877500188071,
+                "observation_ms": 321.5877500188071,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "e7c78cd160725d0a5b5d2eeaabc0081c0c6fbc9ea2e601c371fd020609ce0336",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  22
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ],
+            "turbo-wrapper": [
+              {
+                "status": "matched",
+                "elapsed_ms": 322.7679159899708,
+                "observation_ms": 322.7679159899708,
+                "completion_events": 1,
+                "watch_vs_full": {
+                  "equal": true,
+                  "missing": [],
+                  "extra": [],
+                  "changed_values": []
+                },
+                "seed_preserved": true,
+                "source_sha256": "e7c78cd160725d0a5b5d2eeaabc0081c0c6fbc9ea2e601c371fd020609ce0336",
+                "process_exit_before_cleanup": null,
+                "stable_after_150ms": true,
+                "incremental_extract_cycles": 1,
+                "reparsed_files_per_cycle": [
+                  22
+                ],
+                "final_completion_events": 1,
+                "full_extract_cycles": 0,
+                "reported_cached_files": []
+              }
+            ]
+          },
+          "watch_timings": {
+            "cli": {
+              "samples_ms": [
+                518.0889589828439
+              ],
+              "median_ms": 518.0889589828439,
+              "mean_ms": 518.0889589828439,
+              "min_ms": 518.0889589828439,
+              "max_ms": 518.0889589828439
+            },
+            "turbo": {
+              "samples_ms": [
+                321.5877500188071
+              ],
+              "median_ms": 321.5877500188071,
+              "mean_ms": 321.5877500188071,
+              "min_ms": 321.5877500188071,
+              "max_ms": 321.5877500188071
+            },
+            "turbo-wrapper": {
+              "samples_ms": [
+                322.7679159899708
+              ],
+              "median_ms": 322.7679159899708,
+              "mean_ms": 322.7679159899708,
+              "min_ms": 322.7679159899708,
+              "max_ms": 322.7679159899708
+            }
+          }
+        }
+      }
+    }
+  },
+  "source_files_unchanged": true,
+  "completed_at": "2026-10-14T00:45:48+0900"
+}
