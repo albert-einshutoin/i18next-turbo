@@ -987,6 +987,7 @@ impl Config {
         // Check for empty locale strings
         for (i, locale) in self.locales.iter().enumerate() {
             if self.use_locale_plural_rules
+                && !self.disable_plurals
                 && (categories_for_locale(locale, false).is_none()
                     || categories_for_locale(locale, true).is_none())
             {
@@ -1022,6 +1023,7 @@ impl Config {
             .chain(self.secondary_languages.iter().flatten())
         {
             if self.use_locale_plural_rules
+                && !self.disable_plurals
                 && (categories_for_locale(locale, false).is_none()
                     || categories_for_locale(locale, true).is_none())
             {

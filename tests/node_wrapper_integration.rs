@@ -83,6 +83,29 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_str(&content).expect("invalid json")
 }
 
+#[cfg(unix)]
+#[test]
+fn node_wrapper_reports_signal_termination_as_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let binary = tmp.path().join("terminated-cli");
+    fs::write(&binary, "#!/bin/sh\nkill -TERM $$\n").unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new("node")
+        .arg(wrapper_bin())
+        .arg("--version")
+        .env("I18NEXT_TURBO_BINARY", &binary)
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "signal termination must fail");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("SIGTERM"));
+}
+
 #[test]
 fn node_wrapper_supports_default_value_and_sort_function_forms() {
     if !should_run_node_wrapper_tests() {
@@ -131,6 +154,34 @@ module.exports = {
     let m_idx = content.find("\"m\"").unwrap();
     let z_idx = content.find("\"z\"").unwrap();
     assert!(a_idx < m_idx && m_idx < z_idx, "keys should be sorted");
+}
+
+#[cfg(unix)]
+#[test]
+fn node_wrapper_drains_captured_child_output() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let binary = tmp.path().join("verbose-cli");
+    fs::write(
+        &binary,
+        "#!/usr/bin/env node\nprocess.stdout.write('x'.repeat(262144));\nprocess.stderr.write('y'.repeat(262144));\n",
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new("node")
+        .arg(wrapper_bin())
+        .arg("--version")
+        .env("I18NEXT_TURBO_BINARY", &binary)
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, vec![b'x'; 262144]);
+    assert_eq!(output.stderr, vec![b'y'; 262144]);
 }
 
 #[test]

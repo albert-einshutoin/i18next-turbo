@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
+- Handle third-argument options after string defaults, recursively shadow translator aliases in parameter patterns, and resolve finite imports from Vue/Svelte script modules.
+- Skip unused ICU plural-rule validation when plurals are disabled.
+- Drain Rust child output through the Node wrapper and report signal termination as a failure.
 - Match documented snake_case Node API results/options in the native addon, including a nullable extract message.
 - Forward native Node API lint configuration instead of silently applying defaults.
 - Preserve CRLF and indentation when applying runtime JSON defaultValue/sort transforms.

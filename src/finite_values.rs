@@ -244,6 +244,7 @@ impl FiniteIndex {
 #[derive(Clone)]
 pub(crate) struct FiniteResolver {
     index: Arc<FiniteIndex>,
+    module: Arc<ModuleValues>,
     path: PathBuf,
     pub(crate) bindings: HashMap<String, Option<FiniteValue>>,
     types: HashMap<String, Box<TsType>>,
@@ -252,16 +253,12 @@ pub(crate) struct FiniteResolver {
 impl FiniteResolver {
     pub(crate) fn new(path: &Path, module: &Module, index: Option<&Arc<FiniteIndex>>) -> Self {
         let path = normalized(path);
-        let index = index.cloned().unwrap_or_else(|| {
-            Arc::new(FiniteIndex {
-                modules: HashMap::from([(
-                    path.clone(),
-                    ModuleValues::from_module(String::new(), module),
-                )]),
-            })
-        });
+        // Virtual component scripts have their own imports; imported files remain input-scoped.
+        let current_module = Arc::new(ModuleValues::from_module(String::new(), module));
+        let index = index.cloned().unwrap_or_default();
         Self {
             index,
+            module: current_module,
             path,
             bindings: HashMap::new(),
             types: HashMap::new(),
@@ -334,7 +331,11 @@ impl FiniteResolver {
                     return self.ty(ty, path, depth + 1, visited, budget);
                 }
             }
-            let module = self.index.modules.get(path)?;
+            let module = if path == self.path {
+                self.module.as_ref()
+            } else {
+                self.index.modules.get(path)?
+            };
             if let Some((source, imported, import_type_only)) = module.imports.get(name) {
                 if !type_only && *import_type_only {
                     return None;

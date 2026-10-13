@@ -1060,13 +1060,15 @@ impl TranslationVisitor {
     }
 
     fn options_object<'a>(&self, call: &'a CallExpr) -> Option<&'a ObjectLit> {
-        if call.args.len() < 2 {
-            return None;
-        }
-        if let Expr::Object(obj) = call.args[1].expr.as_ref() {
-            Some(obj)
+        let second = call.args.get(1)?;
+        let argument = if matches!(second.expr.as_ref(), Expr::Lit(Lit::Str(_))) {
+            call.args.get(2)?
         } else {
-            None
+            second
+        };
+        match argument.expr.as_ref() {
+            Expr::Object(object) => Some(object),
+            _ => None,
         }
     }
 
@@ -1132,16 +1134,9 @@ impl TranslationVisitor {
         self.find_bool_prop(obj, "ordinal").unwrap_or(false)
     }
 
-    /// Get a string option value from the second argument object
+    /// Get a string option from either supported overload's options object.
     fn get_option_value(&self, call: &CallExpr, key: &str) -> Option<String> {
-        if call.args.len() < 2 {
-            return None;
-        }
-
-        if let Expr::Object(obj) = call.args[1].expr.as_ref() {
-            return self.find_string_prop(obj, key);
-        }
-        None
+        self.find_string_prop(self.options_object(call)?, key)
     }
 
     /// Find a string property in an object literal
@@ -1861,6 +1856,41 @@ impl TranslationVisitor {
         }
     }
 
+    fn shadow_parameter(&mut self, pattern: &Pat) {
+        match pattern {
+            Pat::Ident(binding) => {
+                self.scope_bindings.remove(binding.id.sym.as_ref());
+                if !self.configured_functions.contains(binding.id.sym.as_ref()) {
+                    self.functions.remove(binding.id.sym.as_ref());
+                }
+                if let Some(resolver) = &mut self.finite_resolver {
+                    resolver.capture(binding, None);
+                }
+            }
+            Pat::Assign(assignment) => self.shadow_parameter(&assignment.left),
+            Pat::Rest(rest) => self.shadow_parameter(&rest.arg),
+            Pat::Array(array) => {
+                for element in array.elems.iter().flatten() {
+                    self.shadow_parameter(element);
+                }
+            }
+            Pat::Object(object) => {
+                for property in &object.props {
+                    match property {
+                        swc_ecma_ast::ObjectPatProp::KeyValue(value) => {
+                            self.shadow_parameter(&value.value)
+                        }
+                        swc_ecma_ast::ObjectPatProp::Assign(value) => {
+                            self.shadow_parameter(&Pat::Ident(value.key.clone()))
+                        }
+                        swc_ecma_ast::ObjectPatProp::Rest(rest) => self.shadow_parameter(&rest.arg),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn inferred_comment_scope(&self) -> Option<ScopeInfo> {
         if self.scope_bindings.len() == 1 {
             self.scope_bindings.values().next().cloned()
@@ -1907,15 +1937,7 @@ impl Visit for TranslationVisitor {
         let functions = self.functions.clone();
         let resolver = self.finite_resolver.clone();
         for param in &arrow.params {
-            if let Pat::Ident(binding) = param {
-                self.scope_bindings.remove(binding.id.sym.as_ref());
-                if !self.configured_functions.contains(binding.id.sym.as_ref()) {
-                    self.functions.remove(binding.id.sym.as_ref());
-                }
-                if let Some(resolver) = &mut self.finite_resolver {
-                    resolver.capture(binding, None);
-                }
-            }
+            self.shadow_parameter(param);
         }
         arrow.visit_children_with(self);
         self.scope_bindings = bindings;
@@ -1942,15 +1964,7 @@ impl Visit for TranslationVisitor {
         let functions = self.functions.clone();
         let resolver = self.finite_resolver.clone();
         for param in &function.params {
-            if let Pat::Ident(binding) = &param.pat {
-                self.scope_bindings.remove(binding.id.sym.as_ref());
-                if !self.configured_functions.contains(binding.id.sym.as_ref()) {
-                    self.functions.remove(binding.id.sym.as_ref());
-                }
-                if let Some(resolver) = &mut self.finite_resolver {
-                    resolver.capture(binding, None);
-                }
-            }
+            self.shadow_parameter(&param.pat);
         }
         function.visit_children_with(self);
         self.scope_bindings = bindings;
@@ -2072,15 +2086,9 @@ impl Visit for TranslationVisitor {
                 );
 
                 // Check for count option (plurals)
-                let has_count = if call.args.len() >= 2 {
-                    if let Expr::Object(obj) = call.args[1].expr.as_ref() {
-                        self.has_prop(obj, "count")
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                let has_count = self
+                    .options_object(call)
+                    .is_some_and(|obj| self.has_prop(obj, "count"));
 
                 // Check for context option
                 let context_info = self.get_context_info(call);

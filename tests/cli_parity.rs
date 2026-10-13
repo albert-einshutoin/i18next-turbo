@@ -281,3 +281,129 @@ fn aliases_do_not_escape_blocks_or_shadow_function_parameters() {
     assert_eq!(keys[0].key, "profile.name");
     assert_eq!(keys[0].namespace.as_deref(), Some("account"));
 }
+
+#[test]
+fn string_defaults_use_third_argument_options() {
+    let project = small_project(
+        r#"
+      t('items', 'Items', {count: 2});
+      t('rank', 'Rank', {count: 2, ordinal: true});
+      t('friend', 'Friend', {context: 'male'});
+      t('options', 'Options', {returnObjects: true});
+      t('other:label', 'Label');
+    "#,
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_i18next-turbo"))
+        .current_dir(project.path())
+        .args([
+            "--config",
+            "i18next-turbo.json",
+            "extract",
+            "--fail-on-warnings",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value =
+        serde_json::from_slice(&fs::read(project.path().join("locales/en/common.json")).unwrap())
+            .unwrap();
+    for key in ["items_one", "items_other"] {
+        assert_eq!(value[key], "Items");
+    }
+    for key in [
+        "rank_ordinal_one",
+        "rank_ordinal_two",
+        "rank_ordinal_few",
+        "rank_ordinal_other",
+    ] {
+        assert_eq!(value[key], "Rank");
+    }
+    assert!(value.get("items").is_none());
+    assert_eq!(value["friend_male"], "Friend");
+    assert_eq!(value["options"], "Options");
+    let other: Value =
+        serde_json::from_slice(&fs::read(project.path().join("locales/en/other.json")).unwrap())
+            .unwrap();
+    assert_eq!(other["label"], "Label");
+}
+
+#[test]
+fn parameter_patterns_shadow_automatic_translator_aliases() {
+    for parameter in [
+        "{translate}",
+        "[translate]",
+        "translate = other",
+        "...translate",
+    ] {
+        let source = format!("function Parent(){{const {{t:translate}}=useTranslation('account'); function Child({parameter}){{translate('wrong')}} const child=({parameter})=>translate('wrong'); translate('right');}}");
+        let keys = i18next_turbo::extractor::extract_from_source(&source, "app.ts", &["t".into()])
+            .unwrap();
+        assert_eq!(keys.len(), 1, "{parameter}: {keys:?}");
+        assert_eq!(keys[0].key, "right");
+        assert_eq!(keys[0].namespace.as_deref(), Some("account"));
+    }
+}
+
+#[test]
+fn framework_scripts_resolve_input_scoped_imports() {
+    let project = small_project("");
+    fs::write(
+        project.path().join("src/types.ts"),
+        "export type Status='open'|'closed'; export const labels={save:'save'} as const;",
+    )
+    .unwrap();
+    for (file, prefix) in [("App.vue", "vue"), ("App.svelte", "svelte")] {
+        fs::write(project.path().join("src").join(file), format!("<script lang=\"ts\">import {{Status,labels}} from './types'; declare const state:Status; t(`{prefix}.${{state}}`); t(labels.save);</script>")).unwrap();
+    }
+    let path = project.path().join("i18next-turbo.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["input"] = serde_json::json!(["src/**/*"]);
+    config["removeUnusedKeys"] = Value::Bool(true);
+    write_json(&path, &config);
+    let output = Command::new(env!("CARGO_BIN_EXE_i18next-turbo"))
+        .current_dir(project.path())
+        .args([
+            "--config",
+            "i18next-turbo.json",
+            "extract",
+            "--fail-on-warnings",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value =
+        serde_json::from_slice(&fs::read(project.path().join("locales/en/common.json")).unwrap())
+            .unwrap();
+    for prefix in ["vue", "svelte"] {
+        for state in ["open", "closed"] {
+            assert_eq!(value[prefix][state], "");
+        }
+    }
+    assert_eq!(value["save"], "");
+}
+
+#[test]
+fn disabled_plurals_do_not_require_icu_locale_rules() {
+    use i18next_turbo::config::Config;
+    for extra in [
+        serde_json::json!({}),
+        serde_json::json!({"primaryLanguage":"tenant@private", "secondaryLanguages":["other@private"]}),
+    ] {
+        let mut config = serde_json::json!({"locales":["tenant@private"],"disablePlurals":true});
+        config
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        assert!(Config::from_json_string(&config.to_string()).is_ok());
+        config["disablePlurals"] = Value::Bool(false);
+        assert!(Config::from_json_string(&config.to_string()).is_err());
+    }
+}
