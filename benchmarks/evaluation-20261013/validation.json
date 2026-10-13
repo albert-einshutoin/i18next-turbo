@@ -1,0 +1,62 @@
+{
+  "current_files_sha256": {
+    ".gitignore": "5c6f58e2f53998427ba0623f0f2daf7e059592aa954e3bd30bbf64fe76bb29cd",
+    "CHANGELOG.md": "4c2c5ffc28a0d25c5e027cb6670f727a821f6f08cbacfc6f1ac8d2cda8aa2734",
+    "docs/compatibility.md": "b6d7a1c13e5100fec262c0b95ed77cc8ecbadeabbe839dcc6efa46bf6d48b2b3",
+    "src/cleanup.rs": "e5d06756313e46ed077776e3c09a7f76bb6f28d38d610f5db95778fa91e12d5d",
+    "src/commands/extract.rs": "4307fc1e8b570eed20a5a373d444159d7a073fa00b963a37d22692f96f248909",
+    "src/config.rs": "be5abcda99f18c8040f5a5ab0954318aee0a0b12577991d8d12c1bfc2264106f",
+    "src/extractor.rs": "d912dbc26ebedbd846da9647417c3ece80ced866e2a011bfb4c8f4fb9e7ba808",
+    "src/json_sync.rs": "8b42a1d296124c9f9655915d7d54ba47a02f8d1deb5ff5493d5cb56aa769b818",
+    "src/lib.rs": "dc8b322b22d0598de18d666182d59b8050b0b3518ff0532b2e497aef7e89cd3c",
+    "src/watcher.rs": "1847cc65cc17053dfbd0d5f07d7096a8b008228ac93433285760352c0a39d4a0",
+    "tests/cli_integration.rs": "bca17a03c7bfc64c8ab6967311b51cd50479b964cc682fdd560bf1ce09d324b0",
+    "src/finite_values.rs": "58da4dfb9a8432bd7dfca4c917b0d40f1b80ce6d0356bedfbafe7dea991b6736",
+    "tests/cli_parity.rs": "5df361da1eb2eda21a3b2a03f758360eeecacceb05d8c3bdec18be86991f6b0b",
+    "tests/fixtures/cli-parity/sources.json": "b1b10f11625af100ae87ffa0bb5e62f3c708e1d86ab1e293a268fe7d5f33cb03",
+    "tests/fixtures/cli-parity/expected.json": "84fb93e2d99932792b93e6beee4d64e9477c395eb7179d535e64f9e1dc7ff51e",
+    "tests/fixtures/cli-parity/config.json": "555268a495872fb0f3b75d90dddbce686a403130be9bb34a08a77d6eef03fa87",
+    "tests/fixtures/cli-parity/seed.json": "da4d2ee838aa91c09073090b549f8643883bfe81724b1f5a885ce2411d6b0c65",
+    "bin/cli.js": "007e4308a08c68217eeb81adfaf0901e5b65fbe3135cd35ae85b12bcc14fdb3a",
+    "tests/node_wrapper_integration.rs": "4873e50de7c69ba8064e177870dfd639b1745b9d9e92427367c8b268a8d72fbf",
+    "docs/api.md": "aee309454bd6807f2ec98ca54c8152c9cac5d4103b8730dcab933b1218a8d3d9",
+    "src/commands/locize.rs": "c76cfa6830c6b47ef30419538a34c783afb021216be6c4d4da9276600bcc4f38"
+  },
+  "release_binary_sha256": "6daaca8b556e855df37712ab0515d995c42db0c03b969e1b789a0c2817bf7f09",
+  "native_addon_sha256": "c3324d9dffbbf7f67ae69e491a8a1c893ba5b194d450ae80923eb28e8040e32e",
+  "test_counts": {
+    "tests-default.log": 191,
+    "tests-all-features.log": 207,
+    "green-node-tests.log": 11
+  },
+  "node": "v24.2.0",
+  "preserved_files_unchanged": true,
+  "specialist_reviews": "ALLOW static",
+  "source_commit": "3d610372a05f2041279ee9515139c7c203b6ce38",
+  "evidence": "Local full verification earlier in this session; validated source bytes rechecked unchanged at source_commit.",
+  "checks": {
+    "cargo test --all-targets --locked": {
+      "passed": 191,
+      "failed": 0,
+      "ignored": 0
+    },
+    "cargo test --all-targets --all-features --locked": {
+      "passed": 207,
+      "failed": 0,
+      "ignored": 0
+    },
+    "cargo test --features napi --test node_wrapper_integration --locked": {
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0
+    },
+    "cargo clippy --all-targets --all-features --locked -- -D warnings": "passed without -A",
+    "cargo fmt -- --check": "passed",
+    "node --check bin/cli.js": "passed",
+    "git diff --check": "passed",
+    "cargo build --release --locked": "passed",
+    "cargo build --lib --all-features --locked": "passed"
+  },
+  "companion_gate": "ALLOW, static, touched=[]",
+  "benchmark_packaging_review": "ALLOW, static, touched=[]"
+}

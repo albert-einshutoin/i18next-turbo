@@ -349,11 +349,13 @@ mod tests {
 
         let extracted_keys = vec![
             ExtractedKey {
+                locales: None,
                 key: "hello".to_string(),
                 namespace: Some("common".to_string()),
                 default_value: None,
             },
             ExtractedKey {
+                locales: None,
                 key: "title".to_string(),
                 namespace: Some("home".to_string()),
                 default_value: None,

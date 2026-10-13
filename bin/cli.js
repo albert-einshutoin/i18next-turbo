@@ -409,10 +409,13 @@ function resolveRuntimeFeatures(config, commandName, args) {
 async function runRustBinary(binaryPath, rustArgs, configJson, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binaryPath, rustArgs, {
-      stdio: configJson ? ['pipe', 'inherit', 'inherit'] : 'inherit',
+      // Drain child output through Node: inherited capture pipes can be nonblocking.
+      stdio: [configJson ? 'pipe' : 'inherit', 'pipe', 'pipe'],
       cwd: process.cwd(),
       env: { ...process.env, ...extraEnv }
     });
+    child.stdout.pipe(process.stdout);
+    child.stderr.pipe(process.stderr);
 
     if (configJson) {
       child.stdin.write(configJson);
@@ -423,8 +426,12 @@ async function runRustBinary(binaryPath, rustArgs, configJson, extraEnv = {}) {
       reject(new Error(`Failed to start i18next-turbo: ${error.message}`));
     });
 
-    child.on('exit', (code) => {
-      resolve(code || 0);
+    child.on('close', (code, signal) => {
+      if (signal) {
+        reject(new Error(`i18next-turbo terminated by ${signal}`));
+        return;
+      }
+      resolve(code ?? 1);
     });
   });
 }
@@ -715,7 +722,7 @@ async function applyRuntimeTransforms(features) {
       }
 
       if (changed) {
-        const serialized = JSON.stringify(parsed, null, style.indent);
+        const serialized = JSON.stringify(parsed, null, style.indent).replace(/\n/g, style.newline);
         const nextContent = style.trailingNewline
           ? `${serialized}${style.newline}`
           : serialized;

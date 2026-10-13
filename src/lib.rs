@@ -5,6 +5,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod extractor;
+mod finite_values;
 pub mod fs;
 pub mod json_sync;
 pub mod lint;
@@ -26,23 +27,29 @@ use crate::config::{Config, NapiConfig};
 
 /// Result of extraction operation
 #[cfg(feature = "napi")]
-#[napi(object)]
+#[napi(object, use_nullable = true)]
 pub struct ExtractResult {
     /// Whether the extraction was successful
     pub success: bool,
     /// Number of files processed
+    #[napi(js_name = "files_processed")]
     pub files_processed: u32,
     /// Number of unique keys found
+    #[napi(js_name = "unique_keys")]
     pub unique_keys: u32,
     /// Number of new keys added to locale files
+    #[napi(js_name = "keys_added")]
     pub keys_added: u32,
     /// Number of stale keys removed from locale files
+    #[napi(js_name = "keys_removed")]
     pub keys_removed: u32,
     /// List of updated locale files
+    #[napi(js_name = "updated_files")]
     pub updated_files: Vec<String>,
     /// Number of warnings encountered
     pub warnings: u32,
     /// Number of extraction warnings encountered before sync
+    #[napi(js_name = "extraction_warnings")]
     pub extraction_warnings: u32,
     /// Number of key conflicts encountered during sync
     pub conflicts: u32,
@@ -55,6 +62,7 @@ pub struct ExtractResult {
 #[napi(object)]
 pub struct LintResult {
     /// Number of files checked
+    #[napi(js_name = "files_checked")]
     pub files_checked: u32,
     /// List of lint issues found
     pub issues: Vec<LintIssueInfo>,
@@ -65,6 +73,7 @@ pub struct LintResult {
 #[napi(object)]
 pub struct LintIssueInfo {
     /// File path where the issue was found
+    #[napi(js_name = "file_path")]
     pub file_path: String,
     /// Line number
     pub line: u32,
@@ -81,8 +90,10 @@ pub struct LintIssueInfo {
 #[napi(object)]
 pub struct CheckResult {
     /// List of dead (unused) keys
+    #[napi(js_name = "dead_keys")]
     pub dead_keys: Vec<DeadKeyInfo>,
     /// Number of keys removed (if remove option was used)
+    #[napi(js_name = "removed_count")]
     pub removed_count: u32,
 }
 
@@ -91,8 +102,10 @@ pub struct CheckResult {
 #[napi(object)]
 pub struct DeadKeyInfo {
     /// File path where the key is defined
+    #[napi(js_name = "file_path")]
     pub file_path: String,
     /// Key path (e.g., "button.submit")
+    #[napi(js_name = "key_path")]
     pub key_path: String,
     /// Namespace of the key
     pub namespace: String,
@@ -192,10 +205,13 @@ pub struct ExtractOptions {
     /// Output directory (overrides config)
     pub output: Option<String>,
     /// Fail on warnings
+    #[napi(js_name = "fail_on_warnings")]
     pub fail_on_warnings: Option<bool>,
     /// Generate TypeScript type definitions after extraction
+    #[napi(js_name = "generate_types")]
     pub generate_types: Option<bool>,
     /// TypeScript output path (only used with generate_types)
+    #[napi(js_name = "types_output")]
     pub types_output: Option<String>,
 }
 
@@ -212,6 +228,7 @@ pub struct WatchOptions {
 #[napi(object)]
 pub struct LintOptions {
     /// Fail on lint errors
+    #[napi(js_name = "fail_on_error")]
     pub fail_on_error: Option<bool>,
 }
 
@@ -222,6 +239,7 @@ pub struct CheckOptions {
     /// Remove dead keys from locale files
     pub remove: Option<bool>,
     /// Preview changes without modifying files
+    #[napi(js_name = "dry_run")]
     pub dry_run: Option<bool>,
     /// Locale to check (defaults to first locale in config)
     pub locale: Option<String>,

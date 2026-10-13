@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
+- Handle third-argument options after string defaults, recursively shadow translator aliases in parameter patterns, and resolve finite imports from Vue/Svelte script modules.
+- Skip unused ICU plural-rule validation when plurals are disabled.
+- Drain Rust child output through the Node wrapper and report signal termination as a failure.
+- Match documented snake_case Node API results/options in the native addon, including a nullable extract message.
+- Forward native Node API lint configuration instead of silently applying defaults.
+- Preserve CRLF and indentation when applying runtime JSON defaultValue/sort transforms.
+- Restore all-feature compilation by importing the shared locale helpers in locize and updating obsolete test arguments.
+- Resolve bound translation aliases and `getFixedT` calls without repeating their names in `functions`.
+- Resolve finite string unions, constant maps, and array loop keys within the configured input files, with bounded expansion and diagnostics for unresolved values.
+- Keep generated cardinal and ordinal forms specific to each locale, and preserve literal keys with plural-like suffixes.
+- Apply call/Trans defaults to the primary locale, preserve existing translations, and create missing `returnObjects` root defaults.
+- Reanalyze watched source dependencies and refuse catalog pruning when extraction is incomplete.
+
+### Rust API
+- `ExtractedKey` adds `locales`; literal keys use `None`. `PluralConfig` adds ordinal and locale suffix metadata, and `ExtractionResult` adds `requires_project_scan`. Rust struct literals must initialize the added fields. Node API results follow the documented snake_case contract.
+- With the `napi` feature, `NapiConfig` adds optional `lint` configuration; existing Rust literals must initialize it.
 
 ### Security
 

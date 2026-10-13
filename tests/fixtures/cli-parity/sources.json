@@ -1,0 +1,11 @@
+{
+  "src/scopes.tsx": "import {useTranslation, Trans} from 'react-i18next';\nimport i18n from 'i18next';\nexport function A(){const {t: translate}=useTranslation('account',{keyPrefix:'profile'});\nreturn translate('name')}\nconst fixed = i18n.getFixedT('en', 'checkout', 'form'); fixed('submit');\nconst {t}=useTranslation('dashboard'); t($ => $.summary.title); t(`static.literal`);\nconst element=<Trans ns=\"common\" i18nKey=\"notice\" defaults=\"Welcome {{name}}\">Welcome</Trans>;\n",
+  "src/defaults.ts": "t('common:greeting', 'Hello'); t('common:save', {defaultValue: 'Save'});\n",
+  "src/plurals.ts": "declare const count: number; t('catalog:items', {count}); t('catalog:rank', {count, ordinal: true});\n",
+  "src/context.ts": "declare const male: boolean; t('account:friend', {context: male ? 'male' : 'female'});\n",
+  "src/types.ts": "export type Status = 'pending' | 'done' | 'failed'; export const LABELS = {save: 'common:constant.save', cancel: 'common:constant.cancel'} as const;\n",
+  "src/dynamic.ts": "import {Status, LABELS} from './types'; declare const state: Status; t(`account:state.${state}`); t(LABELS.save); t(LABELS.cancel);\n",
+  "src/array.ts": "const states = ['open', 'closed'] as const; for(const state of states) {t(`checkout:order.${state}`)}\n",
+  "src/objects.ts": "t('settings:options', {returnObjects: true});\n",
+  "src/ignored/ignored.ts": "t('common:must_not_extract');\n"
+}

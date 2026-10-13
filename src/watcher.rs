@@ -4,10 +4,12 @@ use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventR
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::Config;
 use crate::extractor::{self, ExtractedKey};
+use crate::finite_values::{normalized, FiniteIndex};
 use crate::json_sync;
 
 /// File watcher with incremental extraction support
@@ -17,7 +19,9 @@ pub struct FileWatcher {
     debounce_duration: Duration,
     /// Cache of extracted keys per file for incremental updates
     file_cache: HashMap<PathBuf, Vec<ExtractedKey>>,
+    requires_project_scan: bool,
     ignore_patterns: Vec<Pattern>,
+    input_patterns: Vec<Pattern>,
 }
 
 impl FileWatcher {
@@ -29,10 +33,17 @@ impl FileWatcher {
             .filter_map(|pattern| Pattern::new(pattern).ok())
             .collect();
         Self {
+            input_patterns: config
+                .input
+                .iter()
+                .flat_map(|pattern| extractor::expand_brace_patterns(pattern))
+                .filter_map(|pattern| Pattern::new(&pattern).ok())
+                .collect(),
             config,
             output_dir: output,
             debounce_duration: Duration::from_millis(300),
             file_cache: HashMap::new(),
+            requires_project_scan: false,
             ignore_patterns,
         }
     }
@@ -107,7 +118,12 @@ impl FileWatcher {
     fn should_process_file(&self, path: &Path) -> bool {
         let valid_extensions = ["ts", "tsx", "js", "jsx"];
 
-        if self.is_ignored(path) {
+        if self.is_ignored(path)
+            || !self
+                .input_patterns
+                .iter()
+                .any(|pattern| self.matches_path(pattern, path))
+        {
             return false;
         }
 
@@ -120,7 +136,19 @@ impl FileWatcher {
     fn is_ignored(&self, path: &Path) -> bool {
         self.ignore_patterns
             .iter()
-            .any(|pattern| pattern.matches_path(path))
+            .any(|pattern| self.matches_path(pattern, path))
+    }
+
+    fn matches_path(&self, pattern: &Pattern, path: &Path) -> bool {
+        pattern.matches_path(path)
+            || std::env::current_dir()
+                .ok()
+                .and_then(|cwd| {
+                    path.strip_prefix(cwd)
+                        .ok()
+                        .map(|relative| pattern.matches_path(relative))
+                })
+                .unwrap_or(false)
     }
 
     /// Perform initial full extraction of all files
@@ -144,9 +172,14 @@ impl FileWatcher {
             &self.config.interpolation_suffix,
         )?;
 
+        if self.config.remove_unused_keys && extraction.warning_count > 0 {
+            anyhow::bail!("Cannot prune translations while source extraction is incomplete");
+        }
+        self.requires_project_scan = extraction.requires_project_scan;
         // Populate cache
+        self.file_cache.clear();
         for (file_path, keys) in &extraction.files {
-            let path = PathBuf::from(file_path);
+            let path = normalized(Path::new(file_path));
             self.file_cache.insert(path, keys.clone());
         }
 
@@ -190,7 +223,7 @@ impl FileWatcher {
         let mut removed_files = Vec::new();
 
         for event in events {
-            let path = event.path;
+            let path = normalized(&event.path);
 
             // Filter by extension
             if !self.should_process_file(&path) {
@@ -209,6 +242,14 @@ impl FileWatcher {
         changed_files.dedup();
         removed_files.sort();
         removed_files.dedup();
+
+        let finite_index = Arc::new(FiniteIndex::load(&changed_files)?);
+        if (self.requires_project_scan || finite_index.has_dependencies())
+            && (!changed_files.is_empty() || !removed_files.is_empty())
+        {
+            // Imported types/constants can change consumers even when their source is untouched.
+            return self.full_extract();
+        }
 
         // Collect namespaces from removed files before removing from cache
         let mut affected_namespaces = HashSet::new();
@@ -238,7 +279,7 @@ impl FileWatcher {
         }
 
         // Re-extract only changed files and collect their namespaces
-        let changed_keys = self.incremental_extract(&changed_files)?;
+        let changed_keys = self.incremental_extract(&changed_files, &finite_index)?;
         for key in &changed_keys {
             if let Some(ns) = &key.namespace {
                 affected_namespaces.insert(ns.clone());
@@ -275,32 +316,45 @@ impl FileWatcher {
 
     /// Extract keys from only the changed files
     /// Returns all extracted keys from the changed files
-    fn incremental_extract(&mut self, changed_files: &[PathBuf]) -> Result<Vec<ExtractedKey>> {
+    fn incremental_extract(
+        &mut self,
+        changed_files: &[PathBuf],
+        finite_index: &Arc<FiniteIndex>,
+    ) -> Result<Vec<ExtractedKey>> {
         use rayon::prelude::*;
 
         let plural_config = self.config.plural_config();
-        let results: Vec<_> = changed_files
+        let results: Result<Vec<_>> = changed_files
             .par_iter()
-            .filter(|path| !self.is_ignored(path))
-            .filter_map(|path| {
-                match extractor::extract_from_file_with_options(
+            .filter(|path| self.should_process_file(path))
+            .map(|path| {
+                let (keys, warnings) = extractor::extract_from_file_with_warnings(
                     path,
                     &self.config.functions,
+                    &self.config.trans_components,
+                    &self.config.trans_keep_basic_html_nodes_for,
+                    &self.config.use_translation_names,
                     self.config.extract_from_comments,
                     &plural_config,
-                ) {
-                    Ok(keys) => Some((path.clone(), keys)),
-                    Err(e) => {
-                        eprintln!("  Warning: {}", e);
-                        None
-                    }
+                    &self.config.nesting_prefix,
+                    &self.config.nesting_suffix,
+                    &self.config.nesting_options_separator,
+                    &self.config.interpolation_prefix,
+                    &self.config.interpolation_suffix,
+                    Some(finite_index),
+                )?;
+                if self.config.remove_unused_keys && warnings > 0 {
+                    anyhow::bail!(
+                        "Cannot prune translations while source extraction is incomplete"
+                    );
                 }
+                Ok((normalized(path), keys))
             })
             .collect();
 
         // Update cache and collect all extracted keys
         let mut all_extracted_keys = Vec::new();
-        for (path, keys) in results {
+        for (path, keys) in results? {
             if keys.is_empty() {
                 self.file_cache.remove(&path);
             } else {
@@ -361,7 +415,8 @@ mod tests {
         let watcher = FileWatcher::new(config, None);
 
         assert!(watcher.should_process_file(Path::new("src/app.ts")));
-        assert!(watcher.should_process_file(Path::new("src/app.tsx")));
+        assert!(!watcher.should_process_file(Path::new("src/app.tsx")));
+        assert!(!watcher.should_process_file(Path::new("other/app.ts")));
         assert!(!watcher.should_process_file(Path::new("src/app.md")));
         assert!(!watcher.should_process_file(Path::new("src/app.spec.ts")));
     }
@@ -384,11 +439,47 @@ mod tests {
         let mut watcher = FileWatcher::new(config, None);
 
         let keys = watcher
-            .incremental_extract(std::slice::from_ref(&file))
+            .incremental_extract(
+                std::slice::from_ref(&file),
+                &Arc::new(FiniteIndex::load(std::slice::from_ref(&file)).unwrap()),
+            )
             .unwrap();
         assert!(keys.iter().any(|k| k.key == "watch.key"));
 
         let cached = watcher.file_cache.get(&file).unwrap();
         assert!(cached.iter().any(|k| k.key == "watch.key"));
+    }
+
+    #[test]
+    fn imported_type_changes_refresh_consumer_keys() {
+        use notify_debouncer_mini::{DebouncedEvent, DebouncedEventKind};
+        let cwd = std::env::current_dir().unwrap();
+        let tmp = tempdir_in(&cwd).unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        let types = src.join("types.ts");
+        std::fs::write(&types, "export type State='old';").unwrap();
+        std::fs::write(
+            src.join("App.ts"),
+            "import {State} from './types'; declare const state:State; t(`state.${state}`);",
+        )
+        .unwrap();
+        let mut config = make_test_config(vec![format!("{}/*.ts", src.display())], vec![]);
+        config.output = tmp.path().join("locales").display().to_string();
+        let mut watcher = FileWatcher::new(config, None);
+        watcher.full_extract().unwrap();
+        assert!(watcher.requires_project_scan);
+        std::fs::write(&types, "export type State='new';").unwrap();
+        watcher
+            .handle_events(Ok(vec![DebouncedEvent {
+                path: types,
+                kind: DebouncedEventKind::Any,
+            }]))
+            .unwrap();
+        let locale = tmp.path().join("locales/en/translation.json");
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(locale).unwrap()).unwrap();
+        assert_eq!(value["state"]["new"], "");
+        assert!(value["state"]["old"].is_null());
     }
 }

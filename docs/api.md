@@ -34,6 +34,7 @@
 - `lib/index.js` prefers the native addon when available.
 - If the native addon is unavailable, it falls back to the CLI wrapper.
 - Both paths return the same structured result shape for `extract`, `lint`, and `check`.
+- Result fields and documented options use `snake_case` on both paths, including nested issue/dead-key fields. `extract.message` is `null` when no message is present.
 - `watch` is intentionally long-running and does not return a summary object.
 
 ## Locale Format Coverage

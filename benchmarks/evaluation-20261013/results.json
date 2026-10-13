@@ -1,0 +1,608 @@
+{
+  "date": "2026-10-13",
+  "run_id": "1791865091230449000",
+  "status": "completed",
+  "selected_phase": "all",
+  "completed_at": "2026-10-13T13:19:04+0900",
+  "environment": {
+    "node": "v24.2.0",
+    "system": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M4",
+    "cli_commit": "540b3beac7737ce066af47875be7f1dd360bd12c",
+    "turbo_commit": "3d610372a05f2041279ee9515139c7c203b6ce38",
+    "cli_entry_sha256": "3b46004dc97c6eb1359f4a38936b05f950cd17f14e4bc55a01a65ae08a076688",
+    "turbo_binary_sha256": "6daaca8b556e855df37712ab0515d995c42db0c03b969e1b789a0c2817bf7f09"
+  },
+  "timed_runs": 7,
+  "warmups_per_tool": 1,
+  "watch_runs": 5,
+  "cache": "warm OS filesystem cache",
+  "wrapper_binary": "same target/release/i18next-turbo via I18NEXT_TURBO_BINARY",
+  "cases": {
+    "static-12": {
+      "key_value_counts": {
+        "cli": 366,
+        "turbo": 366,
+        "turbo-wrapper": 366
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "source_files": 13,
+      "source_sha256": {
+        "cli": "317e902d57b18e7545be9c2ddb7e671c188ef85b3fc7e2065a1fe3bd3f0b5d20",
+        "turbo": "317e902d57b18e7545be9c2ddb7e671c188ef85b3fc7e2065a1fe3bd3f0b5d20",
+        "turbo-wrapper": "317e902d57b18e7545be9c2ddb7e671c188ef85b3fc7e2065a1fe3bd3f0b5d20"
+      }
+    },
+    "feature-probes": {
+      "key_value_counts": {
+        "cli": 106,
+        "turbo": 106,
+        "turbo-wrapper": 106
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "oracle_equal": null,
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "source_files": 9,
+      "source_sha256": {
+        "cli": "47623192419b95addb079846860b5eb66ba9df7f311649414f80c7916b380f00",
+        "turbo": "47623192419b95addb079846860b5eb66ba9df7f311649414f80c7916b380f00",
+        "turbo-wrapper": "47623192419b95addb079846860b5eb66ba9df7f311649414f80c7916b380f00"
+      },
+      "same_input_config_seed_as_before_fix": true
+    },
+    "preservation-probe": {
+      "key_value_counts": {
+        "cli": 36,
+        "turbo": 36,
+        "turbo-wrapper": 36
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "source_files": 2,
+      "source_sha256": {
+        "cli": "6b79c41ef28590a2f73b685386b4fc47b40388d3821cdab6974dddb26b1d991c",
+        "turbo": "6b79c41ef28590a2f73b685386b4fc47b40388d3821cdab6974dddb26b1d991c",
+        "turbo-wrapper": "6b79c41ef28590a2f73b685386b4fc47b40388d3821cdab6974dddb26b1d991c"
+      }
+    },
+    "static-300": {
+      "key_value_counts": {
+        "cli": 7956,
+        "turbo": 7956,
+        "turbo-wrapper": 7956
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "timings": {
+        "cli": {
+          "first_sync": {
+            "samples_ms": [
+              597.3697080044076,
+              650.8466670056805,
+              542.6164579985198,
+              514.844457997242,
+              493.29237500205636,
+              506.9134580262471,
+              524.947500001872
+            ],
+            "median_ms": 524.947500001872,
+            "mean_ms": 547.2615177194322,
+            "min_ms": 493.29237500205636,
+            "max_ms": 650.8466670056805
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              599.0127910044976,
+              473.4043749922421,
+              450.9620419994462,
+              447.8488749882672,
+              452.0570000167936,
+              450.11570799397305,
+              468.04183299536817
+            ],
+            "median_ms": 452.0570000167936,
+            "mean_ms": 477.3489462843697,
+            "min_ms": 447.8488749882672,
+            "max_ms": 599.0127910044976
+          }
+        },
+        "turbo": {
+          "first_sync": {
+            "samples_ms": [
+              37.318124988814816,
+              36.301541986176744,
+              36.525625007925555,
+              35.45512500568293,
+              37.83533300156705,
+              46.289749996503815,
+              48.44654200132936
+            ],
+            "median_ms": 37.318124988814816,
+            "mean_ms": 39.73886314114289,
+            "min_ms": 35.45512500568293,
+            "max_ms": 48.44654200132936
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              42.613541008904576,
+              28.80020800512284,
+              29.865959018934518,
+              29.497499985154718,
+              28.660499985562637,
+              28.96562498062849,
+              43.20545800146647
+            ],
+            "median_ms": 29.497499985154718,
+            "mean_ms": 33.086970140824896,
+            "min_ms": 28.660499985562637,
+            "max_ms": 43.20545800146647
+          }
+        },
+        "turbo-wrapper": {
+          "first_sync": {
+            "samples_ms": [
+              65.91425000806339,
+              89.79187498334795,
+              89.71616701455787,
+              66.88329202006571,
+              63.94762502168305,
+              63.42533399583772,
+              131.61433400819078
+            ],
+            "median_ms": 66.88329202006571,
+            "mean_ms": 81.6132681502495,
+            "min_ms": 63.42533399583772,
+            "max_ms": 131.61433400819078
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              59.18537502293475,
+              57.38941699382849,
+              62.37995901028626,
+              58.40004197671078,
+              58.619042014470324,
+              61.71812498359941,
+              69.11825001589023
+            ],
+            "median_ms": 59.18537502293475,
+            "mean_ms": 60.972887145388604,
+            "min_ms": 57.38941699382849,
+            "max_ms": 69.11825001589023
+          }
+        }
+      },
+      "source_files": 301,
+      "source_sha256": {
+        "cli": "2f07aa42853cc115f8da096c12b568eacdccd07d4434bf4ab936af4f1d375916",
+        "turbo": "2f07aa42853cc115f8da096c12b568eacdccd07d4434bf4ab936af4f1d375916",
+        "turbo-wrapper": "2f07aa42853cc115f8da096c12b568eacdccd07d4434bf4ab936af4f1d375916"
+      },
+      "same_input_config_seed_as_before_fix": true,
+      "saved_comparison_phase": "repeat_extract"
+    },
+    "static-1200": {
+      "key_value_counts": {
+        "cli": 31716,
+        "turbo": 31716,
+        "turbo-wrapper": 31716
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "timings": {
+        "cli": {
+          "first_sync": {
+            "samples_ms": [
+              1345.2060829731636,
+              1331.1562089947984,
+              1298.6064580036327,
+              1310.2038340002764,
+              1242.0065409969538,
+              1228.3480409823824,
+              1464.0386249811854
+            ],
+            "median_ms": 1310.2038340002764,
+            "mean_ms": 1317.0808272760562,
+            "min_ms": 1228.3480409823824,
+            "max_ms": 1464.0386249811854
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              1131.5583329997025,
+              1125.8030839962885,
+              1148.7891249998938,
+              1100.2795409876853,
+              1120.8552919852082,
+              1347.4825829907786,
+              1144.3276249920018
+            ],
+            "median_ms": 1131.5583329997025,
+            "mean_ms": 1159.8707975645084,
+            "min_ms": 1100.2795409876853,
+            "max_ms": 1347.4825829907786
+          }
+        },
+        "turbo": {
+          "first_sync": {
+            "samples_ms": [
+              110.46212498331442,
+              111.32491700118408,
+              108.38837499613874,
+              112.2044580115471,
+              108.94249999546446,
+              126.08458299655467,
+              113.64883300848305
+            ],
+            "median_ms": 111.32491700118408,
+            "mean_ms": 113.00797014181236,
+            "min_ms": 108.38837499613874,
+            "max_ms": 126.08458299655467
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              93.11158300261013,
+              89.47395801078528,
+              98.34425000008196,
+              89.16870798566379,
+              90.4693330230657,
+              97.31837501749396,
+              94.78595899417996
+            ],
+            "median_ms": 93.11158300261013,
+            "mean_ms": 93.23888086198296,
+            "min_ms": 89.16870798566379,
+            "max_ms": 98.34425000008196
+          }
+        },
+        "turbo-wrapper": {
+          "first_sync": {
+            "samples_ms": [
+              143.90129101229832,
+              142.93954099412076,
+              141.4080000249669,
+              137.18508300371468,
+              136.12287500291131,
+              136.02970898500644,
+              138.63229201524518
+            ],
+            "median_ms": 138.63229201524518,
+            "mean_ms": 139.45982729118052,
+            "min_ms": 136.02970898500644,
+            "max_ms": 143.90129101229832
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              125.24558301083744,
+              119.67070901300758,
+              121.95712502580136,
+              127.05304200062528,
+              117.29212498175912,
+              122.77545800316148,
+              119.73999999463558
+            ],
+            "median_ms": 121.95712502580136,
+            "mean_ms": 121.96200600426111,
+            "min_ms": 117.29212498175912,
+            "max_ms": 127.05304200062528
+          }
+        }
+      },
+      "source_files": 1201,
+      "source_sha256": {
+        "cli": "5d1c2ab04dec0079c25d71d0d34c746b4eb9e4c795a6a3912d47c1f68f4e7b8e",
+        "turbo": "5d1c2ab04dec0079c25d71d0d34c746b4eb9e4c795a6a3912d47c1f68f4e7b8e",
+        "turbo-wrapper": "5d1c2ab04dec0079c25d71d0d34c746b4eb9e4c795a6a3912d47c1f68f4e7b8e"
+      },
+      "same_input_config_seed_as_before_fix": true,
+      "saved_comparison_phase": "repeat_extract"
+    },
+    "mixed-308": {
+      "key_value_counts": {
+        "cli": 8023,
+        "turbo": 8023,
+        "turbo-wrapper": 8023
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "oracle_equal": null,
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "timings": {
+        "cli": {
+          "first_sync": {
+            "samples_ms": [
+              531.4643750025425,
+              729.0467499988154,
+              559.5832909748424,
+              514.3920840055216,
+              507.87183301872574,
+              504.1516670025885,
+              508.36141701438464
+            ],
+            "median_ms": 514.3920840055216,
+            "mean_ms": 550.6959167167744,
+            "min_ms": 504.1516670025885,
+            "max_ms": 729.0467499988154
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              483.10287500498816,
+              493.18925000261515,
+              467.74758299579844,
+              460.29020799323916,
+              489.9817080004141,
+              466.29579199361615,
+              465.0452089845203
+            ],
+            "median_ms": 467.74758299579844,
+            "mean_ms": 475.09323213931305,
+            "min_ms": 460.29020799323916,
+            "max_ms": 493.18925000261515
+          }
+        },
+        "turbo": {
+          "first_sync": {
+            "samples_ms": [
+              35.9940420021303,
+              35.97616701154038,
+              36.92758301622234,
+              35.39687499869615,
+              36.40516599989496,
+              42.19491602270864,
+              40.75866600032896
+            ],
+            "median_ms": 36.40516599989496,
+            "mean_ms": 37.66477357878882,
+            "min_ms": 35.39687499869615,
+            "max_ms": 42.19491602270864
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              30.93933398486115,
+              29.75479100132361,
+              29.910749988630414,
+              29.897708009229973,
+              28.711541992379352,
+              30.278499994892627,
+              28.32495901384391
+            ],
+            "median_ms": 29.897708009229973,
+            "mean_ms": 29.688226283594435,
+            "min_ms": 28.32495901384391,
+            "max_ms": 30.93933398486115
+          }
+        },
+        "turbo-wrapper": {
+          "first_sync": {
+            "samples_ms": [
+              65.7212499936577,
+              66.94979200256057,
+              73.5293330217246,
+              72.35837500775233,
+              64.10474999574944,
+              65.72937499731779,
+              64.34620800428092
+            ],
+            "median_ms": 65.72937499731779,
+            "mean_ms": 67.53415471757762,
+            "min_ms": 64.10474999574944,
+            "max_ms": 73.5293330217246
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              58.24670800939202,
+              60.65874997875653,
+              82.25512501667254,
+              60.91724999714643,
+              59.49466701713391,
+              61.43395899562165,
+              57.947416993556544
+            ],
+            "median_ms": 60.65874997875653,
+            "mean_ms": 62.99341085832566,
+            "min_ms": 57.947416993556544,
+            "max_ms": 82.25512501667254
+          }
+        }
+      },
+      "source_files": 309,
+      "source_sha256": {
+        "cli": "b661504425c4f3a97a02465c8ed8dd0aa292f7cfd86e899e78ad9bf807d7c4bd",
+        "turbo": "b661504425c4f3a97a02465c8ed8dd0aa292f7cfd86e899e78ad9bf807d7c4bd",
+        "turbo-wrapper": "b661504425c4f3a97a02465c8ed8dd0aa292f7cfd86e899e78ad9bf807d7c4bd"
+      },
+      "same_input_config_seed_as_before_fix": true,
+      "saved_comparison_phase": "repeat_extract"
+    },
+    "watch-1200": {
+      "key_value_counts": {
+        "cli": 31734,
+        "turbo": 31734
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true
+      },
+      "timings": {
+        "cli": {
+          "samples_ms": [
+            890.1078749913722,
+            859.0776250057388,
+            856.7813750123605,
+            846.9086670083925,
+            839.9934170010965
+          ],
+          "median_ms": 856.7813750123605,
+          "mean_ms": 858.5737918037921,
+          "min_ms": 839.9934170010965,
+          "max_ms": 890.1078749913722
+        },
+        "turbo": {
+          "samples_ms": [
+            331.6915000032168,
+            326.5527499897871,
+            314.41220801207237,
+            321.5945419797208,
+            316.8647919956129
+          ],
+          "median_ms": 321.5945419797208,
+          "mean_ms": 322.223158396082,
+          "min_ms": 314.41220801207237,
+          "max_ms": 331.6915000032168
+        }
+      }
+    }
+  },
+  "method_notes": [
+    "Synthetic fixtures; application code is parsed, never executed.",
+    "Process startup, parsing, synchronization and exit included; install/build/npx excluded.",
+    "Tool order rotates; first_sync restores seed and repeat_extract uses already-synced catalogs.",
+    "Logical locale/namespace/leaf/value comparisons at each measurement-group end; saved timed-case comparison is the last group.",
+    "Watch measures append until all three locales contain key, including 300ms debounce and 5ms poll."
+  ],
+  "before_fix_differences": {
+    "feature-probes": {
+      "missing": 28,
+      "extra": 12,
+      "changed_values": 7
+    },
+    "mixed-308": {
+      "missing": 31,
+      "extra": 12,
+      "changed_values": 7
+    }
+  }
+}

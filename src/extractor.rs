@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::config::{PluralConfig, UseTranslationName};
+use crate::finite_values::{FiniteIndex, FiniteResolver};
 use anyhow::{Context, Result};
 use glob::Pattern;
 use serde_json::{json, Value as JsonValue};
@@ -555,6 +556,8 @@ use swc_ecma_visit::{Visit, VisitWith};
 /// Extracted translation key with metadata
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExtractedKey {
+    /// None for literal keys; generated plural keys carry their target locales.
+    pub locales: Option<Vec<String>>,
     pub key: String,
     pub namespace: Option<String>,
     pub default_value: Option<String>,
@@ -570,6 +573,8 @@ pub struct ExtractionError {
 /// Result of extraction from multiple files
 #[derive(Debug, Default)]
 pub struct ExtractionResult {
+    /// Relative source dependencies require reanalysis when a watched declaration changes.
+    pub requires_project_scan: bool,
     pub files: Vec<(String, Vec<ExtractedKey>)>,
     pub warning_count: usize,
     pub errors: Vec<ExtractionError>,
@@ -594,6 +599,12 @@ struct ContextInfo {
 pub struct TranslationVisitor {
     /// Set of function names to look for (e.g., "t", "i18n.t")
     functions: HashSet<String>,
+    configured_functions: HashSet<String>,
+    finite_resolver: Option<FiniteResolver>,
+    const_declaration: bool,
+    record_comment_scopes: bool,
+    comment_scopes: Vec<(Span, Option<ScopeInfo>)>,
+    active_comment_scope: Option<Option<ScopeInfo>>,
     /// Trans component names to look for
     trans_components: HashSet<String>,
     /// HTML tags that should remain as literal tags in Trans defaults/children extraction.
@@ -621,6 +632,8 @@ pub struct TranslationVisitor {
     plural_separator: String,
     /// Plural suffixes to generate (e.g., ["one", "other"])
     plural_suffixes: Vec<String>,
+    ordinal_plural_suffixes: Vec<String>,
+    locale_plural_suffixes: Vec<(String, Vec<String>, Vec<String>)>,
     /// Whether to generate base key alongside plural keys
     generate_base_plural: bool,
     /// Prefix/suffix settings for nested translation extraction.
@@ -650,7 +663,13 @@ impl TranslationVisitor {
         let disabled_lines = Self::parse_disabled_lines(&comments);
 
         Self {
+            configured_functions: functions.iter().cloned().collect(),
             functions: functions.into_iter().collect(),
+            finite_resolver: None,
+            const_declaration: false,
+            record_comment_scopes: false,
+            comment_scopes: Vec::new(),
+            active_comment_scope: None,
             trans_components: trans_components.into_iter().collect(),
             trans_keep_basic_html_nodes_for: trans_keep_basic_html_nodes_for.into_iter().collect(),
             keys: Vec::new(),
@@ -664,6 +683,8 @@ impl TranslationVisitor {
             context_separator: plural_config.context_separator,
             plural_separator: plural_config.separator,
             plural_suffixes: plural_config.suffixes,
+            ordinal_plural_suffixes: plural_config.ordinal_suffixes,
+            locale_plural_suffixes: plural_config.locale_suffixes,
             generate_base_plural: plural_config.generate_base,
             nesting_prefix,
             nesting_suffix,
@@ -712,7 +733,10 @@ impl TranslationVisitor {
         match callee {
             Callee::Expr(expr) => match expr.as_ref() {
                 // Simple function call: t('key')
-                Expr::Ident(ident) => self.functions.contains(ident.sym.as_ref()),
+                Expr::Ident(ident) => {
+                    self.functions.contains(ident.sym.as_ref())
+                        || self.scope_bindings.contains_key(ident.sym.as_ref())
+                }
                 // Member expression: i18n.t('key')
                 Expr::Member(member) => {
                     if let MemberProp::Ident(prop) = &member.prop {
@@ -730,18 +754,36 @@ impl TranslationVisitor {
     }
 
     /// Extract string literal or template literal from the first argument
-    fn extract_key_from_args(&mut self, call: &CallExpr) -> Option<String> {
-        call.args.first().and_then(|arg| {
-            match arg.expr.as_ref() {
-                // String literal: t('key')
-                Expr::Lit(Lit::Str(s)) => s.value.as_str().map(|s| s.to_string()),
-                // Template literal: t(`key`)
-                Expr::Tpl(tpl) => self.extract_simple_template_literal(tpl, call.span),
-                // Selector API: t($ => $.user.profile)
-                Expr::Arrow(arrow) => self.extract_selector_key(arrow),
-                _ => None,
+    fn extract_keys_from_args(&mut self, call: &CallExpr) -> Vec<String> {
+        let Some(arg) = call.args.first() else {
+            return Vec::new();
+        };
+        let literal = match arg.expr.as_ref() {
+            // String literal: t('key')
+            Expr::Lit(Lit::Str(s)) => s.value.as_str().map(|s| s.to_string()),
+            // Template literal: t(`key`)
+            Expr::Tpl(tpl) if tpl.exprs.is_empty() => {
+                self.extract_simple_template_literal(tpl, call.span)
             }
-        })
+            // Selector API: t($ => $.user.profile)
+            Expr::Arrow(arrow) => self.extract_selector_key(arrow),
+            _ => None,
+        };
+        if let Some(key) = literal {
+            return vec![key];
+        }
+        if let Some(values) = self
+            .finite_resolver
+            .as_ref()
+            .and_then(|resolver| resolver.expression(&arg.expr))
+            .and_then(|values| values.strings())
+        {
+            return values;
+        }
+        self.warning_count += 1;
+        let loc = self.source_map.lookup_char_pos(call.span.lo);
+        eprintln!("Warning: Unresolved finite translation key at {}:{}:{} (unsupported, cyclic, outside input, or expansion limit). Extraction skipped.", self.file_path.as_deref().unwrap_or("<unknown>"), loc.line, loc.col_display + 1);
+        Vec::new()
     }
 
     fn extract_selector_key(&self, arrow: &swc_ecma_ast::ArrowExpr) -> Option<String> {
@@ -903,7 +945,7 @@ impl TranslationVisitor {
     ) -> Vec<ExtractedKey> {
         // For single-category languages (only "other"), use base key without suffix
         let is_single_category =
-            self.plural_suffixes.len() == 1 && self.plural_suffixes[0] == "other";
+            !ordinal && self.plural_suffixes.len() == 1 && self.plural_suffixes[0] == "other";
 
         if is_single_category {
             let key = match context {
@@ -911,6 +953,7 @@ impl TranslationVisitor {
                 None => base_key.to_string(),
             };
             return vec![ExtractedKey {
+                locales: None,
                 key,
                 namespace,
                 default_value,
@@ -926,6 +969,7 @@ impl TranslationVisitor {
                 None => base_key.to_string(),
             };
             keys.push(ExtractedKey {
+                locales: None,
                 key: base,
                 namespace: namespace.clone(),
                 default_value: default_value.clone(),
@@ -933,11 +977,29 @@ impl TranslationVisitor {
         }
 
         // Generate plural keys with suffixes
-        keys.extend(self.plural_suffixes.iter().map(|suffix| {
-            let suffix = if ordinal {
-                format!("ordinal_{}", suffix)
+        let suffixes = if ordinal {
+            &self.ordinal_plural_suffixes
+        } else {
+            &self.plural_suffixes
+        };
+        keys.extend(suffixes.iter().map(|category| {
+            let locales = if self.locale_plural_suffixes.is_empty() {
+                None
             } else {
-                suffix.clone()
+                Some(
+                    self.locale_plural_suffixes
+                        .iter()
+                        .filter_map(|(locale, cardinal, ordinals)| {
+                            let categories = if ordinal { ordinals } else { cardinal };
+                            categories.contains(category).then(|| locale.clone())
+                        })
+                        .collect(),
+                )
+            };
+            let suffix = if ordinal {
+                format!("ordinal_{}", category)
+            } else {
+                category.clone()
             };
             let key = match context {
                 Some(ctx) => format!(
@@ -947,6 +1009,7 @@ impl TranslationVisitor {
                 None => format!("{}{}{}", base_key, self.plural_separator, suffix),
             };
             ExtractedKey {
+                locales,
                 key,
                 namespace: namespace.clone(),
                 default_value: default_value.clone(),
@@ -997,13 +1060,15 @@ impl TranslationVisitor {
     }
 
     fn options_object<'a>(&self, call: &'a CallExpr) -> Option<&'a ObjectLit> {
-        if call.args.len() < 2 {
-            return None;
-        }
-        if let Expr::Object(obj) = call.args[1].expr.as_ref() {
-            Some(obj)
+        let second = call.args.get(1)?;
+        let argument = if matches!(second.expr.as_ref(), Expr::Lit(Lit::Str(_))) {
+            call.args.get(2)?
         } else {
-            None
+            second
+        };
+        match argument.expr.as_ref() {
+            Expr::Object(object) => Some(object),
+            _ => None,
         }
     }
 
@@ -1047,6 +1112,11 @@ impl TranslationVisitor {
 
     /// Get defaultValue option from t() call
     fn get_default_value_option(&self, call: &CallExpr) -> Option<String> {
+        if let Some(arg) = call.args.get(1) {
+            if let Expr::Lit(Lit::Str(value)) = arg.expr.as_ref() {
+                return value.value.as_str().map(str::to_string);
+            }
+        }
         self.get_option_value(call, "defaultValue")
     }
 
@@ -1064,16 +1134,9 @@ impl TranslationVisitor {
         self.find_bool_prop(obj, "ordinal").unwrap_or(false)
     }
 
-    /// Get a string option value from the second argument object
+    /// Get a string option from either supported overload's options object.
     fn get_option_value(&self, call: &CallExpr, key: &str) -> Option<String> {
-        if call.args.len() < 2 {
-            return None;
-        }
-
-        if let Expr::Object(obj) = call.args[1].expr.as_ref() {
-            return self.find_string_prop(obj, key);
-        }
-        None
+        self.find_string_prop(self.options_object(call)?, key)
     }
 
     /// Find a string property in an object literal
@@ -1189,12 +1252,14 @@ impl TranslationVisitor {
                 ));
             } else if let Some(ctx) = options.context {
                 keys.push(ExtractedKey {
+                    locales: None,
                     key: format!("{}{}{}", base_key, self.context_separator, ctx),
                     namespace,
                     default_value: None,
                 });
             } else {
                 keys.push(ExtractedKey {
+                    locales: None,
                     key: base_key,
                     namespace,
                     default_value: None,
@@ -1651,7 +1716,7 @@ impl TranslationVisitor {
     /// Extract keys from comments (e.g., // t('key') or /* t('key', 'default') */)
     pub fn extract_from_comments(&mut self) {
         // Collect all comment texts first to avoid borrow issues
-        let comment_texts: Vec<String> = if let Some(comments) = &self.comments {
+        let comment_texts: Vec<_> = if let Some(comments) = &self.comments {
             let (leading, trailing) = comments.borrow_all();
 
             let mut texts = Vec::new();
@@ -1659,14 +1724,14 @@ impl TranslationVisitor {
             // Collect leading comments
             for comment_list in leading.values() {
                 for comment in comment_list {
-                    texts.push(comment.text.to_string());
+                    texts.push(comment.clone());
                 }
             }
 
             // Collect trailing comments
             for comment_list in trailing.values() {
                 for comment in comment_list {
-                    texts.push(comment.text.to_string());
+                    texts.push(comment.clone());
                 }
             }
 
@@ -1676,9 +1741,16 @@ impl TranslationVisitor {
         };
 
         // Now process the collected texts
-        for text in &comment_texts {
-            self.extract_keys_from_comment_text(text);
+        for comment in &comment_texts {
+            self.active_comment_scope = self
+                .comment_scopes
+                .iter()
+                .filter(|(span, _)| span.lo <= comment.span.lo && span.hi >= comment.span.hi)
+                .min_by_key(|(span, _)| span.hi.0 - span.lo.0)
+                .map(|(_, scope)| scope.clone());
+            self.extract_keys_from_comment_text(comment.text.as_ref());
         }
+        self.active_comment_scope = None;
     }
 
     /// Extract translation keys from a comment string
@@ -1709,6 +1781,7 @@ impl TranslationVisitor {
                     .any(|k| k.key == base_key && k.namespace == namespace)
                 {
                     self.keys.push(ExtractedKey {
+                        locales: None,
                         key: base_key,
                         namespace,
                         default_value: None,
@@ -1730,6 +1803,7 @@ impl TranslationVisitor {
                     .any(|k| k.key == base_key && k.namespace == namespace)
                 {
                     self.keys.push(ExtractedKey {
+                        locales: None,
                         key: base_key,
                         namespace,
                         default_value: Some(default_value),
@@ -1766,17 +1840,54 @@ impl TranslationVisitor {
 
             if let Some(ctx) = context {
                 self.keys.push(ExtractedKey {
+                    locales: None,
                     key: format!("{}{}{}", base_key, self.context_separator, ctx),
                     namespace,
                     default_value,
                 });
             } else {
                 self.keys.push(ExtractedKey {
+                    locales: None,
                     key: base_key,
                     namespace,
                     default_value,
                 });
             }
+        }
+    }
+
+    fn shadow_parameter(&mut self, pattern: &Pat) {
+        match pattern {
+            Pat::Ident(binding) => {
+                self.scope_bindings.remove(binding.id.sym.as_ref());
+                if !self.configured_functions.contains(binding.id.sym.as_ref()) {
+                    self.functions.remove(binding.id.sym.as_ref());
+                }
+                if let Some(resolver) = &mut self.finite_resolver {
+                    resolver.capture(binding, None);
+                }
+            }
+            Pat::Assign(assignment) => self.shadow_parameter(&assignment.left),
+            Pat::Rest(rest) => self.shadow_parameter(&rest.arg),
+            Pat::Array(array) => {
+                for element in array.elems.iter().flatten() {
+                    self.shadow_parameter(element);
+                }
+            }
+            Pat::Object(object) => {
+                for property in &object.props {
+                    match property {
+                        swc_ecma_ast::ObjectPatProp::KeyValue(value) => {
+                            self.shadow_parameter(&value.value)
+                        }
+                        swc_ecma_ast::ObjectPatProp::Assign(value) => {
+                            self.shadow_parameter(&Pat::Ident(value.key.clone()))
+                        }
+                        swc_ecma_ast::ObjectPatProp::Rest(rest) => self.shadow_parameter(&rest.arg),
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1797,7 +1908,11 @@ impl TranslationVisitor {
         let mut namespace = namespace_override.or(ns_from_key);
         let mut final_key = base_key;
 
-        if let Some(scope) = self.inferred_comment_scope() {
+        if let Some(scope) = self
+            .active_comment_scope
+            .clone()
+            .unwrap_or_else(|| self.inferred_comment_scope())
+        {
             if namespace.is_none() {
                 namespace = scope.namespace;
             }
@@ -1811,7 +1926,100 @@ impl TranslationVisitor {
 }
 
 impl Visit for TranslationVisitor {
+    fn visit_var_decl(&mut self, declaration: &swc_ecma_ast::VarDecl) {
+        let previous = self.const_declaration;
+        self.const_declaration = declaration.kind == swc_ecma_ast::VarDeclKind::Const;
+        declaration.visit_children_with(self);
+        self.const_declaration = previous;
+    }
+    fn visit_arrow_expr(&mut self, arrow: &swc_ecma_ast::ArrowExpr) {
+        let bindings = self.scope_bindings.clone();
+        let functions = self.functions.clone();
+        let resolver = self.finite_resolver.clone();
+        for param in &arrow.params {
+            self.shadow_parameter(param);
+        }
+        arrow.visit_children_with(self);
+        self.scope_bindings = bindings;
+        self.functions = functions;
+        self.finite_resolver = resolver;
+    }
+
+    fn visit_block_stmt(&mut self, block: &swc_ecma_ast::BlockStmt) {
+        let bindings = self.scope_bindings.clone();
+        let functions = self.functions.clone();
+        let resolver = self.finite_resolver.clone();
+        block.visit_children_with(self);
+        if self.record_comment_scopes {
+            self.comment_scopes
+                .push((block.span, self.inferred_comment_scope()));
+        }
+        self.scope_bindings = bindings;
+        self.functions = functions;
+        self.finite_resolver = resolver;
+    }
+
+    fn visit_function(&mut self, function: &swc_ecma_ast::Function) {
+        let bindings = self.scope_bindings.clone();
+        let functions = self.functions.clone();
+        let resolver = self.finite_resolver.clone();
+        for param in &function.params {
+            self.shadow_parameter(&param.pat);
+        }
+        function.visit_children_with(self);
+        self.scope_bindings = bindings;
+        self.functions = functions;
+        self.finite_resolver = resolver;
+    }
+
+    fn visit_ts_type_alias_decl(&mut self, alias: &swc_ecma_ast::TsTypeAliasDecl) {
+        if let Some(resolver) = &mut self.finite_resolver {
+            resolver.capture_type(alias);
+        }
+    }
+
+    fn visit_for_of_stmt(&mut self, statement: &swc_ecma_ast::ForOfStmt) {
+        let resolver = self.finite_resolver.clone();
+        let bindings = self.scope_bindings.clone();
+        let functions = self.functions.clone();
+        let values = self
+            .finite_resolver
+            .as_ref()
+            .and_then(|resolver| resolver.expression(&statement.right))
+            .and_then(|value| value.iteration_values());
+        statement.right.visit_with(self);
+        statement.left.visit_with(self);
+        let pattern = match &statement.left {
+            swc_ecma_ast::ForHead::VarDecl(var) if var.decls.len() == 1 => Some(&var.decls[0].name),
+            swc_ecma_ast::ForHead::Pat(pat) => Some(pat.as_ref()),
+            _ => None,
+        };
+        if let (Some(Pat::Ident(binding)), Some(resolver)) = (pattern, &mut self.finite_resolver) {
+            resolver.bindings.insert(binding.id.sym.to_string(), values);
+        }
+        statement.body.visit_with(self);
+        self.finite_resolver = resolver;
+        self.scope_bindings = bindings;
+        self.functions = functions;
+    }
+
     fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Pat::Ident(binding) = &decl.name {
+            self.scope_bindings.remove(binding.id.sym.as_ref());
+            if !self.configured_functions.contains(binding.id.sym.as_ref()) {
+                self.functions.remove(binding.id.sym.as_ref());
+            }
+            if let Some(resolver) = &mut self.finite_resolver {
+                resolver.capture(
+                    binding,
+                    if self.const_declaration {
+                        decl.init.as_deref()
+                    } else {
+                        None
+                    },
+                );
+            }
+        }
         // Check for useTranslation() or getFixedT() calls
         if let Some(init) = &decl.init {
             if let Expr::Call(call) = init.as_ref() {
@@ -1862,7 +2070,7 @@ impl Visit for TranslationVisitor {
                 None,
                 None,
             );
-            if let Some(key) = self.extract_key_from_args(call) {
+            for key in self.extract_keys_from_args(call) {
                 // Check if the callee is bound to a scope
                 let (namespace_from_scope, base_key) = if let Some(name) = &callee_name {
                     self.apply_scope_to_key(&key, name)
@@ -1878,15 +2086,9 @@ impl Visit for TranslationVisitor {
                 );
 
                 // Check for count option (plurals)
-                let has_count = if call.args.len() >= 2 {
-                    if let Expr::Object(obj) = call.args[1].expr.as_ref() {
-                        self.has_prop(obj, "count")
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                let has_count = self
+                    .options_object(call)
+                    .is_some_and(|obj| self.has_prop(obj, "count"));
 
                 // Check for context option
                 let context_info = self.get_context_info(call);
@@ -1910,9 +2112,10 @@ impl Visit for TranslationVisitor {
 
                 if has_return_objects {
                     self.keys.push(ExtractedKey {
+                        locales: None,
                         key: format!("{}.*", base_key),
                         namespace: namespace_from_scope,
-                        default_value: None,
+                        default_value,
                     });
                 } else if has_count {
                     // Generate plural keys based on configuration
@@ -1929,6 +2132,7 @@ impl Visit for TranslationVisitor {
                             self.warn_unresolved_dynamic_context(call.span);
                         }
                         self.keys.push(ExtractedKey {
+                            locales: None,
                             key: base_key,
                             namespace: namespace_from_scope,
                             default_value,
@@ -1936,13 +2140,15 @@ impl Visit for TranslationVisitor {
                     } else {
                         for ctx in &info.values {
                             self.keys.push(ExtractedKey {
+                                locales: None,
                                 key: format!("{}{}{}", base_key, self.context_separator, ctx),
                                 namespace: namespace_from_scope.clone(),
-                                default_value: default_value.clone(),
+                                default_value: default_value.clone().or_else(|| Some(key.clone())),
                             });
                         }
                         if info.is_dynamic {
                             self.keys.push(ExtractedKey {
+                                locales: None,
                                 key: base_key,
                                 namespace: namespace_from_scope,
                                 default_value,
@@ -1952,6 +2158,7 @@ impl Visit for TranslationVisitor {
                 } else {
                     // Regular key
                     self.keys.push(ExtractedKey {
+                        locales: None,
                         key: base_key,
                         namespace: namespace_from_scope,
                         default_value,
@@ -2050,6 +2257,7 @@ impl Visit for TranslationVisitor {
                             self.warn_unresolved_dynamic_context(elem.span);
                         }
                         self.keys.push(ExtractedKey {
+                            locales: None,
                             key: base_key,
                             namespace,
                             default_value,
@@ -2057,6 +2265,7 @@ impl Visit for TranslationVisitor {
                     } else {
                         for ctx in &info.values {
                             self.keys.push(ExtractedKey {
+                                locales: None,
                                 key: format!("{}{}{}", base_key, self.context_separator, ctx),
                                 namespace: namespace.clone(),
                                 default_value: default_value.clone(),
@@ -2064,6 +2273,7 @@ impl Visit for TranslationVisitor {
                         }
                         if info.is_dynamic {
                             self.keys.push(ExtractedKey {
+                                locales: None,
                                 key: base_key,
                                 namespace,
                                 default_value,
@@ -2073,6 +2283,7 @@ impl Visit for TranslationVisitor {
                 } else {
                     // No modifiers: base key
                     self.keys.push(ExtractedKey {
+                        locales: None,
                         key: base_key,
                         namespace,
                         default_value,
@@ -2094,6 +2305,7 @@ enum ExtractorStrategy {
 }
 
 struct StrategyContext<'a> {
+    finite_index: Option<Arc<FiniteIndex>>,
     functions: &'a [String],
     trans_components: &'a [String],
     trans_keep_basic_html_nodes_for: &'a [String],
@@ -2122,6 +2334,7 @@ impl<'a> StrategyContext<'a> {
         interpolation_suffix: &'a str,
     ) -> Self {
         Self {
+            finite_index: None,
             functions,
             trans_components,
             trans_keep_basic_html_nodes_for,
@@ -2182,6 +2395,7 @@ impl ExtractorStrategy {
                 ctx.nesting_options_separator,
                 ctx.interpolation_prefix,
                 ctx.interpolation_suffix,
+                ctx.finite_index.as_ref(),
             ),
             ExtractorStrategy::Vue => extract_vue_component(path, source_code, ctx),
             ExtractorStrategy::Svelte => extract_svelte_component(path, source_code, ctx),
@@ -2214,6 +2428,7 @@ pub fn extract_from_file<P: AsRef<Path>>(
         ",",
         "{{",
         "}}",
+        None,
     )?;
     Ok(keys)
 }
@@ -2243,11 +2458,12 @@ pub fn extract_from_file_with_options<P: AsRef<Path>>(
         ",",
         "{{",
         "}}",
+        None,
     )?;
     Ok(keys)
 }
 
-fn extract_from_file_with_warnings<P: AsRef<Path>>(
+pub(crate) fn extract_from_file_with_warnings<P: AsRef<Path>>(
     path: P,
     functions: &[String],
     trans_components: &[String],
@@ -2260,12 +2476,20 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
     nesting_options_separator: &str,
     interpolation_prefix: &str,
     interpolation_suffix: &str,
+    finite_index: Option<&Arc<FiniteIndex>>,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
-    let source_code = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read file: {}", path.display()))?;
+    let source_code = match finite_index {
+        Some(index) => Cow::Borrowed(index.source(path).ok_or_else(|| {
+            anyhow::anyhow!("File is outside the extraction input: {}", path.display())
+        })?),
+        None => Cow::Owned(
+            std::fs::read_to_string(path)
+                .with_context(|| format!("Failed to read file: {}", path.display()))?,
+        ),
+    };
     let strategy = ExtractorStrategy::from_path(path);
-    let ctx = StrategyContext::new(
+    let mut ctx = StrategyContext::new(
         functions,
         trans_components,
         trans_keep_basic_html_nodes_for,
@@ -2278,6 +2502,7 @@ fn extract_from_file_with_warnings<P: AsRef<Path>>(
         interpolation_prefix,
         interpolation_suffix,
     );
+    ctx.finite_index = finite_index.cloned();
     strategy.extract(path, &source_code, &ctx)
 }
 
@@ -2309,6 +2534,7 @@ pub fn extract_from_source<P: AsRef<Path>>(
         ",",
         "{{",
         "}}",
+        None,
     )?;
     Ok(keys)
 }
@@ -2340,6 +2566,7 @@ pub fn extract_from_source_with_options<P: AsRef<Path>>(
         ",",
         "{{",
         "}}",
+        None,
     )?;
     Ok(keys)
 }
@@ -2358,6 +2585,7 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
     nesting_options_separator: &str,
     interpolation_prefix: &str,
     interpolation_suffix: &str,
+    finite_index: Option<&Arc<FiniteIndex>>,
 ) -> Result<(Vec<ExtractedKey>, usize)> {
     let path = path.as_ref();
     let cm: Lrc<SourceMap> = Default::default();
@@ -2408,9 +2636,19 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
                 loc.col_display + 1, // 1-based column for user display
                 error_msg
             );
-            return Ok((Vec::new(), 0));
+            return Ok((Vec::new(), 1));
         }
     };
+
+    let parse_errors = parser.take_errors();
+    if !parse_errors.is_empty() {
+        eprintln!(
+            "Warning: Parse errors in {}: {:?}",
+            path.display(),
+            parse_errors
+        );
+        return Ok((Vec::new(), parse_errors.len()));
+    }
 
     // Visit the AST and extract keys
     let mut visitor = TranslationVisitor::new(
@@ -2428,6 +2666,8 @@ fn extract_from_source_with_warnings<P: AsRef<Path>>(
         interpolation_suffix.to_string(),
     );
     visitor.file_path = Some(path.display().to_string());
+    visitor.finite_resolver = Some(FiniteResolver::new(path, &module, finite_index));
+    visitor.record_comment_scopes = should_extract_from_comments;
     module.visit_with(&mut visitor);
 
     // Also extract keys from comments (if enabled)
@@ -2463,6 +2703,7 @@ fn extract_vue_component(
             ctx.nesting_options_separator,
             ctx.interpolation_prefix,
             ctx.interpolation_suffix,
+            ctx.finite_index.as_ref(),
         )?;
         keys.append(&mut script_keys);
         warnings += block_warnings;
@@ -2499,6 +2740,7 @@ fn extract_vue_component(
                     ctx.nesting_options_separator,
                     ctx.interpolation_prefix,
                     ctx.interpolation_suffix,
+                    ctx.finite_index.as_ref(),
                 )?;
                 keys.append(&mut tpl_keys);
                 warnings += tpl_warnings;
@@ -2521,6 +2763,7 @@ fn extract_vue_component(
             ctx.nesting_options_separator,
             ctx.interpolation_prefix,
             ctx.interpolation_suffix,
+            ctx.finite_index.as_ref(),
         );
     }
 
@@ -2552,6 +2795,7 @@ fn extract_svelte_component(
             ctx.nesting_options_separator,
             ctx.interpolation_prefix,
             ctx.interpolation_suffix,
+            ctx.finite_index.as_ref(),
         )?;
         keys.append(&mut script_keys);
         warnings += block_warnings;
@@ -2566,7 +2810,7 @@ fn extract_svelte_component(
     for block in style_blocks {
         removal_ranges.push(block.range);
     }
-    removal_ranges.sort_by(|a, b| b.start.cmp(&a.start));
+    removal_ranges.sort_by_key(|range| std::cmp::Reverse(range.start));
     for range in removal_ranges {
         let len = range.end.saturating_sub(range.start);
         if len == 0 || range.end > trimmed_template.len() {
@@ -2594,6 +2838,7 @@ fn extract_svelte_component(
             ctx.nesting_options_separator,
             ctx.interpolation_prefix,
             ctx.interpolation_suffix,
+            ctx.finite_index.as_ref(),
         )?;
         keys.append(&mut tpl_keys);
         warnings += tpl_warnings;
@@ -2614,6 +2859,7 @@ fn extract_svelte_component(
             ctx.nesting_options_separator,
             ctx.interpolation_prefix,
             ctx.interpolation_suffix,
+            ctx.finite_index.as_ref(),
         );
     }
 
@@ -2637,7 +2883,7 @@ enum FileExtractionResult {
 ///
 /// This implementation uses streaming parallel processing:
 /// - Uses `par_bridge()` to stream file paths directly into worker threads
-/// - No upfront collection of all file paths (O(1) memory for paths)
+/// - Explicit input snapshot for bounded cross-file value resolution
 /// - Lock-free error collection (each thread returns Result enum)
 /// - Optimized for large monorepos (millions of files)
 pub fn extract_from_glob(
@@ -2684,7 +2930,6 @@ pub fn extract_from_glob_with_options(
     interpolation_prefix: &str,
     interpolation_suffix: &str,
 ) -> Result<ExtractionResult> {
-    use rayon::iter::ParallelBridge;
     use rayon::prelude::*;
 
     let expanded_patterns: Vec<String> = patterns
@@ -2701,8 +2946,7 @@ pub fn extract_from_glob_with_options(
     let interpolation_prefix = Arc::new(interpolation_prefix.to_string());
     let interpolation_suffix = Arc::new(interpolation_suffix.to_string());
 
-    // Create a streaming iterator that chains all glob patterns
-    // This avoids collecting all file paths into memory upfront
+    // Resolve relative imports only after the complete configured input is known.
     let pattern_refs: Vec<&str> = expanded_patterns.iter().map(|s| s.as_str()).collect();
 
     // Enum to represent either a valid path or an error during glob iteration
@@ -2712,9 +2956,7 @@ pub fn extract_from_glob_with_options(
         PatternError { pattern: String, message: String },
     }
 
-    // Process files using streaming parallel processing with par_bridge()
-    // Files are fed to worker threads as they are discovered by glob
-    let file_results: Vec<FileExtractionResult> = pattern_refs
+    let inputs: Vec<GlobItem> = pattern_refs
         .into_iter()
         .flat_map(|pattern| {
             let ignore_for_pattern = Arc::clone(&ignore_matchers);
@@ -2747,8 +2989,22 @@ pub fn extract_from_glob_with_options(
                 }
             }
         })
-        .par_bridge() // Stream directly into parallel processing
+        .collect();
+    let mut paths: Vec<_> = inputs
+        .iter()
+        .filter_map(|item| match item {
+            GlobItem::Path(path) => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    paths.sort();
+    paths.dedup();
+    let finite_index = Arc::new(FiniteIndex::load(&paths)?);
+    let requires_project_scan = finite_index.has_dependencies();
+    let file_results: Vec<FileExtractionResult> = inputs
+        .into_par_iter()
         .map({
+            let finite_index = Arc::clone(&finite_index);
             let trans_components = Arc::clone(&trans_components);
             let trans_keep_basic_html_nodes_for = Arc::clone(&trans_keep_basic_html_nodes_for);
             let use_translation_names = Arc::clone(&use_translation_names);
@@ -2772,6 +3028,7 @@ pub fn extract_from_glob_with_options(
                         &nesting_options_separator,
                         &interpolation_prefix,
                         &interpolation_suffix,
+                        Some(&finite_index),
                     ) {
                         Ok((keys, warnings)) => {
                             if keys.is_empty() {
@@ -2832,6 +3089,7 @@ pub fn extract_from_glob_with_options(
     }
 
     Ok(ExtractionResult {
+        requires_project_scan,
         files,
         warning_count,
         errors,
@@ -2917,6 +3175,10 @@ pub fn extract_from_glob_deduplicated_with_options(
         }
     }
 
+    all_files.sort();
+    all_files.dedup();
+    let finite_index = Arc::new(FiniteIndex::load(&all_files)?);
+
     // Use fold + reduce for early deduplication during parallel processing
     // Each thread maintains its own HashSet, then we merge at the end
     type AccumulatorType = (HashMap<ExtractedKey, ()>, usize, Vec<ExtractionError>);
@@ -2934,6 +3196,7 @@ pub fn extract_from_glob_deduplicated_with_options(
     let (unique_keys, warning_count, mut errors) = all_files
         .par_iter()
         .fold(|| initial.clone(), {
+            let finite_index = Arc::clone(&finite_index);
             let trans_components = Arc::clone(&trans_components);
             let trans_keep_basic_html_nodes_for = Arc::clone(&trans_keep_basic_html_nodes_for);
             let use_translation_names = Arc::clone(&use_translation_names);
@@ -2956,6 +3219,7 @@ pub fn extract_from_glob_deduplicated_with_options(
                     &nesting_options_separator,
                     &interpolation_prefix,
                     &interpolation_suffix,
+                    Some(&finite_index),
                 ) {
                     Ok((keys, warnings)) => {
                         acc.1 += warnings;
@@ -2992,7 +3256,7 @@ pub fn extract_from_glob_deduplicated_with_options(
     Ok((unique_keys, warning_count, errors))
 }
 
-fn expand_brace_patterns(pattern: &str) -> Vec<String> {
+pub(crate) fn expand_brace_patterns(pattern: &str) -> Vec<String> {
     let bytes = pattern.as_bytes();
     let mut start = None;
     let mut depth = 0usize;
@@ -3267,7 +3531,7 @@ mod tests {
     }
 
     #[test]
-    fn test_template_literal_with_interpolation_ignored() {
+    fn test_template_literal_with_interpolation_resolves_constant() {
         let source = r#"
             const key = 'dynamic';
             const text = t(`hello.${key}`);
@@ -3275,8 +3539,8 @@ mod tests {
 
         let keys = extract_from_source(source, "test.ts", &["t".to_string()]).unwrap();
 
-        // Template literals with interpolations should be skipped
-        assert_eq!(keys.len(), 0);
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "hello.dynamic");
     }
 
     #[test]
@@ -3353,6 +3617,7 @@ mod tests {
             ",",
             "{{",
             "}}",
+            None,
         )
         .unwrap();
 
@@ -3388,6 +3653,7 @@ mod tests {
             ",",
             "<<",
             ">>",
+            None,
         )
         .unwrap();
 
@@ -3671,6 +3937,7 @@ mod tests {
             ",",
             "{{",
             "}}",
+            None,
         )
         .unwrap();
 
@@ -3724,6 +3991,7 @@ mod tests {
             ",",
             "{{",
             "}}",
+            None,
         )
         .unwrap();
         assert_eq!(keys.len(), 1);
@@ -3754,6 +4022,7 @@ mod tests {
             ",",
             "{{",
             "}}",
+            None,
         )
         .unwrap();
 

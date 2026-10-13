@@ -1,0 +1,627 @@
+{
+  "run_id": "1791873572301284000",
+  "selected_phase": "all",
+  "status": "completed",
+  "completed_at": "2026-10-13T15:40:18+0900",
+  "environment": {
+    "node": "v24.2.0",
+    "system": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M4",
+    "cli_commit": "540b3beac7737ce066af47875be7f1dd360bd12c",
+    "turbo_commit": "3e5ff48a23b05621b8752cdbb0bbe2df9f07aeb7",
+    "cli_entry_sha256": "3b46004dc97c6eb1359f4a38936b05f950cd17f14e4bc55a01a65ae08a076688",
+    "turbo_binary_sha256": "5f819d30a6d5221ac266f0bea0de3202ba8f0aa4dc11f6730bedf0541b93cb6f"
+  },
+  "timed_runs": 7,
+  "warmups_per_tool": 1,
+  "watch_runs": 5,
+  "cache": "warm OS filesystem cache",
+  "wrapper_binary": "same target/release/i18next-turbo via I18NEXT_TURBO_BINARY",
+  "cases": {
+    "static-12": {
+      "key_value_counts": {
+        "cli": 366,
+        "turbo": 366,
+        "turbo-wrapper": 366
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      }
+    },
+    "feature-probes": {
+      "key_value_counts": {
+        "cli": 106,
+        "turbo": 106,
+        "turbo-wrapper": 106
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "oracle_equal": null
+    },
+    "preservation-probe": {
+      "key_value_counts": {
+        "cli": 36,
+        "turbo": 36,
+        "turbo-wrapper": 36
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      }
+    },
+    "static-300": {
+      "key_value_counts": {
+        "cli": 7956,
+        "turbo": 7956,
+        "turbo-wrapper": 7956
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "timings": {
+        "cli": {
+          "first_sync": {
+            "samples_ms": [
+              438.691875024233,
+              412.7263340051286,
+              402.66220798366703,
+              410.92154098441824,
+              400.55779201793484,
+              397.6806669961661,
+              397.17708399984986
+            ],
+            "median_ms": 402.66220798366703,
+            "mean_ms": 408.63107157305683,
+            "min_ms": 397.17708399984986,
+            "max_ms": 438.691875024233
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              369.4767499982845,
+              362.9644169996027,
+              361.4562080183532,
+              362.1780829853378,
+              368.03516699001193,
+              372.06095800502226,
+              367.4103749799542
+            ],
+            "median_ms": 367.4103749799542,
+            "mean_ms": 366.2259939966524,
+            "min_ms": 361.4562080183532,
+            "max_ms": 372.06095800502226
+          }
+        },
+        "turbo": {
+          "first_sync": {
+            "samples_ms": [
+              32.99329199944623,
+              31.782083009602502,
+              31.563166005071253,
+              32.32420899439603,
+              32.31620800215751,
+              31.614875013474375,
+              38.09499999624677
+            ],
+            "median_ms": 32.31620800215751,
+            "mean_ms": 32.9555475743421,
+            "min_ms": 31.563166005071253,
+            "max_ms": 38.09499999624677
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              27.15670899488032,
+              25.663833017461002,
+              26.71066700713709,
+              25.31645799172111,
+              24.97083300841041,
+              25.59716597897932,
+              26.227417023619637
+            ],
+            "median_ms": 25.663833017461002,
+            "mean_ms": 25.949011860315554,
+            "min_ms": 24.97083300841041,
+            "max_ms": 27.15670899488032
+          }
+        },
+        "turbo-wrapper": {
+          "first_sync": {
+            "samples_ms": [
+              58.66670797695406,
+              58.61720797838643,
+              58.90445798286237,
+              58.73533399426378,
+              58.53566600126214,
+              57.17037501744926,
+              57.02637502690777
+            ],
+            "median_ms": 58.61720797838643,
+            "mean_ms": 58.23658913972655,
+            "min_ms": 57.02637502690777,
+            "max_ms": 58.90445798286237
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              50.92866698396392,
+              50.98037500283681,
+              50.95608299598098,
+              55.021165986545384,
+              49.56562499864958,
+              51.12870899029076,
+              50.3919170005247
+            ],
+            "median_ms": 50.95608299598098,
+            "mean_ms": 51.28179170839888,
+            "min_ms": 49.56562499864958,
+            "max_ms": 55.021165986545384
+          }
+        }
+      },
+      "source_files": 301,
+      "source_sha256": {
+        "cli": "2f07aa42853cc115f8da096c12b568eacdccd07d4434bf4ab936af4f1d375916",
+        "turbo": "2f07aa42853cc115f8da096c12b568eacdccd07d4434bf4ab936af4f1d375916",
+        "turbo-wrapper": "2f07aa42853cc115f8da096c12b568eacdccd07d4434bf4ab936af4f1d375916"
+      },
+      "locales": [
+        "en",
+        "ja",
+        "ru"
+      ],
+      "namespaces": [
+        "common",
+        "account",
+        "checkout",
+        "dashboard",
+        "settings",
+        "catalog"
+      ],
+      "same_source_as_prior_measurement": true
+    },
+    "static-1200": {
+      "key_value_counts": {
+        "cli": 31716,
+        "turbo": 31716,
+        "turbo-wrapper": 31716
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "timings": {
+        "cli": {
+          "first_sync": {
+            "samples_ms": [
+              1037.1858750004321,
+              1068.120584008284,
+              1074.965624982724,
+              1047.1719579945784,
+              1057.8695840085857,
+              1051.1034590017516,
+              1031.3706670131069
+            ],
+            "median_ms": 1051.1034590017516,
+            "mean_ms": 1052.5411074299232,
+            "min_ms": 1031.3706670131069,
+            "max_ms": 1074.965624982724
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              928.9686249976512,
+              966.8072080239654,
+              914.6505829994567,
+              930.9643339947797,
+              919.7608749964274,
+              927.0795409975108,
+              1047.040042001754
+            ],
+            "median_ms": 928.9686249976512,
+            "mean_ms": 947.8958868587922,
+            "min_ms": 914.6505829994567,
+            "max_ms": 1047.040042001754
+          }
+        },
+        "turbo": {
+          "first_sync": {
+            "samples_ms": [
+              98.63525000400841,
+              100.27741600060835,
+              97.99300000304356,
+              99.23795799841173,
+              102.93366701807827,
+              98.61170899239369,
+              97.09249998559244
+            ],
+            "median_ms": 98.63525000400841,
+            "mean_ms": 99.25450000030521,
+            "min_ms": 97.09249998559244,
+            "max_ms": 102.93366701807827
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              87.31779200024903,
+              82.7297079958953,
+              86.27304100082256,
+              82.33654100331478,
+              82.9661670140922,
+              82.25704199867323,
+              86.50387497618794
+            ],
+            "median_ms": 82.9661670140922,
+            "mean_ms": 84.3405951413193,
+            "min_ms": 82.25704199867323,
+            "max_ms": 87.31779200024903
+          }
+        },
+        "turbo-wrapper": {
+          "first_sync": {
+            "samples_ms": [
+              149.4971250067465,
+              124.2787090013735,
+              127.54270801087841,
+              124.45137498434633,
+              132.8810830018483,
+              124.82341600116342,
+              128.01112499437295
+            ],
+            "median_ms": 127.54270801087841,
+            "mean_ms": 130.21222014296134,
+            "min_ms": 124.2787090013735,
+            "max_ms": 149.4971250067465
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              107.31612498057075,
+              110.22708399104886,
+              107.42920899065211,
+              108.34533299203031,
+              105.80579200177453,
+              108.32316699088551,
+              111.16499998024665
+            ],
+            "median_ms": 108.32316699088551,
+            "mean_ms": 108.37310141817268,
+            "min_ms": 105.80579200177453,
+            "max_ms": 111.16499998024665
+          }
+        }
+      },
+      "source_files": 1201,
+      "source_sha256": {
+        "cli": "5d1c2ab04dec0079c25d71d0d34c746b4eb9e4c795a6a3912d47c1f68f4e7b8e",
+        "turbo": "5d1c2ab04dec0079c25d71d0d34c746b4eb9e4c795a6a3912d47c1f68f4e7b8e",
+        "turbo-wrapper": "5d1c2ab04dec0079c25d71d0d34c746b4eb9e4c795a6a3912d47c1f68f4e7b8e"
+      },
+      "locales": [
+        "en",
+        "ja",
+        "ru"
+      ],
+      "namespaces": [
+        "common",
+        "account",
+        "checkout",
+        "dashboard",
+        "settings",
+        "catalog"
+      ],
+      "same_source_as_prior_measurement": true
+    },
+    "mixed-308": {
+      "key_value_counts": {
+        "cli": 8023,
+        "turbo": 8023,
+        "turbo-wrapper": 8023
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        },
+        "turbo-wrapper": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true,
+        "turbo-wrapper": true
+      },
+      "oracle_equal": null,
+      "timings": {
+        "cli": {
+          "first_sync": {
+            "samples_ms": [
+              435.49883298692293,
+              472.0314579899423,
+              852.202916983515,
+              483.3730829996057,
+              604.8070830001961,
+              444.1764160001185,
+              424.1198340023402
+            ],
+            "median_ms": 472.0314579899423,
+            "mean_ms": 530.8870891375201,
+            "min_ms": 424.1198340023402,
+            "max_ms": 852.202916983515
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              402.7023329981603,
+              419.1499169974122,
+              395.9132909949403,
+              391.39704100671224,
+              467.603416997008,
+              417.31737498776056,
+              408.0438750097528
+            ],
+            "median_ms": 408.0438750097528,
+            "mean_ms": 414.5896069988209,
+            "min_ms": 391.39704100671224,
+            "max_ms": 467.603416997008
+          }
+        },
+        "turbo": {
+          "first_sync": {
+            "samples_ms": [
+              38.22420799406245,
+              33.27233300660737,
+              115.7699580071494,
+              35.686542018083856,
+              35.39837501011789,
+              33.03870800300501,
+              34.087208012351766
+            ],
+            "median_ms": 35.39837501011789,
+            "mean_ms": 46.49676172162539,
+            "min_ms": 33.03870800300501,
+            "max_ms": 115.7699580071494
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              28.0204160080757,
+              27.651083015371114,
+              26.437041989993304,
+              27.365207992261276,
+              29.51691599446349,
+              26.79737500147894,
+              26.68108299258165
+            ],
+            "median_ms": 27.365207992261276,
+            "mean_ms": 27.495588999175066,
+            "min_ms": 26.437041989993304,
+            "max_ms": 29.51691599446349
+          }
+        },
+        "turbo-wrapper": {
+          "first_sync": {
+            "samples_ms": [
+              62.165915995137766,
+              64.4836249994114,
+              88.49087500129826,
+              64.3170410185121,
+              61.93150000763126,
+              59.17475000023842,
+              64.71587499254383
+            ],
+            "median_ms": 64.3170410185121,
+            "mean_ms": 66.46851171639615,
+            "min_ms": 59.17475000023842,
+            "max_ms": 88.49087500129826
+          },
+          "repeat_extract": {
+            "samples_ms": [
+              54.84649998834357,
+              55.2786250191275,
+              53.27804200351238,
+              55.008625000482425,
+              68.92104199505411,
+              54.75404200842604,
+              53.52449999190867
+            ],
+            "median_ms": 54.84649998834357,
+            "mean_ms": 56.5159108581221,
+            "min_ms": 53.27804200351238,
+            "max_ms": 68.92104199505411
+          }
+        }
+      },
+      "source_files": 309,
+      "source_sha256": {
+        "cli": "b661504425c4f3a97a02465c8ed8dd0aa292f7cfd86e899e78ad9bf807d7c4bd",
+        "turbo": "b661504425c4f3a97a02465c8ed8dd0aa292f7cfd86e899e78ad9bf807d7c4bd",
+        "turbo-wrapper": "b661504425c4f3a97a02465c8ed8dd0aa292f7cfd86e899e78ad9bf807d7c4bd"
+      },
+      "locales": [
+        "en",
+        "ja",
+        "ru"
+      ],
+      "namespaces": [
+        "common",
+        "account",
+        "checkout",
+        "dashboard",
+        "settings",
+        "catalog"
+      ],
+      "same_source_as_prior_measurement": true
+    },
+    "watch-1200": {
+      "key_value_counts": {
+        "cli": 31734,
+        "turbo": 31734
+      },
+      "parity": {
+        "turbo": {
+          "equal": true,
+          "missing": [],
+          "extra": [],
+          "changed_values": []
+        }
+      },
+      "existing_values_preserved": {
+        "cli": true,
+        "turbo": true
+      },
+      "oracle_equal": {
+        "cli": true,
+        "turbo": true
+      },
+      "timings": {
+        "cli": {
+          "samples_ms": [
+            802.5039169879165,
+            739.1804170038085,
+            704.8302080074791,
+            836.6504999867175,
+            725.2508340170607
+          ],
+          "median_ms": 739.1804170038085,
+          "mean_ms": 761.6831752005965,
+          "min_ms": 704.8302080074791,
+          "max_ms": 836.6504999867175
+        },
+        "turbo": {
+          "samples_ms": [
+            339.10258297692053,
+            340.81862500170246,
+            331.1350829899311,
+            337.14983297977597,
+            343.6983750143554
+          ],
+          "median_ms": 339.10258297692053,
+          "mean_ms": 338.3808997925371,
+          "min_ms": 331.1350829899311,
+          "max_ms": 343.6983750143554
+        }
+      },
+      "metric": "source append to all 3 locales containing the new key; includes debounce and 5ms polling",
+      "runs": 5,
+      "additional_expected": {
+        "en/common:watch.ready": "",
+        "en/common:watch.edit0": "",
+        "en/common:watch.edit1": "",
+        "en/common:watch.edit2": "",
+        "en/common:watch.edit3": "",
+        "en/common:watch.edit4": "",
+        "ja/common:watch.ready": "",
+        "ja/common:watch.edit0": "",
+        "ja/common:watch.edit1": "",
+        "ja/common:watch.edit2": "",
+        "ja/common:watch.edit3": "",
+        "ja/common:watch.edit4": "",
+        "ru/common:watch.ready": "",
+        "ru/common:watch.edit0": "",
+        "ru/common:watch.edit1": "",
+        "ru/common:watch.edit2": "",
+        "ru/common:watch.edit3": "",
+        "ru/common:watch.edit4": ""
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "source_commit": "3e5ff48a23b05621b8752cdbb0bbe2df9f07aeb7",
+  "current_files_sha256": {
+    ".github/workflows/ci.yml": "07354ba1c8af410dd9820fd22d4051e4647a485cf178012296e96b0d320c7b4b",
+    "AGENTS.md": "6bb53b63c4bb861e0d4594619f2a9b06df283487571b1995f6c6dea966d41ee3",
+    "CHANGELOG.md": "2012235ccbda28d245fbb0465c181e72e6c6cebf5964a4a65ccf00b4852f4b69",
+    "CONTRIBUTING.md": "97285def190f05300b2e45c95315788791281be4940b09b61c21360aab7c7104",
+    "bin/cli.js": "7550dcf5566e8b6fe8b32682f0c3f133db9348094ef27af5a2ad3bfbe60f1fd3",
+    "src/config.rs": "c2087e6f9f09f4a700b90de91fec5362fbe8caca75acc4649670ff2fcd866301",
+    "src/extractor.rs": "dc301a63adcb1d04eed25ff2e446484c7da52ab3154096143c9b650596c0c997",
+    "src/finite_values.rs": "d73ef1bafb6435da4a3ac4ba3927575565e26432022b6ad6742ef54ada336e2f",
+    "tests/cli_parity.rs": "29233ba318fc167502111be90cf9e442dde211d27c1d8f2489e3bfe950e0c207",
+    "tests/node_wrapper_integration.rs": "2e25d6cf0b9ea700788bcd1806a0574c917408c338051c64ad3db974566f531c"
+  },
+  "release_binary_sha256": "5f819d30a6d5221ac266f0bea0de3202ba8f0aa4dc11f6730bedf0541b93cb6f",
+  "native_addon_sha256": "46ac4f5e8e6c41998157d35faf6803b4eb207631aaf9ca117c817b1684f13c39",
+  "node": "v24.2.0",
+  "preserved_files_unchanged": true,
+  "specialist_reviews": "ALLOW static for four extraction fixes, child process forwarding, and main-based CI/workflow",
+  "checks": {
+    "cargo test --all-targets --locked": {
+      "passed": 197,
+      "failed": 0,
+      "ignored": 0
+    },
+    "cargo test --all-targets --all-features --locked": {
+      "passed": 213,
+      "failed": 0,
+      "ignored": 0
+    },
+    "native_node_integration_subset": {
+      "passed": 13,
+      "failed": 0,
+      "ignored": 0
+    },
+    "cargo clippy --all-targets --all-features --locked -- -D warnings": "passed",
+    "cargo fmt -- --check": "passed",
+    "node --check bin/cli.js": "passed",
+    "git diff --check": "passed",
+    "cargo build --release --locked": "passed",
+    "cargo build --lib --all-features --locked": "passed"
+  },
+  "roadmap_archive": {
+    "tag": "archive/issue-priority-roadmap-20261013",
+    "commit": "7bf66da69c83d7988bcfe20c9cd089b4ff9adb4c"
+  },
+  "evidence": "Local verification and benchmark after review fixes; hosted CI and merge are separate subsequent evidence."
+}
