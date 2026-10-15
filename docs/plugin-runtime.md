@@ -16,6 +16,22 @@
 
 This model was selected to keep Rust core deterministic and avoid embedding a JS runtime.
 
+## Watch Support
+
+- Use the Node wrapper's `watch` without plugins (`plugins` omitted or an empty array).
+- A non-empty resolved plugin list (top-level `plugins` or `extract.plugins`) is rejected
+  with `watch does not support plugins` and exit code 1, before loading plugin modules,
+  calling factories/hooks, or starting Rust. Translation files are not changed.
+  `pluginErrorMode: continue` does not bypass this restriction.
+- The restriction applies to JS/TS configs, explicit JSON configs, and discovered configs.
+  Evaluating the config itself is required to inspect plugins; this does not prevent
+  arbitrary JavaScript executed by the config.
+- Run `extract` when plugins are needed. Single-run source transforms, AST events, and
+  completion hooks remain supported.
+- Plugin-free incremental watch, translation preservation, and prune refusal for unresolved
+  values remain supported. The Rust binary does not evaluate JS plugins and is not an
+  alternative for plugin-assisted watch.
+
 ## Hook Boundaries
 
 - `setup(context)`:

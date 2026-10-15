@@ -108,6 +108,9 @@ async function main() {
   rustArgs.push(...args);
 
   const commandName = resolveCommandName(args);
+  if (commandName === 'watch' && runtimeConfig && runtimeConfig.__runtime.plugins.length > 0) {
+    throw new Error('watch does not support plugins. Use extract with plugins, or remove plugins to use watch.');
+  }
   const pluginRuntime = resolvePluginRuntime(runtimeConfig);
   const features = resolveRuntimeFeatures(runtimeConfig, commandName, args);
   const plugins = await loadPlugins(runtimeConfig, pluginRuntime);
@@ -178,6 +181,7 @@ function exitAfterDrain(exitCode) {
 }
 
 async function resolveConfigArgs(argv) {
+  const commandName = resolveCommandName(argv);
   const processedArgs = [];
   let inlineConfigJson = null;
   let inlineRuntimeConfig = null;
@@ -195,7 +199,7 @@ async function resolveConfigArgs(argv) {
         continue;
       }
 
-      if (shouldLoadWithNode(value)) {
+      if (shouldLoadWithNode(value, commandName)) {
         const result = await loadConfigFromFile(value);
         if (result) {
           const normalized = normalizeConfig(result.config);
@@ -217,7 +221,7 @@ async function resolveConfigArgs(argv) {
     if (arg.startsWith('--config=')) {
       configProvided = true;
       const value = arg.split('=')[1];
-      if (shouldLoadWithNode(value)) {
+      if (shouldLoadWithNode(value, commandName)) {
         const result = await loadConfigFromFile(value);
         if (result) {
           const normalized = normalizeConfig(result.config);
@@ -288,9 +292,9 @@ function formatExplorerResult(result) {
   return { config, filepath };
 }
 
-function shouldLoadWithNode(filepath) {
+function shouldLoadWithNode(filepath, commandName) {
   const ext = path.extname(filepath).toLowerCase();
-  return JS_TS_CONFIG_EXTENSIONS.has(ext);
+  return JS_TS_CONFIG_EXTENSIONS.has(ext) || (commandName === 'watch' && ext === '.json');
 }
 
 function loadTypeScriptConfig(filepath) {
@@ -393,7 +397,12 @@ function handlePluginError(runtime, hook, error, detail = '') {
 }
 
 function resolveCommandName(args) {
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (['--config', '-c', '--config-json', '--config-path-hint', '--log-level'].includes(arg)) {
+      i += 1;
+      continue;
+    }
     if (!arg.startsWith('-')) {
       return arg;
     }

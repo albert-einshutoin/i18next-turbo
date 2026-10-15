@@ -350,6 +350,132 @@ module.exports = {
     assert!(project.join(".after-sync").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    for (filename, args, nested, error_mode) in [
+        (
+            "i18next.config.cjs",
+            vec!["--config", "i18next.config.cjs", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "i18next.config.cjs",
+            vec!["watch", "--config=i18next.config.cjs"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "i18next-turbo.json",
+            vec!["-c", "i18next-turbo.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "i18next-turbo.json",
+            vec!["watch", "--config=i18next-turbo.json"],
+            true,
+            "fail-fast",
+        ),
+        ("i18next.config.cjs", vec!["watch"], true, "continue"),
+        ("i18next-turbo.json", vec!["watch"], false, "fail-fast"),
+        (
+            "i18next.config.cjs",
+            vec!["--log-level", "warn", "watch", "-c", "i18next.config.cjs"],
+            false,
+            "continue",
+        ),
+    ] {
+        let tmp = tempdir().unwrap();
+        let project = tmp.path();
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::write(project.join("src/app.ts"), "t('new.key');").unwrap();
+        let translations = [
+            (
+                "en",
+                "{\r\n\t\"retained\": \"Keep\",\r\n\t\"unused\": \"Keep too\"\r\n}\r\n",
+            ),
+            ("ja", "{\"retained\":\"保持\",\"unused\":\"削除しない\"}\n"),
+        ];
+        for (locale, content) in translations {
+            let dir = project.join("locales").join(locale);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("translation.json"), content).unwrap();
+        }
+        fs::write(
+            project.join("plugin.cjs"),
+            "const fs = require('fs');\nfs.writeFileSync('.plugin-loaded', 'loaded');\nmodule.exports = () => {\nfs.writeFileSync('.plugin-factory', 'called');\nreturn {setup() {fs.writeFileSync('.plugin-setup', 'called');}};\n};\n",
+        )
+        .unwrap();
+        let binary = project.join("child.cjs");
+        fs::write(
+            &binary,
+            "#!/usr/bin/env node\nconst fs = require('fs');\nfs.writeFileSync('.rust-started', 'started');\nfs.writeFileSync('locales/en/translation.json', '{}');\n",
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut config = serde_json::json!({
+            "input": ["src/**/*.ts"], "output": "locales", "locales": ["en", "ja"],
+            "functions": ["t"], "removeUnusedKeys": true, "pluginErrorMode": error_mode
+        });
+        let plugins = serde_json::json!([{ "resolve": "./plugin.cjs" }]);
+        if nested {
+            config["extract"] = serde_json::json!({ "plugins": plugins });
+        } else {
+            config["plugins"] = plugins;
+        }
+        let config = if filename.ends_with(".json") {
+            config.to_string()
+        } else {
+            format!("module.exports = {config};\n")
+        };
+        fs::write(project.join(filename), config).unwrap();
+
+        let output = Command::new("node")
+            .arg(wrapper_bin())
+            .args(&args)
+            .env("I18NEXT_TURBO_BINARY", &binary)
+            .current_dir(project)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("watch does not support plugins"),
+            "{args:?}: {stderr}"
+        );
+        for marker in [
+            ".plugin-loaded",
+            ".plugin-factory",
+            ".plugin-setup",
+            ".rust-started",
+        ] {
+            assert!(!project.join(marker).exists(), "{args:?}: {marker}");
+        }
+        for (locale, content) in translations {
+            assert_eq!(
+                fs::read(
+                    project
+                        .join("locales")
+                        .join(locale)
+                        .join("translation.json")
+                )
+                .unwrap(),
+                content.as_bytes(),
+                "{args:?}: {locale} must remain byte-identical"
+            );
+        }
+        assert_eq!(fs::read_dir(project.join("locales")).unwrap().count(), 2);
+    }
+}
+
 #[test]
 fn node_wrapper_plugin_onvisitnode_receives_rust_ast_events() {
     if !should_run_node_wrapper_tests() {

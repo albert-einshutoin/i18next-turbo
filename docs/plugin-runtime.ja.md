@@ -16,6 +16,19 @@
 
 Rust コアの決定性を保つため、Rust への JS ランタイム埋め込みは行わない。
 
+## watchの対応範囲
+
+- Nodeラッパーの`watch`はpluginなし（`plugins`未指定または空配列）で使用する。
+- 解決された`plugins`（トップレベルまたは`extract.plugins`）が空でない場合、
+  `watch does not support plugins`と診断し、終了コード1で拒否する。
+  pluginモジュールの読込、factory・hook、Rust起動より前に拒否し、翻訳ファイルを変更しない。
+  `pluginErrorMode: continue`でも、この組み合わせは継続しない。
+- JS/TS設定、明示指定のJSON設定、自動検出した設定に同じ制限を適用する。
+  設定自体の評価はplugin判定に必要であり、設定内の任意のJS実行を防ぐものではない。
+- pluginが必要な場合は`extract`を実行する。単発抽出の`onLoad`・AST通知・終了hookは維持する。
+- pluginなしwatchの増分抽出と既存翻訳の保持、未解決値がある場合のprune拒否は維持する。
+  純RustバイナリはJS pluginを評価しないため、plugin付きwatchの代替にはならない。
+
 ## フック境界
 
 - `setup(context)`:
