@@ -5,12 +5,10 @@ import copy
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path
 import platform
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -185,15 +183,6 @@ def wait_catalog(project, expected, process, log, tool, count, timeout):
         return 'unreadable_output', last
     return ('event_unobserved' if log_count(log, tool) == count else 'output_mismatch'), last
 
-def stop(process):
-    if process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait(timeout=5)
-
 def watch_once(case, tool, before, after, expected_before, expected_after, trial, label):
     project = case / tool
     write_sources(project, before)
@@ -239,7 +228,7 @@ def watch_once(case, tool, before, after, expected_before, expected_after, trial
                 result['reported_cached_files'] = [int(n) for n in re.findall(r'Files: (\d+)', log.read_text())][1:]
             return result
         finally:
-            stop(process)
+            baseline.stop_process_group(process)
 
 
 def watch_regression(states, full, results):
@@ -309,7 +298,7 @@ def watch_regression(states, full, results):
                     raise RuntimeError(f'{variant}: {result["prune_failure"]}; see {log}')
                 print('regression', variant, 'prune refused; catalog bytes unchanged', flush=True)
             finally:
-                stop(process)
+                baseline.stop_process_group(process)
 
 
 report = {'run_id': run_id, 'status': 'in_progress', 'runs_requested': args.runs,
@@ -320,7 +309,7 @@ report = {'run_id': run_id, 'status': 'in_progress', 'runs_requested': args.runs
                           'harness_sha256': sha(Path(__file__)),
                           'fixture_harness_sha256': sha(repo / 'benchmarks/evaluation-20261013/run.py'),
                           'python': platform.python_version(), 'platform': platform.platform(),
-                          'cpu': subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string'], text=True).strip(),
+                          'cpu': baseline.cpu_name(),
                           'turbo_source_sha256': {relative: sha(repo / relative) for relative in ['src/watcher.rs', 'src/finite_values.rs', 'src/extractor.rs', 'src/config.rs', 'src/json_sync.rs']},
                           'turbo_uncommitted_diff_sha256': hashlib.sha256(subprocess.check_output(['git', '-C', str(repo), 'diff', '--', 'src/watcher.rs', 'src/finite_values.rs', 'src/extractor.rs', 'docs/compatibility.md'])).hexdigest(),
                           'turbo_commit': subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip(),

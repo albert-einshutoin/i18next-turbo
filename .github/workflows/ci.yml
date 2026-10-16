@@ -23,12 +23,36 @@ jobs:
         run: cargo build --release
       - name: Run benchmark regression check
         run: npm run benchmark:ci
+      - name: Install pinned watch regression dependencies
+        run: |
+          npm install --ignore-scripts --omit=optional --no-audit --no-fund --package-lock=false
+          mkdir -p target/watch-import-evaluation-20261013/toolchain
+          cp benchmarks/watch-incremental-20261014/cli-package.json target/watch-import-evaluation-20261013/toolchain/package.json
+          cp benchmarks/watch-incremental-20261014/cli-lock.json target/watch-import-evaluation-20261013/toolchain/package-lock.json
+          npm ci --prefix target/watch-import-evaluation-20261013/toolchain --ignore-scripts --no-audit --no-fund
+      - name: Test watch runner failure handling
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -B -m unittest discover -s benchmarks/watch-incremental-20261014 -p test_runtime.py -v 2>&1 | tee target/watch-import-evaluation-20261013/runtime-tests.log
+      - name: Run watch config regression
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -u benchmarks/watch-incremental-20261014/run.py --regression --sizes 300 --runs 1 2>&1 | tee target/watch-import-evaluation-20261013/regression.log
       - name: Upload benchmark report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-report
-          path: benchmarks/latest.json
+          path: |
+            benchmarks/latest.json
+            target/watch-import-evaluation-20261013/runtime-tests.log
+            target/watch-import-evaluation-20261013/regression.log
+            target/watch-import-evaluation-20261013/runs/*/results.json
+            target/watch-import-evaluation-20261013/runs/*/logs/
+            target/watch-import-evaluation-20261013/runs/*/snapshots/
+            target/watch-import-evaluation-20261013/runs/*/fixtures/watch-regression-*/**/process.log
 
   node-smoke:
     runs-on: ubuntu-latest

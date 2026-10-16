@@ -24,6 +24,8 @@ commit・push・merge・releaseはユーザーが依頼した工程だけで行�
 | Node wrapper dependencies | `npm install --ignore-scripts --omit=optional --no-audit --no-fund --package-lock=false` |
 | Native library | `cargo build --lib --all-features --locked` |
 | Node wrapper integration | `cargo test --test node_wrapper_integration --locked` |
+| watch回帰（CLI 1.75.3固定） | `python3 benchmarks/watch-incremental-20261014/run.py --regression --sizes 300 --runs 1` |
+| 検証runner異常系 | `python3 -B -m unittest discover -s benchmarks/watch-incremental-20261014 -p test_runtime.py -v` |
 
 Native integration tests require the built library to be installed as a `.node`
 file in the target directory. Mac/arm64 setup and pinned extraction comparison
@@ -31,4 +33,5 @@ are documented in [the evaluation](benchmarks/evaluation-20261013/README.md).
 
 Hosted CI runs for pull requests and pushes to `main`. Its existing benchmark,
 Node smoke, lint/tests and cross-platform build jobs provide separate hosted evidence.
+Ubuntuの`benchmark-regression` jobは固定CLIのwatch回帰とrunner異常系も実行し、失敗時もログ・結果をartifactへ保存する。
 テストには使い捨てのローカル入力を使う。実サービスへのLocize接続、公開、release実行は別工程とする。
