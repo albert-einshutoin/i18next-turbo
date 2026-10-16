@@ -26,6 +26,9 @@ This model was selected to keep Rust core deterministic and avoid embedding a JS
 - The restriction applies to JS/TS configs, explicit JSON configs, and discovered configs.
   Evaluating the config itself is required to inspect plugins; this does not prevent
   arbitrary JavaScript executed by the config.
+- Attached forms such as `-cFILE`, `-c=FILE`, and `-vcFILE` use the same config resolution.
+  Empty or non-object explicit configs fail with exit code 1 before processing;
+  they do not fall back to the default config.
 - Run `extract` when plugins are needed. Single-run source transforms, AST events, and
   completion hooks remain supported.
 - Plugin-free incremental watch, translation preservation, and prune refusal for unresolved

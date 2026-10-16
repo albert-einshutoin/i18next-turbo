@@ -392,6 +392,42 @@ fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
             false,
             "continue",
         ),
+        (
+            "project.json",
+            vec!["-cproject.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "project.cjs",
+            vec!["watch", "-cproject.cjs"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "project.json",
+            vec!["-c=project.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "project.json",
+            vec!["-vcproject.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "project.json",
+            vec!["-vc", "project.json", "watch"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "project=one.json",
+            vec!["--config=project=one.json", "watch"],
+            false,
+            "continue",
+        ),
     ] {
         let tmp = tempdir().unwrap();
         let project = tmp.path();
@@ -473,6 +509,59 @@ fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
             );
         }
         assert_eq!(fs::read_dir(project.join("locales")).unwrap().count(), 2);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn node_wrapper_rejects_empty_or_non_object_explicit_config_before_translation_writes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+    for content in ["", " \n", "null", "[]", "\"invalid\"", "7"] {
+        for args in [
+            vec!["--config", "empty.json", "watch"],
+            vec!["watch", "--config=empty.json"],
+            vec!["-cempty.json", "watch"],
+        ] {
+            let tmp = tempdir().unwrap();
+            let project = tmp.path();
+            fs::create_dir_all(project.join("locales/en")).unwrap();
+            let locale = project.join("locales/en/translation.json");
+            let original = b"{\r\n\t\"unused\": \"Do not prune\"\r\n}\r\n";
+            fs::write(&locale, original).unwrap();
+            fs::write(project.join("empty.json"), content).unwrap();
+            let binary = project.join("child.cjs");
+            fs::write(
+                &binary,
+                "#!/usr/bin/env node\nconst fs = require('fs');\nfs.writeFileSync('.rust-started', 'yes');\nfs.writeFileSync('locales/en/translation.json', '{}');\n",
+            )
+            .unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+
+            let output = Command::new("node")
+                .arg(wrapper_bin())
+                .args(&args)
+                .env("I18NEXT_TURBO_BINARY", &binary)
+                .current_dir(project)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{args:?}/{content:?}: {stderr}"
+            );
+            assert!(
+                stderr.contains("expected a configuration object"),
+                "{args:?}/{content:?}: {stderr}"
+            );
+            assert!(!project.join(".rust-started").exists());
+            assert_eq!(fs::read(&locale).unwrap(), original);
+            assert_eq!(fs::read_dir(project.join("locales/en")).unwrap().count(), 1);
+        }
     }
 }
 

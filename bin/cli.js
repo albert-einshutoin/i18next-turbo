@@ -181,6 +181,18 @@ function exitAfterDrain(exitCode) {
 }
 
 async function resolveConfigArgs(argv) {
+  const endOfOptions = argv.indexOf('--');
+  argv = argv.flatMap((arg, index) => {
+    const shortConfig = (endOfOptions === -1 || index < endOfOptions)
+      ? /^-(v*)c(.*)$/.exec(arg)
+      : null;
+    if (!shortConfig) return [arg];
+    return [
+      ...shortConfig[1].split('').map((flag) => `-${flag}`),
+      '-c',
+      ...(shortConfig[2] ? [shortConfig[2].replace(/^=/, '')] : [])
+    ];
+  });
   const commandName = resolveCommandName(argv);
   const processedArgs = [];
   let inlineConfigJson = null;
@@ -191,9 +203,10 @@ async function resolveConfigArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
 
-    if (arg === '--config' || arg === '-c') {
+    if (arg === '--config' || arg === '-c' || arg.startsWith('--config=')) {
       configProvided = true;
-      const value = argv[i + 1];
+      const separateValue = arg === '--config' || arg === '-c';
+      const value = separateValue ? argv[i + 1] : arg.slice('--config='.length);
       if (!value) {
         processedArgs.push(arg);
         continue;
@@ -201,38 +214,19 @@ async function resolveConfigArgs(argv) {
 
       if (shouldLoadWithNode(value, commandName)) {
         const result = await loadConfigFromFile(value);
-        if (result) {
-          const normalized = normalizeConfig(result.config);
-          if (normalized) {
-            inlineConfigJson = serializeConfigForRust(normalized);
-            inlineRuntimeConfig = normalized;
-            configPathHint = result.filepath;
-          }
+        const normalized = normalizeConfig(result && result.config);
+        if (!normalized) {
+          throw new Error(`Invalid config file "${value}": expected a configuration object.`);
         }
-        i += 1;
-        continue;
+        inlineConfigJson = serializeConfigForRust(normalized);
+        inlineRuntimeConfig = normalized;
+        configPathHint = result.filepath;
+      } else {
+        processedArgs.push(arg);
+        if (separateValue) processedArgs.push(value);
       }
-
-      processedArgs.push(arg, value);
-      i += 1;
+      if (separateValue) i += 1;
       continue;
-    }
-
-    if (arg.startsWith('--config=')) {
-      configProvided = true;
-      const value = arg.split('=')[1];
-      if (shouldLoadWithNode(value, commandName)) {
-        const result = await loadConfigFromFile(value);
-        if (result) {
-          const normalized = normalizeConfig(result.config);
-          if (normalized) {
-            inlineConfigJson = serializeConfigForRust(normalized);
-            inlineRuntimeConfig = normalized;
-            configPathHint = result.filepath;
-          }
-        }
-        continue;
-      }
     }
 
     processedArgs.push(arg);
@@ -327,7 +321,7 @@ async function loadEsmConfig(filepath) {
 }
 
 function normalizeConfig(rawConfig) {
-  if (!rawConfig || typeof rawConfig !== 'object') {
+  if (!rawConfig || typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
     return null;
   }
 
