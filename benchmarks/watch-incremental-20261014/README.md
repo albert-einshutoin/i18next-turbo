@@ -1,5 +1,37 @@
 # P1 watch差分抽出とNode並列出力保持（2026-10-14）
 
+## watch設定解決の回帰検証（PR #81以降）
+
+下記「再実行」のNode依存導入、CLI toolchainのlockコピーと`npm ci`、release buildを済ませてから実行する。
+CLIは**1.75.3**に固定し、versionとtoolchainのlockが同梱`cli-lock.json`に一致しなければ検証前に失敗する。
+
+```sh
+python3 benchmarks/watch-incremental-20261014/run.py --regression --sizes 300 --runs 1
+```
+
+既存の303入力＋ignore対象1件、3言語・6namespace・18JSON、prune=trueのfixtureと独立literal期待値を再利用する。
+初期＋6操作後の7状態をCLI／Rust直接／Nodeラッパーで全抽出し、21条件の一致と既存18翻訳の保持を確認する。
+各watchでは型union変更、定数変更、追加、削除、純rename、依存module rename＋import更新を連続実行する。
+
+| watch経路 | 設定引数 |
+|---|---|
+| Rust直接 | `--config i18next-turbo.json` |
+| Node＋CJS | `--config i18next.config.cjs` |
+| Node＋JSON（空plugins） | `-vci18next-turbo.json` |
+| Node＋任意拡張子（空plugins） | `--config=project.conf` |
+| Node＋拡張子なし（空plugins） | `-csettings` |
+
+5経路×6操作＝30操作すべてで、完了通知、同じ状態の全抽出と独立期待値への一致、既存18翻訳保持、150ms後の一致、同期1回を必須とする。
+続けてrename済みのimport先定数を解析不能な値へ変更し、5経路すべてでprune拒否の診断・終了コード1・全翻訳ファイルのbyte無変更を確認する。
+欠測・timeout・不一致は非0終了とし、成功するまで再試行しない。結果は最後に表示する`REPORT`のJSON、各状態のcatalog snapshot、各watchの`process.log`へ保存する。
+JSONの`mode: regression`、`status: completed`、`regression_checks`の21／30／5が成功条件。
+
+これは各条件1回の機能回帰検証であり、速度比較ではない。現行scriptと同じmacOS／Unixの実行条件で、生成物は`target/watch-import-evaluation-20261013/runs/`配下に限定する。
+アプリsourceを実行せず、repo外の過去harnessや未追跡draftにも依存しない。plugin併用watchの拒否は別のNode wrapper integration testで維持する。
+以降の速度表・保存結果は過去の測定記録であり、この回帰モードで更新しない。
+
+## P1改善の保存測定
+
 相対importのある入力では変更ごとに全抽出していたwatchを、変更ファイルと影響する利用先の再解析へ切り替えた。初回の有限値indexを保持し、旧・新import候補の逆依存をたどる。rename後の同内容通知は解析・同期を省略する。入力/ignore境界を維持し、未解決・曖昧な値はprune前に拒否する。旧namespaceも同期し、削除cacheは影響sourceすべての解析成功後に更新する。
 
 Node側はchild終了後の出力切捨てを防ぎ、stdout/stderrの先行write後のcallbackを両方待って明示終了する。child非0 codeを保持し、失敗時は後続hookを実行しない。既存assertと並列設定は変更していない。
