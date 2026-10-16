@@ -24,6 +24,10 @@ Rust コアの決定性を保つため、Rust への JS ランタイム埋め込
   pluginモジュールの読込、factory・hook、Rust起動より前に拒否し、翻訳ファイルを変更しない。
   `pluginErrorMode: continue`でも、この組み合わせは継続しない。
 - JS/TS設定、明示指定のJSON設定、自動検出した設定に同じ制限を適用する。
+  inline設定（`--config-json JSON`・`--config-json=JSON`・`--config-stdin`）も、
+  設定ファイルの有無によらず同じ検証を通す。優先順はstdin、inline JSON、ファイル設定。
+  watchの設定stdinは一度だけ読み、検証済み設定をRustへ渡す。他のコマンドはstdinを
+  そのまま引き継ぎ、help/versionでは消費しない。
   設定自体の評価はplugin判定に必要であり、設定内の任意のJS実行を防ぐものではない。
 - `-cFILE`・`-c=FILE`・`-vcFILE`も同じ設定解決を通す。
   空または非オブジェクトの明示設定は処理前に終了コード1で拒否し、既定設定へフォールバックしない。

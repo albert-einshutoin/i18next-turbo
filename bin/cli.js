@@ -13,6 +13,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { pathToFileURL } = require('url');
+const { TextDecoder } = require('util');
 
 let cachedCosmiconfig = null;
 
@@ -194,6 +195,60 @@ async function resolveConfigArgs(argv) {
     ];
   });
   const commandName = resolveCommandName(argv);
+  const inlineArgs = [];
+  let configJsonArg = null;
+  let configStdin = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') {
+      inlineArgs.push(...argv.slice(i));
+      break;
+    }
+    if (arg === '--config-stdin') {
+      if (configStdin) throw new Error('--config-stdin cannot be used multiple times.');
+      configStdin = true;
+      continue;
+    }
+    if (arg === '--config-json' || arg.startsWith('--config-json=')) {
+      if (configJsonArg !== null) throw new Error('--config-json cannot be used multiple times.');
+      configJsonArg = arg === '--config-json' ? argv[++i] : arg.slice('--config-json='.length);
+      if (configJsonArg === undefined || configJsonArg.startsWith('-')) {
+        throw new Error('--config-json requires a JSON value.');
+      }
+      continue;
+    }
+    inlineArgs.push(arg);
+    if (['--config', '-c', '--config-path-hint', '--log-level'].includes(arg) && i + 1 < argv.length) {
+      inlineArgs.push(argv[++i]);
+    }
+  }
+  if (configStdin || configJsonArg !== null) {
+    // Match Rust's stdin > inline JSON > file priority, without evaluating a shadowed file.
+    let inlineConfigJson = null;
+    let inlineRuntimeConfig = null;
+    const inspectWatchConfig = commandName === 'watch'
+      && !argv.some((arg) => ['--help', '--version'].includes(arg) || /^-[vhV]*[hV][vhV]*$/.test(arg));
+    if (inspectWatchConfig) {
+      const source = configStdin ? '--config-stdin' : '--config-json';
+      try {
+        let json = configJsonArg;
+        if (configStdin) {
+          const chunks = [];
+          for await (const chunk of process.stdin) chunks.push(chunk);
+          json = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks));
+        }
+        inlineRuntimeConfig = normalizeConfig(JSON.parse(json));
+        if (!inlineRuntimeConfig) throw new Error('expected a configuration object.');
+        inlineConfigJson = serializeConfigForRust(inlineRuntimeConfig);
+      } catch (error) {
+        throw new Error(`Invalid ${source} config: ${error.message}`);
+      }
+    }
+    return {
+      args: inspectWatchConfig ? inlineArgs : argv,
+      inlineConfigJson, inlineRuntimeConfig, configProvided: true, configPathHint: null
+    };
+  }
   const processedArgs = [];
   let inlineConfigJson = null;
   let inlineRuntimeConfig = null;
