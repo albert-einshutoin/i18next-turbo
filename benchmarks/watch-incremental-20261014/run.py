@@ -19,17 +19,24 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[2])
 parser.add_argument('--sizes', type=int, nargs='+', default=[300, 1200])
 parser.add_argument('--runs', type=int, default=5)
+parser.add_argument('--regression', action='store_true',
+                    help='check five watch routes; requires --sizes 300 --runs 1')
 args = parser.parse_args()
 if sys.version_info < (3, 11):
     parser.error('Python 3.11 or later is required')
 if not 1 <= args.runs <= 5 or any(n < 30 or n > 1200 for n in args.sizes):
     parser.error('runs must be 1..5; fixture sizes must be 30..1200')
+if args.regression and (args.sizes != [300] or args.runs != 1):
+    parser.error('--regression requires --sizes 300 --runs 1')
 repo = args.repo.resolve()
 bundle = Path(__file__).resolve().parent
 work = repo / 'target/watch-import-evaluation-20261013'
 cli_package = work / 'toolchain/node_modules/i18next-cli'
 package = json.loads((cli_package / 'package.json').read_text())
-assert package['version'] == '1.75.3'
+if package['version'] != '1.75.3':
+    raise RuntimeError('i18next-cli 1.75.3 is required')
+if args.regression and (work / 'toolchain/package-lock.json').read_bytes() != (bundle / 'cli-lock.json').read_bytes():
+    raise RuntimeError('Install the regression toolchain using the bundled cli-lock.json')
 spec = importlib.util.spec_from_file_location('baseline', repo / 'benchmarks/evaluation-20261013/run.py')
 baseline = importlib.util.module_from_spec(spec)
 sys.dont_write_bytecode = True
@@ -234,10 +241,84 @@ def watch_once(case, tool, before, after, expected_before, expected_after, trial
         finally:
             stop(process)
 
+
+def watch_regression(states, full, results):
+    routes = [
+        ('rust', 'turbo', ['--config', 'i18next-turbo.json', 'watch']),
+        ('node-cjs', 'turbo-wrapper', ['--config', 'i18next.config.cjs', 'watch']),
+        ('node-json', 'turbo-wrapper', ['-vci18next-turbo.json', 'watch']),
+        ('node-conf', 'turbo-wrapper', ['--config=project.conf', 'watch']),
+        ('node-extensionless', 'turbo-wrapper', ['-csettings', 'watch']),
+    ]
+    for variant, tool, arguments in routes:
+        case = baseline.make_case(f'watch-regression-{variant}', states[0][1])
+        configure(case)
+        project = case / tool
+        config = json.loads((project / 'i18next-turbo.json').read_text())
+        config['plugins'] = []
+        for filename in ['i18next-turbo.json', 'project.conf', 'settings']:
+            baseline.write_json(project / filename, config)
+        command = baseline.TOOLS[tool] + arguments
+        log = project / 'process.log'
+        result = {'variant': variant, 'command': command, 'log': str(log), 'steps': []}
+        results.append(result)
+        with log.open('w') as stream:
+            process = subprocess.Popen(command, cwd=project, env=baseline.ENV,
+                                       stdout=stream, stderr=stream, start_new_session=True)
+            try:
+                status, actual = wait_catalog(project, states[0][2], process, log, tool, 0, 20)
+                result['initial'] = {'status': status, 'difference': baseline.differences(states[0][2], actual)}
+                if status != 'matched':
+                    raise RuntimeError(f'{variant}: watch preparation failed: {status}; see {log}')
+                time.sleep(1)
+                for index in range(1, len(states)):
+                    name, sources, oracle = states[index]
+                    completed = log_count(log, tool)
+                    mutate(project, states[index - 1][1], sources)
+                    status, actual = wait_catalog(project, full[name]['catalogs'][tool], process,
+                                                  log, tool, completed, deadline)
+                    time.sleep(0.15)
+                    entry = {'operation': name, 'status': status,
+                             'watch_vs_full': baseline.differences(full[name]['catalogs'][tool], actual),
+                             'watch_vs_oracle': baseline.differences(oracle, actual),
+                             'seed_preserved': all(actual.get(k) == v for k, v in seed_for(project).items()),
+                             'stable_after_150ms': baseline.catalog(project) == oracle,
+                             'completion_cycles': log_count(log, tool) - completed}
+                    result['steps'].append(entry)
+                    baseline.write_json(project / f'{name}-catalog.json', actual)
+                    baseline.write_json(report_path, report)
+                    if not (status == 'matched' and entry['watch_vs_full']['equal']
+                            and entry['watch_vs_oracle']['equal'] and entry['seed_preserved']
+                            and entry['stable_after_150ms'] and entry['completion_cycles'] == 1):
+                        raise RuntimeError(f'{variant}/{name}: {entry}; see {log}')
+                    print('regression', variant, name, 'matched', flush=True)
+                # The dependency has been renamed by the sixth operation; invalidate
+                # that imported value only after a successful, populated watch cycle.
+                before = {p.relative_to(project): p.read_bytes()
+                          for p in (project / 'locales').rglob('*') if p.is_file()}
+                result['prune_failure'] = {'exit_code': None}
+                (project / 'src/model/labels-moved.ts').write_text('export const LABELS = computeLabels();\n')
+                process.wait(timeout=deadline)
+                after = {p.relative_to(project): p.read_bytes()
+                         for p in (project / 'locales').rglob('*') if p.is_file()}
+                result['prune_failure'] = {
+                    'exit_code': process.returncode, 'catalog_bytes_unchanged': before == after,
+                    'diagnostic': 'Cannot prune translations while source extraction is incomplete' in log.read_text()}
+                baseline.write_json(report_path, report)
+                if not (process.returncode == 1 and before == after and result['prune_failure']['diagnostic']):
+                    raise RuntimeError(f'{variant}: {result["prune_failure"]}; see {log}')
+                print('regression', variant, 'prune refused; catalog bytes unchanged', flush=True)
+            finally:
+                stop(process)
+
+
 report = {'run_id': run_id, 'status': 'in_progress', 'runs_requested': args.runs,
+          'mode': 'regression' if args.regression else 'benchmark',
           'watch_timeout_seconds': deadline, 'poll_ms': 5, 'registration_settle_seconds': 1,
           'metric': 'source mutation start to completed watch cycle and all-locale full-catalog equality; includes debounce and polling',
           'environment': {'node': subprocess.check_output([baseline.NODE, '--version'], text=True).strip(),
+                          'harness_sha256': sha(Path(__file__)),
+                          'fixture_harness_sha256': sha(repo / 'benchmarks/evaluation-20261013/run.py'),
                           'python': platform.python_version(), 'platform': platform.platform(),
                           'cpu': subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string'], text=True).strip(),
                           'turbo_source_sha256': {relative: sha(repo / relative) for relative in ['src/watcher.rs', 'src/finite_values.rs', 'src/extractor.rs', 'src/config.rs', 'src/json_sync.rs']},
@@ -249,7 +330,7 @@ report = {'run_id': run_id, 'status': 'in_progress', 'runs_requested': args.runs
                           'cli_install_provenance': json.loads((bundle / 'cli-install.json').read_text()),
                           'turbo_binary_sha256': sha(repo / 'target/release/i18next-turbo'),
                           'wrapper_sha256': sha(repo / 'bin/cli.js')}, 'cases': {}}
-preserved = {str(repo / name): sha(repo / name) for name in ['src/watcher.rs', 'src/finite_values.rs', 'src/extractor.rs', 'src/config.rs', 'src/json_sync.rs', 'bin/cli.js', 'benchmarks/evaluation-20261013/run.py']}
+preserved = {str(repo / name): sha(repo / name) for name in ['src/watcher.rs', 'src/finite_values.rs', 'src/extractor.rs', 'src/config.rs', 'src/json_sync.rs', 'bin/cli.js', 'benchmarks/evaluation-20261013/run.py', 'benchmarks/watch-incremental-20261014/run.py']}
 initial_files = {p: sha(Path(p)) for p in preserved}
 assert initial_files == preserved
 try:
@@ -279,6 +360,19 @@ try:
         result = {'base_workload_files': size, 'initial_input_files': len(states[0][1]) - 1,
                   'finite_dependency_consumers': 20, 'retained_translations': 18, 'steps': {}}
         report['cases'][str(size)] = result
+        if args.regression:
+            result['full_extract'] = [
+                {'stage': name, 'tool': tool, 'difference': baseline.differences(oracle, full[name]['catalogs'][tool]),
+                 'seed_preserved': all(full[name]['catalogs'][tool].get(k) == v for k, v in seed_for(case / tool).items())}
+                for name, _, oracle in states for tool in baseline.TOOLS]
+            result['watch_regression'] = []
+            watch_regression(states, full, result['watch_regression'])
+            report['regression_checks'] = {'full_extractions': len(result['full_extract']),
+                                           'watch_operations': sum(len(r['steps']) for r in result['watch_regression']),
+                                           'prune_refusals': len(result['watch_regression'])}
+            if report['regression_checks'] != {'full_extractions': 21, 'watch_operations': 30, 'prune_refusals': 5}:
+                raise RuntimeError(f'incomplete regression checks: {report["regression_checks"]}')
+            continue
         for index in range(1, len(states)):
             name, after, oracle = states[index]
             before = states[index-1][1]
