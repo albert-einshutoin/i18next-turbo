@@ -44,6 +44,7 @@ Not guaranteed:
 
 - `locize` supports `json` and `json5` only
 - `watch` is optimized for supported project inputs, but it is not presented as a compatibility layer for other toolchains
+- The Node wrapper rejects `watch` with a non-empty resolved plugin list before loading plugins or starting Rust, with exit code 1 and no translation-file changes. Use plugin-free `watch` or single-run `extract` with plugins; see [plugin runtime](plugin-runtime.md#watch-support).
 - Plugin hooks are project-specific extension points, not a compatibility promise with other plugin APIs
 
 ### Static extraction checked against i18next-cli 1.75.2

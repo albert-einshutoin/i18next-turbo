@@ -108,6 +108,9 @@ async function main() {
   rustArgs.push(...args);
 
   const commandName = resolveCommandName(args);
+  if (commandName === 'watch' && runtimeConfig && runtimeConfig.__runtime.plugins.length > 0) {
+    throw new Error('watch does not support plugins. Use extract with plugins, or remove plugins to use watch.');
+  }
   const pluginRuntime = resolvePluginRuntime(runtimeConfig);
   const features = resolveRuntimeFeatures(runtimeConfig, commandName, args);
   const plugins = await loadPlugins(runtimeConfig, pluginRuntime);
@@ -178,6 +181,19 @@ function exitAfterDrain(exitCode) {
 }
 
 async function resolveConfigArgs(argv) {
+  const endOfOptions = argv.indexOf('--');
+  argv = argv.flatMap((arg, index) => {
+    const shortConfig = (endOfOptions === -1 || index < endOfOptions)
+      ? /^-(v*)c(.*)$/.exec(arg)
+      : null;
+    if (!shortConfig) return [arg];
+    return [
+      ...shortConfig[1].split('').map((flag) => `-${flag}`),
+      '-c',
+      ...(shortConfig[2] ? [shortConfig[2].replace(/^=/, '')] : [])
+    ];
+  });
+  const commandName = resolveCommandName(argv);
   const processedArgs = [];
   let inlineConfigJson = null;
   let inlineRuntimeConfig = null;
@@ -187,48 +203,30 @@ async function resolveConfigArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
 
-    if (arg === '--config' || arg === '-c') {
+    if (arg === '--config' || arg === '-c' || arg.startsWith('--config=')) {
       configProvided = true;
-      const value = argv[i + 1];
+      const separateValue = arg === '--config' || arg === '-c';
+      const value = separateValue ? argv[i + 1] : arg.slice('--config='.length);
       if (!value) {
         processedArgs.push(arg);
         continue;
       }
 
-      if (shouldLoadWithNode(value)) {
-        const result = await loadConfigFromFile(value);
-        if (result) {
-          const normalized = normalizeConfig(result.config);
-          if (normalized) {
-            inlineConfigJson = serializeConfigForRust(normalized);
-            inlineRuntimeConfig = normalized;
-            configPathHint = result.filepath;
-          }
+      if (shouldLoadWithNode(value, commandName)) {
+        const result = await loadConfigFromFile(value, commandName);
+        const normalized = normalizeConfig(result && result.config);
+        if (!normalized) {
+          throw new Error(`Invalid config file "${value}": expected a configuration object.`);
         }
-        i += 1;
-        continue;
+        inlineConfigJson = serializeConfigForRust(normalized);
+        inlineRuntimeConfig = normalized;
+        configPathHint = result.filepath;
+      } else {
+        processedArgs.push(arg);
+        if (separateValue) processedArgs.push(value);
       }
-
-      processedArgs.push(arg, value);
-      i += 1;
+      if (separateValue) i += 1;
       continue;
-    }
-
-    if (arg.startsWith('--config=')) {
-      configProvided = true;
-      const value = arg.split('=')[1];
-      if (shouldLoadWithNode(value)) {
-        const result = await loadConfigFromFile(value);
-        if (result) {
-          const normalized = normalizeConfig(result.config);
-          if (normalized) {
-            inlineConfigJson = serializeConfigForRust(normalized);
-            inlineRuntimeConfig = normalized;
-            configPathHint = result.filepath;
-          }
-        }
-        continue;
-      }
     }
 
     processedArgs.push(arg);
@@ -247,11 +245,17 @@ async function loadConfigFromDisk() {
   return formatExplorerResult(result);
 }
 
-async function loadConfigFromFile(filepath) {
-  const explorer = createExplorer();
+async function loadConfigFromFile(filepath, commandName) {
   const absolute = path.resolve(process.cwd(), filepath);
-  const result = await explorer.load(absolute);
-  return formatExplorerResult(result);
+  try {
+    if (commandName === 'watch' && !JS_TS_CONFIG_EXTENSIONS.has(path.extname(absolute).toLowerCase())) {
+      return { config: JSON.parse(fs.readFileSync(absolute, 'utf8')), filepath: absolute };
+    }
+    const result = await createExplorer().load(absolute);
+    return formatExplorerResult(result);
+  } catch (error) {
+    throw new Error(`Invalid config file "${filepath}": ${error.message}`);
+  }
 }
 
 function createExplorer() {
@@ -288,9 +292,9 @@ function formatExplorerResult(result) {
   return { config, filepath };
 }
 
-function shouldLoadWithNode(filepath) {
+function shouldLoadWithNode(filepath, commandName) {
   const ext = path.extname(filepath).toLowerCase();
-  return JS_TS_CONFIG_EXTENSIONS.has(ext);
+  return commandName === 'watch' || JS_TS_CONFIG_EXTENSIONS.has(ext);
 }
 
 function loadTypeScriptConfig(filepath) {
@@ -323,7 +327,7 @@ async function loadEsmConfig(filepath) {
 }
 
 function normalizeConfig(rawConfig) {
-  if (!rawConfig || typeof rawConfig !== 'object') {
+  if (!rawConfig || typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
     return null;
   }
 
@@ -393,7 +397,12 @@ function handlePluginError(runtime, hook, error, detail = '') {
 }
 
 function resolveCommandName(args) {
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (['--config', '-c', '--config-json', '--config-path-hint', '--log-level'].includes(arg)) {
+      i += 1;
+      continue;
+    }
     if (!arg.startsWith('-')) {
       return arg;
     }

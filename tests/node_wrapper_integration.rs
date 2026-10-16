@@ -350,6 +350,257 @@ module.exports = {
     assert!(project.join(".after-sync").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+
+    for (filename, args, nested, error_mode) in [
+        (
+            "i18next.config.cjs",
+            vec!["--config", "i18next.config.cjs", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "i18next.config.cjs",
+            vec!["watch", "--config=i18next.config.cjs"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "i18next-turbo.json",
+            vec!["-c", "i18next-turbo.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "i18next-turbo.json",
+            vec!["watch", "--config=i18next-turbo.json"],
+            true,
+            "fail-fast",
+        ),
+        ("i18next.config.cjs", vec!["watch"], true, "continue"),
+        ("i18next-turbo.json", vec!["watch"], false, "fail-fast"),
+        (
+            "i18next.config.cjs",
+            vec!["--log-level", "warn", "watch", "-c", "i18next.config.cjs"],
+            false,
+            "continue",
+        ),
+        (
+            "project.json",
+            vec!["-cproject.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "project.cjs",
+            vec!["watch", "-cproject.cjs"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "project.json",
+            vec!["-c=project.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "project.json",
+            vec!["-vcproject.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "project.json",
+            vec!["-vc", "project.json", "watch"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "project=one.json",
+            vec!["--config=project=one.json", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "project.conf",
+            vec!["--config", "project.conf", "watch"],
+            false,
+            "continue",
+        ),
+        ("settings", vec!["-csettings", "watch"], true, "fail-fast"),
+        (
+            "project.ts",
+            vec!["watch", "--config", "project.ts"],
+            false,
+            "continue",
+        ),
+        (
+            "project.mjs",
+            vec!["--config=project.mjs", "watch"],
+            true,
+            "fail-fast",
+        ),
+    ] {
+        let tmp = tempdir().unwrap();
+        let project = tmp.path();
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::write(project.join("src/app.ts"), "t('new.key');").unwrap();
+        let translations = [
+            (
+                "en",
+                "{\r\n\t\"retained\": \"Keep\",\r\n\t\"unused\": \"Keep too\"\r\n}\r\n",
+            ),
+            ("ja", "{\"retained\":\"保持\",\"unused\":\"削除しない\"}\n"),
+        ];
+        for (locale, content) in translations {
+            let dir = project.join("locales").join(locale);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("translation.json"), content).unwrap();
+        }
+        fs::write(
+            project.join("plugin.cjs"),
+            "const fs = require('fs');\nfs.writeFileSync('.plugin-loaded', 'loaded');\nmodule.exports = () => {\nfs.writeFileSync('.plugin-factory', 'called');\nreturn {setup() {fs.writeFileSync('.plugin-setup', 'called');}};\n};\n",
+        )
+        .unwrap();
+        let binary = project.join("child.cjs");
+        fs::write(
+            &binary,
+            "#!/usr/bin/env node\nconst fs = require('fs');\nfs.writeFileSync('.rust-started', 'started');\nfs.writeFileSync('locales/en/translation.json', '{}');\n",
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut config = serde_json::json!({
+            "input": ["src/**/*.ts"], "output": "locales", "locales": ["en", "ja"],
+            "functions": ["t"], "removeUnusedKeys": true, "pluginErrorMode": error_mode
+        });
+        let plugins = serde_json::json!([{ "resolve": "./plugin.cjs" }]);
+        if nested {
+            config["extract"] = serde_json::json!({ "plugins": plugins });
+        } else {
+            config["plugins"] = plugins;
+        }
+        let config = if filename.ends_with(".cjs") || filename.ends_with(".js") {
+            format!("module.exports = {config};\n")
+        } else if filename.ends_with(".mjs") || filename.ends_with(".ts") {
+            format!("export default {config};\n")
+        } else {
+            config.to_string()
+        };
+        fs::write(project.join(filename), config).unwrap();
+
+        let output = Command::new("node")
+            .arg(wrapper_bin())
+            .args(&args)
+            .env("I18NEXT_TURBO_BINARY", &binary)
+            .current_dir(project)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("watch does not support plugins"),
+            "{args:?}: {stderr}"
+        );
+        for marker in [
+            ".plugin-loaded",
+            ".plugin-factory",
+            ".plugin-setup",
+            ".rust-started",
+        ] {
+            assert!(!project.join(marker).exists(), "{args:?}: {marker}");
+        }
+        for (locale, content) in translations {
+            assert_eq!(
+                fs::read(
+                    project
+                        .join("locales")
+                        .join(locale)
+                        .join("translation.json")
+                )
+                .unwrap(),
+                content.as_bytes(),
+                "{args:?}: {locale} must remain byte-identical"
+            );
+        }
+        assert_eq!(fs::read_dir(project.join("locales")).unwrap().count(), 2);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn node_wrapper_rejects_invalid_explicit_watch_config_before_translation_writes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+    for filename in ["empty.json", "project.conf", "settings"] {
+        for content in [
+            Some(""),
+            Some(" \n"),
+            Some("null"),
+            Some("[]"),
+            Some("\"invalid\""),
+            Some("7"),
+            Some("{"),
+            Some("module.exports = {}"),
+            None,
+        ] {
+            for args in [
+                vec![
+                    "--config".to_string(),
+                    filename.to_string(),
+                    "watch".to_string(),
+                ],
+                vec!["watch".to_string(), format!("--config={filename}")],
+                vec![format!("-c{filename}"), "watch".to_string()],
+            ] {
+                let tmp = tempdir().unwrap();
+                let project = tmp.path();
+                fs::create_dir_all(project.join("locales/en")).unwrap();
+                let locale = project.join("locales/en/translation.json");
+                let original = b"{\r\n\t\"unused\": \"Do not prune\"\r\n}\r\n";
+                fs::write(&locale, original).unwrap();
+                if let Some(content) = content {
+                    fs::write(project.join(filename), content).unwrap();
+                }
+                let binary = project.join("child.cjs");
+                fs::write(
+                &binary,
+                "#!/usr/bin/env node\nconst fs = require('fs');\nfs.writeFileSync('.rust-started', 'yes');\nfs.writeFileSync('locales/en/translation.json', '{}');\n",
+            )
+            .unwrap();
+                fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+
+                let output = Command::new("node")
+                    .arg(wrapper_bin())
+                    .args(&args)
+                    .env("I18NEXT_TURBO_BINARY", &binary)
+                    .current_dir(project)
+                    .output()
+                    .unwrap();
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert_eq!(
+                    output.status.code(),
+                    Some(1),
+                    "{args:?}/{content:?}: {stderr}"
+                );
+                assert!(stderr.contains(filename), "{args:?}/{content:?}: {stderr}");
+                assert!(!project.join(".rust-started").exists());
+                assert_eq!(fs::read(&locale).unwrap(), original);
+                assert_eq!(fs::read_dir(project.join("locales/en")).unwrap().count(), 1);
+            }
+        }
+    }
+}
+
 #[test]
 fn node_wrapper_plugin_onvisitnode_receives_rust_ast_events() {
     if !should_run_node_wrapper_tests() {
