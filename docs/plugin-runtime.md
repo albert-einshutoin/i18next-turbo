@@ -29,6 +29,10 @@ This model was selected to keep Rust core deterministic and avoid embedding a JS
 - Attached forms such as `-cFILE`, `-c=FILE`, and `-vcFILE` use the same config resolution.
   Empty or non-object explicit configs fail with exit code 1 before processing;
   they do not fall back to the default config.
+- Every explicit watch config is resolved through one Node entry point. JS/TS uses the
+  existing loaders; all other paths, including `.conf` and extensionless files, are read
+  as JSON regardless of extension. Read, JSON parse, and object-validation failures
+  reject processing without falling back to Rust or default config.
 - Run `extract` when plugins are needed. Single-run source transforms, AST events, and
   completion hooks remain supported.
 - Plugin-free incremental watch, translation preservation, and prune refusal for unresolved

@@ -213,7 +213,7 @@ async function resolveConfigArgs(argv) {
       }
 
       if (shouldLoadWithNode(value, commandName)) {
-        const result = await loadConfigFromFile(value);
+        const result = await loadConfigFromFile(value, commandName);
         const normalized = normalizeConfig(result && result.config);
         if (!normalized) {
           throw new Error(`Invalid config file "${value}": expected a configuration object.`);
@@ -245,11 +245,17 @@ async function loadConfigFromDisk() {
   return formatExplorerResult(result);
 }
 
-async function loadConfigFromFile(filepath) {
-  const explorer = createExplorer();
+async function loadConfigFromFile(filepath, commandName) {
   const absolute = path.resolve(process.cwd(), filepath);
-  const result = await explorer.load(absolute);
-  return formatExplorerResult(result);
+  try {
+    if (commandName === 'watch' && !JS_TS_CONFIG_EXTENSIONS.has(path.extname(absolute).toLowerCase())) {
+      return { config: JSON.parse(fs.readFileSync(absolute, 'utf8')), filepath: absolute };
+    }
+    const result = await createExplorer().load(absolute);
+    return formatExplorerResult(result);
+  } catch (error) {
+    throw new Error(`Invalid config file "${filepath}": ${error.message}`);
+  }
 }
 
 function createExplorer() {
@@ -288,7 +294,7 @@ function formatExplorerResult(result) {
 
 function shouldLoadWithNode(filepath, commandName) {
   const ext = path.extname(filepath).toLowerCase();
-  return JS_TS_CONFIG_EXTENSIONS.has(ext) || (commandName === 'watch' && ext === '.json');
+  return commandName === 'watch' || JS_TS_CONFIG_EXTENSIONS.has(ext);
 }
 
 function loadTypeScriptConfig(filepath) {
