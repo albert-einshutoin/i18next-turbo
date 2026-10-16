@@ -37,14 +37,21 @@ class RuntimeTests(unittest.TestCase):
             except ProcessLookupError:
                 pass
 
-    def assert_gone(self, pid):
+    def assert_stopped(self, pid):
         for _ in range(500):
             try:
                 os.kill(pid, 0)
+                # An exited orphan can remain a zombie until Linux PID 1 reaps it.
+                if sys.platform.startswith('linux'):
+                    state = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0]
+                    if state == 'Z':
+                        return
             except ProcessLookupError:
                 return
+            except FileNotFoundError:
+                pass  # Recheck process existence after a possible exit race.
             time.sleep(0.01)
-        self.fail(f'owned descendant {pid} remained after cleanup')
+        self.fail(f'owned descendant {pid} remained running after cleanup')
 
     def tree_source(self, exit_leader=False):
         child = "import signal,time; from pathlib import Path; signal.signal(signal.SIGTERM, signal.SIG_IGN); Path('child.ready').touch(); time.sleep(60)"
@@ -79,7 +86,7 @@ print('stderr before failure', file=sys.stderr, flush=True)
                 evaluation.run_extract(self.case, 'turbo', 'timeout', timeout=2)
         self.assertIn('stdout before failure', (self.root / 'logs/case/turbo-timeout.stdout').read_text())
         self.assertIn('stderr before failure', (self.root / 'logs/case/turbo-timeout.stderr').read_text())
-        self.assert_gone(int((self.case / 'turbo/child.pid').read_text()))
+        self.assert_stopped(int((self.case / 'turbo/child.pid').read_text()))
 
     def test_cleanup_kills_descendant_after_leader_exits(self):
         project = self.case / 'turbo'
@@ -91,10 +98,27 @@ print('stderr before failure', file=sys.stderr, flush=True)
                 child = int((project / 'child.pid').read_text())
                 os.kill(child, 0)
                 evaluation.stop_process_group(process)
-                self.assert_gone(child)
+                self.assert_stopped(child)
             finally:
                 self.recover_group()
                 process.wait(timeout=5)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux waitid/WNOWAIT required')
+    def test_stopped_check_rejects_running_child_and_accepts_zombie(self):
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        try:
+            with patch.object(time, 'sleep'), self.assertRaisesRegex(AssertionError, 'owned descendant'):
+                self.assert_stopped(process.pid)
+            process.kill()
+            # WNOWAIT observes exit without reaping, leaving a real zombie.
+            info = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+            self.assertEqual(info.si_code, os.CLD_KILLED)
+            self.assertEqual(info.si_status, signal.SIGKILL)
+            os.kill(process.pid, 0)
+            self.assert_stopped(process.pid)
+        finally:
+            process.kill()
+            process.wait(timeout=5)
 
     def test_runner_failure_is_nonzero_and_saves_failed_report(self):
         # Only the reference CLI is replaced: its deliberate error must stop the

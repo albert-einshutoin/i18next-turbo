@@ -45,6 +45,7 @@ python3 -B -m unittest discover -s benchmarks/watch-incremental-20261014 -p test
 ```
 
 この異常系チェックはLinuxの環境取得、code7の両出力、timeout時の出力保持と子孫停止、親終了後の子孫停止、runner自体の非0終了とfailed reportを検証する。
+Linuxでは`/proc/<pid>/stat`の`Z`を終了済みと判定し、実行中の子は拒否する。PID 1によるreapやPIDの消失を成功条件にしないため、initなしコンテナでも子孫の停止を確認できる。
 
 ## P1改善の保存測定
 
