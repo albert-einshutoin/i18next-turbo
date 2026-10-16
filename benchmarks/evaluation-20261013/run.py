@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -25,6 +26,31 @@ LOCALES = ['en', 'ja', 'ru']
 NAMESPACES = ['common', 'account', 'checkout', 'dashboard', 'settings', 'catalog']
 ENV = dict(os.environ, CI='true', NO_COLOR='1',
            I18NEXT_TURBO_BINARY=str(REPO / 'target/release/i18next-turbo'))
+
+
+def cpu_name():
+    if sys.platform == 'darwin':
+        return subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string'], text=True).strip()
+    if sys.platform.startswith('linux'):
+        return platform.processor() or None
+    raise RuntimeError('Benchmark runners support Linux and macOS only')
+
+
+def stop_process_group(process):
+    # A wrapper may have exited while its descendants still own the session.
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait(timeout=5)
 
 
 def write_json(path, value):
@@ -121,23 +147,19 @@ def args_for(tool, watch=False):
     return TOOLS[tool] + ['--config', 'i18next-turbo.json', 'watch' if watch else 'extract']
 
 
-def run_extract(case, tool, label):
+def run_extract(case, tool, label, timeout=60):
     log_dir = OUT / 'logs' / case.name
     log_dir.mkdir(parents=True, exist_ok=True)
     start = time.perf_counter()
-    process = subprocess.Popen(args_for(tool), cwd=case / tool, env=ENV,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        stdout, stderr = process.communicate(timeout=60)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        stdout, stderr = process.communicate()
-        (log_dir / f'{tool}-{label}.stdout').write_bytes(stdout)
-        (log_dir / f'{tool}-{label}.stderr').write_bytes(stderr)
-        raise
+    with (log_dir / f'{tool}-{label}.stdout').open('wb') as stdout, \
+            (log_dir / f'{tool}-{label}.stderr').open('wb') as stderr:
+        process = subprocess.Popen(args_for(tool), cwd=case / tool, env=ENV,
+                                   stdout=stdout, stderr=stderr, start_new_session=True)
+        try:
+            process.wait(timeout=timeout)
+        finally:
+            stop_process_group(process)
     elapsed = (time.perf_counter() - start) * 1000
-    (log_dir / f'{tool}-{label}.stdout').write_bytes(stdout)
-    (log_dir / f'{tool}-{label}.stderr').write_bytes(stderr)
     if process.returncode:
         raise RuntimeError(f'{case.name}/{tool}/{label} exited {process.returncode}; see {log_dir}')
     return elapsed
@@ -321,12 +343,7 @@ def measure_watch(case, runs):
                     values.append((time.perf_counter() - start) * 1000)
                 samples[tool] = stats(values)
             finally:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+                stop_process_group(process)
                 source.write_text(original)
     return {'timings': samples, 'comparison': verify_case(case, ['cli', 'turbo'], expected, 'watch'),
             'additional_expected': expected,
@@ -350,7 +367,7 @@ def main():
         write_json(report_path, report)
         report['active_phase'] = 'environment'
         report['environment'] = {'node': subprocess.check_output([NODE, '--version'], text=True).strip(),
-            'system': platform.platform(), 'machine': platform.machine(), 'cpu': subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string'], text=True).strip(),
+            'system': platform.platform(), 'machine': platform.machine(), 'cpu': cpu_name(),
             'cli_commit': subprocess.check_output(['git', '-C', str(ROOT/'i18next-cli'), 'rev-parse', 'HEAD'], text=True).strip(),
             'turbo_commit': subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip(),
             'commands': {tool: args_for(tool) for tool in TOOLS},

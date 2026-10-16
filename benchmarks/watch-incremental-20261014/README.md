@@ -26,9 +26,26 @@ python3 benchmarks/watch-incremental-20261014/run.py --regression --sizes 300 --
 欠測・timeout・不一致は非0終了とし、成功するまで再試行しない。結果は最後に表示する`REPORT`のJSON、各状態のcatalog snapshot、各watchの`process.log`へ保存する。
 JSONの`mode: regression`、`status: completed`、`regression_checks`の21／30／5が成功条件。
 
-これは各条件1回の機能回帰検証であり、速度比較ではない。現行scriptと同じmacOS／Unixの実行条件で、生成物は`target/watch-import-evaluation-20261013/runs/`配下に限定する。
+これは各条件1回の機能回帰検証であり、速度比較ではない。Linux／macOSに対応し、生成物は`target/watch-import-evaluation-20261013/runs/`配下に限定する。
 アプリsourceを実行せず、repo外の過去harnessや未追跡draftにも依存しない。plugin併用watchの拒否は別のNode wrapper integration testで維持する。
 以降の速度表・保存結果は過去の測定記録であり、この回帰モードで更新しない。
+
+### Linux CIと失敗時の動作
+
+既存Ubuntu `benchmark-regression` jobで同じコマンドを実行する。Node 24、Python 3.11以上、同梱CLI lock、既存jobでbuildしたRustバイナリを使用する。
+Nodeラッパー依存は`AGENTS.md`の`npm install --ignore-scripts --omit=optional --no-audit --no-fund --package-lock=false`で準備し、既存root lockを変更しない。CLI専用toolchainは同梱lockをコピーして`npm ci`する。
+CPU情報はOSごとの方法で取得し、LinuxでCPU名が得られない場合は`null`として記録する。Windowsのwatch実動作は対応範囲外。
+
+全抽出とwatchの子プロセスは専用process groupで起動する。正常・異常終了を問わず同じ終了処理を通し、親が先に終了しても残った子孫へTERM／KILLを送り、親を期限付きでwaitする。
+全抽出のstdout／stderrはファイルへ直接保存するため、timeoutでも直前までの出力を保持する。実行中のエラーは`results.json`へ`status: failed`と診断を保存して非0終了する。
+CIの`tee`は`pipefail`付きで終了コードを保持し、`if: always()`で実行ログ・結果・snapshot・process logを`benchmark-report`へ保存する。準備段階のエラーはCI stepのログに残る。
+
+```sh
+python3 -B -m unittest discover -s benchmarks/watch-incremental-20261014 -p test_runtime.py -v
+```
+
+この異常系チェックはLinuxの環境取得、code7の両出力、timeout時の出力保持と子孫停止、親終了後の子孫停止、runner自体の非0終了とfailed reportを検証する。
+Linuxでは`/proc/<pid>/stat`の`Z`を終了済みと判定し、実行中の子は拒否する。PID 1によるreapやPIDの消失を成功条件にしないため、initなしコンテナでも子孫の停止を確認できる。
 
 ## P1改善の保存測定
 
@@ -76,11 +93,11 @@ Node側はchild終了後の出力切捨てを防ぎ、stdout/stderrの先行writ
 ## 再実行
 
 Python3.11以上、Node、Rust、gitで上記base commitを参照可能にする。測定はApple M4 / arm64 / macOS / Node v24.2.0。watch scriptのsysctl環境取得とNode probeの実行stubはこのUnix/Mac条件向け。別OS、実案件全パターン、pluginありwatch、公開配布の保証ではない。固定CLIは専用target toolchainで使い、隣のCLI checkoutは使用しない。
-既存のevaluation-20261013/run.pyのfixture/catalog/helperを再利用し、sourceアプリコードは実行しない。生成データ/ログ/reportはtarget配下の新しいrunディレクトリだけに保存する。Node probeはbinに所有する一時entryを作り、終了時に削除する。これらの測定scriptはscope外の既存ファイルを変更しない。依存準備のnpm ciはroot node_modulesを再作成するため、既存環境を保存したい場合は別checkoutで実行する。
+既存のevaluation-20261013/run.pyのfixture/catalog/helperを再利用し、sourceアプリコードは実行しない。生成データ/ログ/reportはtarget配下の新しいrunディレクトリだけに保存する。Node probeはbinに所有する一時entryを作り、終了時に削除する。これらの測定scriptはscope外の既存ファイルを変更しない。依存準備はroot node_modulesを変更するため、既存環境を保存したい場合は別checkoutで実行する。
 
 ```sh
 # repo root
-npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+npm install --ignore-scripts --omit=optional --no-audit --no-fund --package-lock=false
 mkdir -p target/watch-import-evaluation-20261013/toolchain
 cp benchmarks/watch-incremental-20261014/cli-package.json target/watch-import-evaluation-20261013/toolchain/package.json
 cp benchmarks/watch-incremental-20261014/cli-lock.json target/watch-import-evaluation-20261013/toolchain/package-lock.json
