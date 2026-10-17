@@ -353,7 +353,9 @@ module.exports = {
 #[cfg(unix)]
 #[test]
 fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Stdio;
 
     if !should_run_node_wrapper_tests() {
         return;
@@ -447,6 +449,54 @@ fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
             true,
             "fail-fast",
         ),
+        (
+            "--config-json",
+            vec!["--config-json", "INLINE_CONFIG", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "--config-json",
+            vec!["watch", "--config-json=INLINE_CONFIG"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "--config-stdin",
+            vec!["--config-stdin", "watch"],
+            false,
+            "continue",
+        ),
+        (
+            "--config-stdin",
+            vec!["watch", "--config-stdin"],
+            true,
+            "fail-fast",
+        ),
+        (
+            "--config-json",
+            vec![
+                "--config",
+                "missing.cjs",
+                "watch",
+                "--config-json",
+                "INLINE_CONFIG",
+            ],
+            false,
+            "continue",
+        ),
+        (
+            "--config-stdin",
+            vec![
+                "--config-json",
+                "{}",
+                "watch",
+                "--config-stdin",
+                "-cmissing.json",
+            ],
+            true,
+            "continue",
+        ),
     ] {
         let tmp = tempdir().unwrap();
         let project = tmp.path();
@@ -493,15 +543,35 @@ fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
         } else {
             config.to_string()
         };
-        fs::write(project.join(filename), config).unwrap();
+        if !filename.starts_with("--") {
+            fs::write(project.join(filename), &config).unwrap();
+        }
+        let args: Vec<_> = args
+            .iter()
+            .map(|arg| arg.replace("INLINE_CONFIG", &config))
+            .collect();
 
-        let output = Command::new("node")
+        let mut child = Command::new("node")
             .arg(wrapper_bin())
             .args(&args)
             .env("I18NEXT_TURBO_BINARY", &binary)
             .current_dir(project)
-            .output()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .unwrap();
+        if filename == "--config-stdin" {
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(config.as_bytes())
+                .unwrap();
+        } else {
+            drop(child.stdin.take());
+        }
+        let output = child.wait_with_output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{args:?}: {stderr}");
         assert!(
@@ -536,12 +606,20 @@ fn node_wrapper_rejects_plugin_watch_before_plugins_or_translation_writes() {
 #[cfg(unix)]
 #[test]
 fn node_wrapper_rejects_invalid_explicit_watch_config_before_translation_writes() {
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Stdio;
 
     if !should_run_node_wrapper_tests() {
         return;
     }
-    for filename in ["empty.json", "project.conf", "settings"] {
+    for filename in [
+        "empty.json",
+        "project.conf",
+        "settings",
+        "--config-json",
+        "--config-stdin",
+    ] {
         for content in [
             Some(""),
             Some(" \n"),
@@ -553,22 +631,42 @@ fn node_wrapper_rejects_invalid_explicit_watch_config_before_translation_writes(
             Some("module.exports = {}"),
             None,
         ] {
-            for args in [
+            let arg_sets = if filename == "--config-json" {
                 vec![
-                    "--config".to_string(),
-                    filename.to_string(),
-                    "watch".to_string(),
-                ],
-                vec!["watch".to_string(), format!("--config={filename}")],
-                vec![format!("-c{filename}"), "watch".to_string()],
-            ] {
+                    [
+                        vec!["watch".to_string(), filename.to_string()],
+                        content.map(str::to_string).into_iter().collect(),
+                    ]
+                    .concat(),
+                    vec![
+                        "watch".to_string(),
+                        format!("--config-json={}", content.unwrap_or("")),
+                    ],
+                ]
+            } else if filename == "--config-stdin" {
+                vec![
+                    vec![filename.to_string(), "watch".to_string()],
+                    vec!["watch".to_string(), filename.to_string()],
+                ]
+            } else {
+                vec![
+                    vec![
+                        "--config".to_string(),
+                        filename.to_string(),
+                        "watch".to_string(),
+                    ],
+                    vec!["watch".to_string(), format!("--config={filename}")],
+                    vec![format!("-c{filename}"), "watch".to_string()],
+                ]
+            };
+            for args in arg_sets {
                 let tmp = tempdir().unwrap();
                 let project = tmp.path();
                 fs::create_dir_all(project.join("locales/en")).unwrap();
                 let locale = project.join("locales/en/translation.json");
                 let original = b"{\r\n\t\"unused\": \"Do not prune\"\r\n}\r\n";
                 fs::write(&locale, original).unwrap();
-                if let Some(content) = content {
+                if let Some(content) = content.filter(|_| !filename.starts_with("--")) {
                     fs::write(project.join(filename), content).unwrap();
                 }
                 let binary = project.join("child.cjs");
@@ -579,13 +677,27 @@ fn node_wrapper_rejects_invalid_explicit_watch_config_before_translation_writes(
             .unwrap();
                 fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
 
-                let output = Command::new("node")
+                let mut child = Command::new("node")
                     .arg(wrapper_bin())
                     .args(&args)
                     .env("I18NEXT_TURBO_BINARY", &binary)
                     .current_dir(project)
-                    .output()
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
                     .unwrap();
+                if filename == "--config-stdin" {
+                    child
+                        .stdin
+                        .take()
+                        .unwrap()
+                        .write_all(content.unwrap_or("").as_bytes())
+                        .unwrap();
+                } else {
+                    drop(child.stdin.take());
+                }
+                let output = child.wait_with_output().unwrap();
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 assert_eq!(
                     output.status.code(),
@@ -598,6 +710,171 @@ fn node_wrapper_rejects_invalid_explicit_watch_config_before_translation_writes(
                 assert_eq!(fs::read_dir(project.join("locales/en")).unwrap().count(), 1);
             }
         }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn node_wrapper_inline_config_preserves_stdin_and_discovery_contracts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+    let tmp = tempdir().unwrap();
+    let project = tmp.path();
+    fs::write(
+        project.join("i18next.config.cjs"),
+        "throw new Error('shadowed config evaluated');",
+    )
+    .unwrap();
+    let binary = project.join("child.cjs");
+    fs::write(
+        &binary,
+        r#"#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+if (args.includes('--help') || args.includes('--version')) process.exit(0);
+fs.writeFileSync('.received.json', JSON.stringify({args, input:fs.readFileSync(0, 'utf8')}));
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    let script = format!(
+        r#"
+const fs = require('fs');
+const {{spawn, spawnSync}} = require('child_process');
+const wrapper = {wrapper:?};
+const env = {{...process.env, I18NEXT_TURBO_BINARY:{binary:?}}};
+const realEnv = {{...env, I18NEXT_TURBO_BINARY:{real_binary:?}}};
+const config = {{input:['src/**/*.ts'], output:'locales', plugins:[], padding:'保持'.repeat(131072)}};
+const input = ' \n' + JSON.stringify(config) + '\n';
+for (const command of ['watch', 'extract']) {{
+  const args = ['--config-json', '{{}}', '--config-stdin', '--config-path-hint', 'original.conf', '-cmissing.cjs', command];
+  const result = spawnSync(process.execPath, [wrapper, ...args], {{env, input, timeout:10000}});
+  if (result.status !== 0) throw new Error(String(result.stderr));
+  const received = JSON.parse(fs.readFileSync('.received.json', 'utf8'));
+  if (JSON.stringify(JSON.parse(received.input)) !== JSON.stringify(config)) throw new Error('stdin config changed');
+  if (command === 'extract' && received.input !== input) throw new Error('non-watch stdin must pass through unchanged');
+  if (received.args.filter(arg => arg === '--config-stdin').length !== 1) throw new Error('duplicate stdin flag');
+  if (received.args[received.args.indexOf('--config-path-hint') + 1] !== 'original.conf') throw new Error('path hint lost');
+}}
+for (const args of [
+  ['watch', '--config-json', '{{}}', '--config-json', '{{}}'],
+  ['--config-stdin', 'watch', '--config-stdin'],
+]) {{
+  fs.unlinkSync('.received.json');
+  const result = spawnSync(process.execPath, [wrapper, ...args], {{env, input:'{{}}', timeout:3000}});
+  if (result.status !== 1 || fs.existsSync('.received.json')) throw new Error('duplicate config option reached Rust');
+  fs.writeFileSync('.received.json', '{{}}');
+}}
+fs.unlinkSync('.received.json');
+const invalidUtf8 = Buffer.concat([Buffer.from('{{"output":"locales'), Buffer.from([255]), Buffer.from('"}}')]);
+const invalid = spawnSync(process.execPath, [wrapper, '--config-stdin', 'watch'], {{env, input:invalidUtf8, timeout:3000}});
+if (invalid.status !== 1 || fs.existsSync('.received.json')) throw new Error('invalid UTF-8 stdin reached Rust');
+// Clap handles help/version without reading stdin, even when its pipe remains open.
+(async () => {{
+  for (const flag of ['--help', '--version', '-vh', '-vV']) {{
+   for (const args of [['--config-stdin', flag, 'watch'], ['--config-stdin', 'watch', flag]]) {{
+    const expected = spawnSync({real_binary:?}, args, {{timeout:3000}});
+    const child = spawn(process.execPath, [wrapper, ...args], {{env:realEnv, stdio:['pipe','pipe','pipe']}});
+    let diagnostics = '';
+    child.stdout.resume();
+    child.stderr.on('data', chunk => diagnostics += chunk);
+    const timer = setTimeout(() => child.kill(), 3000);
+    const code = await new Promise(resolve => child.on('close', resolve));
+    clearTimeout(timer);
+    child.stdin.destroy();
+    if (code !== expected.status || code === null) throw new Error(args.join(' ') + ' changed help/version behavior: ' + diagnostics);
+   }}
+  }}
+}})().catch(error => {{console.error(error); process.exitCode = 1;}});
+"#,
+        wrapper = wrapper_bin().display().to_string(),
+        binary = binary.display().to_string(),
+        real_binary = env!("CARGO_BIN_EXE_i18next-turbo")
+    );
+    let output = run_node_script(project, &script);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn node_wrapper_inline_plugin_free_watch_extracts_and_updates() {
+    if !should_run_node_wrapper_tests() {
+        return;
+    }
+    for mode in ["json", "json-equals", "stdin", "stdin-priority"] {
+        let tmp = tempdir().unwrap();
+        let project = tmp.path();
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::create_dir_all(project.join("locales/en")).unwrap();
+        fs::write(project.join("src/app.ts"), "t('first');").unwrap();
+        fs::write(
+            project.join("locales/en/translation.json"),
+            r#"{"retained":"Keep"}"#,
+        )
+        .unwrap();
+        let script = format!(
+            r#"
+const fs = require('fs');
+const {{spawn}} = require('child_process');
+const config = {{input:['src/**/*.ts'], output:'locales', locales:['en'], removeUnusedKeys:false}};
+const mode = {mode:?};
+if (mode === 'json-equals') config.plugins = [];
+if (mode === 'stdin') config.extract = {{plugins:[]}};
+if (mode === 'stdin-priority') {{
+  config.plugins = [];
+  config.extract = {{plugins:[{{resolve:'./must-not-load.cjs'}}]}};
+}}
+if (mode.startsWith('stdin')) config.padding = 'x'.repeat(262144);
+const json = JSON.stringify(config);
+const args = mode === 'json' ? ['--config-json', json, 'watch']
+  : mode === 'json-equals' ? ['watch', '--config-json=' + json]
+  : mode === 'stdin' ? ['--config-stdin', 'watch']
+  : ['--config-json', '{{"plugins":[{{"resolve":"./must-not-load.cjs"}}]}}', '-cmissing.cjs', 'watch', '--config-stdin'];
+const child = spawn(process.execPath, [{wrapper:?}, ...args], {{detached:true, stdio:['pipe','pipe','pipe']}});
+let diagnostics = '';
+child.stdout.on('data', chunk => diagnostics += chunk);
+child.stderr.on('data', chunk => diagnostics += chunk);
+const closed = new Promise(resolve => child.on('close', resolve));
+child.stdin.end(mode.startsWith('stdin') ? json : undefined);
+async function waitForKey(key) {{
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {{
+    const locale = JSON.parse(fs.readFileSync('locales/en/translation.json', 'utf8'));
+    if (Object.prototype.hasOwnProperty.call(locale, key)) {{
+      if (locale.retained !== 'Keep') throw new Error('existing translation changed');
+      return;
+    }}
+    if (child.exitCode !== null) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }}
+  throw new Error('watch did not extract ' + key + ': ' + diagnostics);
+}}
+(async () => {{
+  try {{
+    await waitForKey('first');
+    fs.writeFileSync('src/app.ts', "t('first'); t('second');");
+    await waitForKey('second');
+  }} finally {{
+    try {{ process.kill(-child.pid, 'SIGTERM'); }} catch (error) {{ if (error.code !== 'ESRCH') throw error; }}
+    await closed;
+  }}
+}})().catch(error => {{console.error(error); process.exitCode = 1;}});
+"#,
+            wrapper = wrapper_bin().display().to_string()
+        );
+        let output = run_node_script(project, &script);
+        assert!(
+            output.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 

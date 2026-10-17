@@ -24,6 +24,11 @@ This model was selected to keep Rust core deterministic and avoid embedding a JS
   calling factories/hooks, or starting Rust. Translation files are not changed.
   `pluginErrorMode: continue` does not bypass this restriction.
 - The restriction applies to JS/TS configs, explicit JSON configs, and discovered configs.
+  Inline watch configs (`--config-json JSON`, `--config-json=JSON`, or `--config-stdin`)
+  pass through the same validation, including when no config file exists. Stdin takes
+  priority over inline JSON, which takes priority over file configs. The wrapper reads
+  watch config stdin once and forwards the validated config to Rust; other commands
+  retain stdin passthrough, and help/version do not consume it.
   Evaluating the config itself is required to inspect plugins; this does not prevent
   arbitrary JavaScript executed by the config.
 - Attached forms such as `-cFILE`, `-c=FILE`, and `-vcFILE` use the same config resolution.
